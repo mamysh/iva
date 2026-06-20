@@ -17,7 +17,9 @@
 #   --skip-setup        не запускать мастер настройки (запустишь сам: npm run setup)
 #   --non-interactive   не задавать никаких вопросов (берёт дефолты; настройку пропускает)
 #   -h, --help          показать эту справку
-set -euo pipefail
+# Мгновенная реассурация: первый вывод сразу, чтобы не было тишины на старте.
+printf '\n  \033[36m⏳ Идёт подготовка окружения — это может занять до минуты. Не прерывай процесс…\033[0m\n'
+set -Eeuo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/smixs/eve-assistant.git}"
 BRANCH="${BRANCH:-main}"
@@ -29,6 +31,9 @@ step() { echo "${c_blue}▸ $*${c_reset}"; }
 ok()   { echo "${c_green}✓ $*${c_reset}"; }
 warn() { echo "${c_yellow}! $*${c_reset}"; }
 die()  { echo "${c_red}✗ $*${c_reset}" >&2; exit 1; }
+
+# Громкий обработчик ошибок: больше никаких молчаливых выходов из-за set -e.
+trap 'rc=$?; echo >&2; echo "${c_red}✗ Установка прервалась (код $rc). Упала команда: ${BASH_COMMAND}${c_reset}" >&2; echo "${c_yellow}  Скопируй вывод выше и пришли — разберёмся.${c_reset}" >&2' ERR
 
 # ── Режим интерактивности (по образцу NousResearch/hermes-agent) ───────────
 # НЕ делаем `exec < /dev/tty`: при `curl | bash` bash читает САМ скрипт из stdin-пайпа,
@@ -159,7 +164,7 @@ command -v uv >/dev/null 2>&1 && ok "uv $(uv --version 2>/dev/null | awk '{print
 need_node=1
 if command -v node >/dev/null; then
   major="$(node -v | sed 's/^v\([0-9]*\).*/\1/')"
-  [ "$major" -ge "$NODE_MAJOR_MIN" ] && need_node=0
+  if [ "$major" -ge "$NODE_MAJOR_MIN" ]; then need_node=0; fi
 fi
 if [ "$need_node" -eq 1 ]; then
   step "Устанавливаю Node $NODE_MAJOR_MIN+ через nvm…"
@@ -167,11 +172,21 @@ if [ "$need_node" -eq 1 ]; then
   if [ ! -s "$NVM_DIR/nvm.sh" ]; then
     curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
   fi
+  # ВАЖНО: `nvm use` падает (exit 1), если в ~/.npmrc задан npm `prefix`/`globalconfig`
+  # (частый случай с ~/.npm-global). Под set -e это молча убивало бы установку.
+  # Поэтому `use` НЕ зовём: устанавливаем и берём node прямо из каталога версии.
+  set +e
   # shellcheck disable=SC1091
   . "$NVM_DIR/nvm.sh"
   nvm install "$NODE_MAJOR_MIN"
-  nvm use "$NODE_MAJOR_MIN"
+  NODE_BIN_DIR="$(nvm which "$NODE_MAJOR_MIN" 2>/dev/null | xargs -r dirname 2>/dev/null)"
+  set -e
+  if [ -z "${NODE_BIN_DIR:-}" ]; then
+    NODE_BIN_DIR="$(ls -d "$NVM_DIR"/versions/node/v"$NODE_MAJOR_MIN"*/bin 2>/dev/null | sort -V | tail -1)"
+  fi
+  if [ -n "${NODE_BIN_DIR:-}" ]; then export PATH="$NODE_BIN_DIR:$PATH"; fi
 fi
+command -v node >/dev/null 2>&1 || die "Node $NODE_MAJOR_MIN+ не установился. Поставь вручную (nvm install $NODE_MAJOR_MIN) и перезапусти."
 ok "Node $(node -v)"
 
 # ─────────────────────────────────────────────────────────────────────────
