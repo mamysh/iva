@@ -20,7 +20,7 @@ const NPM = existsSync(join(NODE_BIN_DIR, "npm")) ? join(NODE_BIN_DIR, "npm") : 
 // Дети наследуют PATH с каталогом node — иначе npm/eve не найдутся при вызове через wrapper.
 const childEnv = { ...process.env, PATH: `${NODE_BIN_DIR}:${process.env.PATH || ""}` };
 
-const SERVICES = ["iva.service", "iva-telegram-poll.service"];
+const SERVICES = ["iva.service", "iva-telegram-poll.service", "iva-telegram-mcp.service"];
 const TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((n) => `iva-memory-${n}.timer`);
 
 const C = { g: "\x1b[32m", y: "\x1b[33m", r: "\x1b[31m", c: "\x1b[36m", b: "\x1b[1m", d: "\x1b[2m", x: "\x1b[0m" };

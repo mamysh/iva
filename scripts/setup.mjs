@@ -22,6 +22,15 @@ const OPENCODE_MODELS = [
   "opencode-go/glm-5.2",
   "opencode-go/qwen3.7",
 ];
+const VISION_MODEL_PREFERENCES = [
+  "minimax-m3",
+  "gemma4",
+  "qwen3.5",
+  "mistral-large-3",
+  "llama4",
+  "minicpm-v4.5",
+  "deepseek-ocr",
+];
 
 const C = { g: "\x1b[32m", y: "\x1b[33m", c: "\x1b[36m", b: "\x1b[1m", r: "\x1b[31m", x: "\x1b[0m" };
 const TOTAL = 5;
@@ -151,6 +160,16 @@ async function pickFromList(items, current, recommended) {
   return items[idx];
 }
 
+function pickVisionModel(models) {
+  for (const preferred of VISION_MODEL_PREFERENCES) {
+    const exact = models.find((id) => id === preferred);
+    if (exact) return exact;
+    const tagged = models.find((id) => id.startsWith(`${preferred}:`));
+    if (tagged) return tagged;
+  }
+  return null;
+}
+
 async function main() {
   const existing = await loadExistingEnv();
   const out = { ...existing };
@@ -207,6 +226,15 @@ async function main() {
     out.OLLAMA_MODEL = await pickFromList(models, out.OLLAMA_MODEL, "deepseek-v4-pro");
     out.OLLAMA_CONTEXT_WINDOW = out.OLLAMA_CONTEXT_WINDOW || "131072";
     console.log(`  → модель: ${C.g}${out.OLLAMA_MODEL}${C.x}`);
+
+    // Основная модель может быть текстовой. Для фото из Telegram включаем
+    // отдельную vision-модель и передаём основному агенту уже описание картинки.
+    out.TELEGRAM_IMAGE_MODE = out.TELEGRAM_IMAGE_MODE || "describe";
+    out.VISION_BASE_URL = out.VISION_BASE_URL || OLLAMA_BASE;
+    out.VISION_MODEL = out.VISION_MODEL || pickVisionModel(models) || "minimax-m3";
+    out.VISION_TIMEOUT_MS = out.VISION_TIMEOUT_MS || "120000";
+    out.VISION_MAX_OUTPUT_TOKENS = out.VISION_MAX_OUTPUT_TOKENS || "900";
+    console.log(`  → картинки: ${C.g}${out.VISION_MODEL}${C.x} (${out.TELEGRAM_IMAGE_MODE})`);
   } else {
     console.log(`\n  Ключ OpenCode: ${C.c}https://opencode.ai/auth${C.x} (подпишитесь на Go → скопируйте API key).`);
     out.OPENCODE_API_KEY = await askRequired("  Вставьте OpenCode API key", {
@@ -217,6 +245,15 @@ async function main() {
     out.OPENCODE_MODEL = await pickFromList(OPENCODE_MODELS, out.OPENCODE_MODEL, OPENCODE_MODELS[0]);
     out.OPENCODE_CONTEXT_WINDOW = out.OPENCODE_CONTEXT_WINDOW || "131072";
     console.log(`  → модель: ${C.g}${out.OPENCODE_MODEL}${C.x}`);
+    out.TELEGRAM_IMAGE_MODE = out.TELEGRAM_IMAGE_MODE || "describe";
+    out.VISION_BASE_URL = out.VISION_BASE_URL || OLLAMA_BASE;
+    out.VISION_MODEL = out.VISION_MODEL || "minimax-m3";
+    out.VISION_TIMEOUT_MS = out.VISION_TIMEOUT_MS || "120000";
+    out.VISION_MAX_OUTPUT_TOKENS = out.VISION_MAX_OUTPUT_TOKENS || "900";
+    console.log(
+      `  ${C.y}Для чтения картинок укажи VISION_API_KEY или OLLAMA_API_KEY; ` +
+        `по умолчанию vision-модель: ${out.VISION_MODEL}.${C.x}`,
+    );
   }
   console.log(
     `  ${C.y}Окно контекста не завышайте:${C.x} компактация считает порог от него; завышенное окно = риск переполнения.`,
@@ -314,6 +351,7 @@ async function main() {
     "MODEL_PROVIDER",
     "OLLAMA_API_KEY", "OLLAMA_MODEL", "OLLAMA_CONTEXT_WINDOW",
     "OPENCODE_API_KEY", "OPENCODE_MODEL", "OPENCODE_CONTEXT_WINDOW",
+    "TELEGRAM_IMAGE_MODE", "VISION_BASE_URL", "VISION_MODEL", "VISION_TIMEOUT_MS", "VISION_MAX_OUTPUT_TOKENS", "VISION_API_KEY",
     "TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_USERNAME", "TELEGRAM_WEBHOOK_SECRET_TOKEN",
     "TELEGRAM_ALLOWED_USER_IDS", "TELEGRAM_DIGEST_CHAT_ID",
     "DEEPGRAM_API_KEY", "DEEPGRAM_LANGUAGE",

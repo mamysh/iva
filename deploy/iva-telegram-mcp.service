@@ -1,0 +1,20 @@
+# systemd USER unit — Telegram MCP HTTP bridge (chigwell/telegram-mcp → eve connection).
+#
+# Before enabling:
+#   npm run telegram:mcp:setup
+#   npm run telegram:mcp:session -- --qr
+#   add TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION_STRING to .env
+[Unit]
+Description=Iva Telegram MCP bridge (chigwell/telegram-mcp)
+After=network-online.target
+
+[Service]
+WorkingDirectory=__PROJECT_DIR__
+EnvironmentFile=__PROJECT_DIR__/.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env python3 scripts/telegram-mcp-http.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

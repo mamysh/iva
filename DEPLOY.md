@@ -87,6 +87,26 @@ journalctl --user -u iva-telegram-poll -f
 Реализация: `scripts/telegram-poll.mjs` (`getUpdates` → `POST 127.0.0.1:3000/eve/v1/telegram`
 с заголовком `X-Telegram-Bot-Api-Secret-Token`). Offset хранится в `data/telegram-offset.json`.
 
+## Telegram MCP: история чатов
+Для чтения истории групп и каналов Iva использует `chigwell/telegram-mcp` как отдельный локальный
+MCP endpoint. Это user-аккаунт Telethon, не Bot API, поэтому он видит историю доступных чатов.
+По умолчанию включён только read-only режим.
+
+```bash
+npm run telegram:mcp:setup
+npm run telegram:mcp:session -- --qr
+# добавь TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION_STRING в .env
+npm run telegram:mcp:serve
+```
+
+Endpoint по умолчанию: `http://127.0.0.1:8765/mcp`, connection-файл:
+`agent/connections/telegram.ts`. Для systemd скопируй/установи `deploy/iva-telegram-mcp.service`
+и включи:
+```bash
+systemctl --user enable --now iva-telegram-mcp.service
+journalctl --user -u iva-telegram-mcp -f
+```
+
 ### Webhook (опционально, если есть публичный HTTPS)
 Polling и webhook взаимоисключающи. Хочешь webhook — выключи мост
 (`systemctl --user disable --now iva-telegram-poll`) и зарегистрируй вебхук:

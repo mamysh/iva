@@ -181,6 +181,101 @@ function saveBlob(
   return `attachments/${stamp.date}/${fname}`;
 }
 
+// --- Vision fallback для картинок ---
+//
+// Основная модель по умолчанию (DeepSeek) текстовая: если отдать ей Telegram-фото
+// как native file part, OpenAI-compatible провайдер может упасть на image_url.
+// Поэтому в режиме describe сначала описываем картинку vision-моделью, а основной
+// агент получает уже текст. Режим native оставлен для моделей, которые точно умеют
+// мультимодальный вход.
+const IMAGE_MODE = (process.env.TELEGRAM_IMAGE_MODE ?? "describe").toLowerCase();
+
+function shouldDescribeImages(): boolean {
+  return IMAGE_MODE !== "native";
+}
+
+function isImageAttachment(att: { kind?: string; mediaType?: string }): boolean {
+  return att.kind === "photo" || (att.mediaType ?? "").toLowerCase().startsWith("image/");
+}
+
+function stripImageAttachments(msg: any): void {
+  msg.attachments = msg.attachments.filter((att: any) => !isImageAttachment(att));
+}
+
+function visionConfig(): { apiKey: string; baseURL: string; model: string } | null {
+  const apiKey = process.env.VISION_API_KEY || process.env.OLLAMA_API_KEY || "";
+  const model = process.env.VISION_MODEL || process.env.OLLAMA_VISION_MODEL || (apiKey ? "minimax-m3" : "");
+  if (!apiKey || !model) return null;
+  return {
+    apiKey,
+    baseURL: (process.env.VISION_BASE_URL || "https://ollama.com/v1").replace(/\/$/, ""),
+    model,
+  };
+}
+
+function readModelText(json: any): string {
+  const content = json?.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part?.text === "string" ? part.text : ""))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  }
+  return "";
+}
+
+async function describeImage(
+  bytes: ArrayBuffer,
+  mediaType: string | undefined,
+  userPrompt: string,
+): Promise<string> {
+  const cfg = visionConfig();
+  if (!cfg) {
+    throw new Error("не настроена vision-модель: укажи VISION_API_KEY/VISION_MODEL или OLLAMA_API_KEY");
+  }
+
+  const fullMediaType = mediaType?.startsWith("image/") ? mediaType : "image/jpeg";
+  const b64 = Buffer.from(bytes).toString("base64");
+  const timeoutMs = Number(process.env.VISION_TIMEOUT_MS ?? 120000);
+  const prompt =
+    "Опиши изображение для личного ассистента. " +
+    "Сохрани важные детали, текст на изображении, числа, имена, интерфейсы и видимые действия. " +
+    "Если пользователь задал вопрос, ответь на него по изображению.\n\n" +
+    (userPrompt ? `Вопрос/подпись пользователя: ${userPrompt}` : "Пользователь не добавил подпись.");
+
+  const res = await fetch(`${cfg.baseURL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cfg.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: cfg.model,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:${fullMediaType};base64,${b64}` } },
+          ],
+        },
+      ],
+      max_tokens: Number(process.env.VISION_MAX_OUTPUT_TOKENS ?? 900),
+      temperature: 0.2,
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  const body = await res.text();
+  if (!res.ok) throw new Error(`vision ${cfg.model} HTTP ${res.status}: ${body.slice(0, 220)}`);
+
+  const text = readModelText(JSON.parse(body));
+  if (!text) throw new Error(`vision ${cfg.model} вернула пустое описание`);
+  return text;
+}
+
 // --- Deepgram: транскрипция голоса/видео (nova-3, language=multi) ---
 //
 // Инлайн (НЕ общий модуль — см. выше). Тело — сырые байты, ответ →
@@ -312,7 +407,10 @@ function chunkMarkdown(md: string, limit = 3500): string[] {
 export default telegramChannel({
   botUsername: process.env.TELEGRAM_BOT_USERNAME ?? "my_bot",
   uploadPolicy: {
-    allowedMediaTypes: ["image/*", "application/pdf"],
+    // В describe-режиме картинки читаем сами через vision fallback. Не отдаём их
+    // native-пайплайну eve: Telegram file endpoint часто возвращает photo.jpg как
+    // application/octet-stream, и eve@0.11.4 валит ход до модели.
+    allowedMediaTypes: shouldDescribeImages() ? ["application/pdf"] : ["image/*", "application/pdf"],
     maxBytes: 10 * 1024 * 1024,
   },
   events: {
@@ -480,10 +578,16 @@ export default telegramChannel({
     if (message.attachments.length > 0) {
       await ctx.telegram.startTyping();
       const stamp = localStamp();
+      const originalText = (message.text || "").trim();
       const cap = (message.caption || "").trim();
       const capSuffix = cap ? `\n\n${cap}` : "";
+      const incomingAttachments = [...message.attachments];
+      const hasImages = incomingAttachments.some(isImageAttachment);
       const saved: string[] = [];
-      for (const att of message.attachments) {
+      const imageDescriptions: string[] = [];
+      const imageErrors: string[] = [];
+
+      for (const att of incomingAttachments) {
         const label = `[${att.kind}]`;
         const named = att.fileName ? ` ${att.fileName}` : "";
         try {
@@ -498,20 +602,74 @@ export default telegramChannel({
           } else {
             const rel = saveBlob(f.bytes, att.fileName, att.kind, att.mediaType, stamp);
             saved.push(rel);
+            let daily = `![[${rel}]]${capSuffix}`;
+
+            if (shouldDescribeImages() && isImageAttachment(att)) {
+              try {
+                const description = await describeImage(f.bytes, att.mediaType, cap || originalText);
+                imageDescriptions.push(`${rel}\n${description}`);
+                daily += `\n\nОписание vision-модели:\n${description}`;
+              } catch (err) {
+                const msg = String((err as Error).message ?? err).slice(0, 260);
+                imageErrors.push(`${rel}: ${msg}`);
+                daily += `\n\n(vision-описание не удалось: ${msg})`;
+              }
+            }
+
             // Obsidian-embed: ссылка на сохранённый блоб + подпись.
-            appendDaily(label, `![[${rel}]]${capSuffix}`);
+            appendDaily(label, daily);
           }
         } catch {
           appendDaily(label, `(ошибка обработки файла${named})${capSuffix}`);
         }
       }
-      const text = (message.text || "").trim();
-      if (text) appendDaily("[text]", text);
+      if (originalText) appendDaily("[text]", originalText);
+
+      if (shouldDescribeImages() && hasImages) {
+        stripImageAttachments(message);
+      }
+
+      if (imageErrors.length > 0 && imageDescriptions.length === 0 && hasImages) {
+        try {
+          await ctx.telegram.sendMessage(
+            "Картинку сохранил, но не смог прочитать через vision-модель. " +
+              `Проверь VISION_MODEL/VISION_API_KEY. Ошибка: ${imageErrors[0]}`,
+          );
+        } catch {
+          /* молча игнорируем сбой ответа */
+        }
+        return null;
+      }
+
+      const imageContext = imageDescriptions.length
+        ? [
+            "Содержимое изображения(й), прочитанное vision-моделью:",
+            imageDescriptions.map((d, i) => `Изображение ${i + 1}: ${d}`).join("\n\n"),
+          ].join("\n")
+        : "";
+      if (imageContext) {
+        setMessageText(
+          message,
+          [
+            cap || originalText || "Пользователь прислал изображение.",
+            "",
+            imageContext,
+            imageErrors.length ? `Не удалось прочитать часть изображений: ${imageErrors.join("; ")}` : "",
+            "",
+            "Ответь пользователю по содержимому изображения. Не говори, что не видишь файл: описание выше уже извлечено из картинки.",
+          ]
+            .filter((part) => part !== "")
+            .join("\n"),
+        );
+      }
 
       const vaultDir = process.env.ASSISTANT_VAULT_DIR || "vault";
       const note = saved.length
         ? `Пользователь прислал файл(ы): ${saved.join(", ")} (в ${vaultDir}). ` +
-          `Изображения и PDF доступны тебе нативно; для docx/прочих форматов извлеки текст через ` +
+          (imageContext
+            ? `Изображения уже прочитаны vision-моделью; используй текстовое описание. `
+            : `Изображения и PDF доступны тебе нативно; `) +
+          `Для docx/прочих форматов извлеки текст через ` +
           `bash (напр. pandoc/pdftotext) по сохранённому пути. Сохрани суть в память по правилам vault.`
         : "";
       return { auth: buildAuth(message), ...(note ? { context: [note] } : {}) };
