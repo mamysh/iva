@@ -12,7 +12,7 @@ files yet.
 
 1. Read the whole transcript top to bottom. Entries are
    `## HH:MM [type]` blocks: user side `[text] [voice] [video] [photo] [forward from: …]`,
-   Eva side `[eva]`. Read both sides — Eva's replies often carry the conclusion.
+   Iva side `[iva]` (older days: legacy `[eva]`). Read both sides — Iva's replies often carry the conclusion.
 2. Skip any entry already past a `<!-- processed -->` marker.
 3. Identify **noteworthy items** (see `references/classification.md`):
    - **entities** — a person, organization, or project that matters beyond today.

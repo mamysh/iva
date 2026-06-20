@@ -33,7 +33,7 @@ Link the 2–3 most relevant, each with a context phrase explaining the relation
 ```markdown
 ## Related
 - [[cards/projects/_index|Projects]]
-- [[cards/projects/eva-memory|Eva memory]] — this decision picks its scheduler
+- [[cards/projects/iva-memory|Iva memory]] — this decision picks its scheduler
 - [[cards/notes/deepgram-nova3-multi|Deepgram nova-3 multi]] — feeds the same pipeline
 ```
 

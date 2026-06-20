@@ -15,7 +15,7 @@ The daily-summary is the only thing that links *into* the raw transcript.
 ## Raw transcript — `daily/YYYY-MM-DD.md`
 
 One file per day, named `YYYY-MM-DD.md` in the user's timezone. Two-sided log written
-live by the Telegram channel and Eva's transcript hook.
+live by the Telegram channel and Iva's transcript hook.
 
 ```markdown
 ## HH:MM [type]
@@ -31,7 +31,7 @@ Content of the entry
 | `[video]` | user | Transcribed video / video-note |
 | `[photo]` | user | Image (Obsidian embed + any caption) |
 | `[forward from: Name]` | user | Forwarded message with source |
-| `[eva]` | Eva | Eva's final reply |
+| `[iva]` | Iva | Iva's final reply (older days may use legacy `[eva]`) |
 
 ### Append-only rules
 

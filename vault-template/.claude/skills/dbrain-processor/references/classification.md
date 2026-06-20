@@ -16,14 +16,14 @@ ones. Most transcript lines stay in the transcript and never become cards.
 ## Stays in the transcript (do NOT card)
 
 - Logistics, scheduling, acknowledgements, transient status.
-- One-off questions already answered inline by Eva with no lasting fact.
+- One-off questions already answered inline by Iva with no lasting fact.
 - Emotional venting with no decision/idea/fact to keep.
 - Anything already represented by an existing card → **update** that card instead.
 
 ## Topics (for the daily-summary)
 
 Topics are 2–6 short labels describing what the day was *about* — broader than tags,
-narrower than domains. Examples: `eva-memory`, `deepgram`, `vault-schema`, `family`,
+narrower than domains. Examples: `iva-memory`, `deepgram`, `vault-schema`, `family`,
 `reading`. They populate the summary's `## Topics` and `topics:` frontmatter and are the
 primary way weekly/monthly/yearly rollups understand the period.
 

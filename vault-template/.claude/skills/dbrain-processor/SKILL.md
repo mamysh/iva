@@ -1,11 +1,11 @@
 ---
 name: dbrain-processor
 description: >-
-  Eva's daily-memory processor. Reads the day's two-sided transcript
+  Iva's daily-memory processor. Reads the day's two-sided transcript
   (vault/daily/YYYY-MM-DD.md), distills noteworthy entities / decisions / ideas
   into typed autograph cards, links them into the graph, and produces a
   daily-summary card (topics + MOC) that navigates down to the raw transcript and
-  up to the week. Model-agnostic — runs on any LLM driving the vault (Eva uses
+  up to the week. Model-agnostic — runs on any LLM driving the vault (Iva uses
   DeepSeek). Triggered by the daily rollup (scripts/memory/rollup.ts daily).
 depends_on: [autograph]
 ---
@@ -23,7 +23,8 @@ used — you are the enrichment.
 
 - `vault/daily/YYYY-MM-DD.md` — the day's raw two-sided transcript
   (`## HH:MM [text|voice|video|photo|forward from: …]` for the user,
-  `## HH:MM [eva]` for Eva's replies). See `.claude/rules/daily-format.md`.
+  `## HH:MM [iva]` for Iva's replies; older days may use legacy `[eva]`).
+  See `.claude/rules/daily-format.md`.
 - `vault/.claude/skills/autograph/schema.json` — the vault schema (types, domains, decay).
 - Existing cards under `vault/cards/**` and prior summaries under
   `vault/summaries/`, `vault/weekly|monthly|yearly/` — for linking and dedup.

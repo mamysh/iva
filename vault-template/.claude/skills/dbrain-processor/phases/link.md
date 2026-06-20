@@ -20,7 +20,7 @@ Wire every card created/updated in Phase 2 into the graph. No orphans.
 2. **Neighbor links (2–3).** Find sibling cards of the same type+domain and link the
    2–3 most relevant, each with a short context phrase:
    ```markdown
-   - [[cards/projects/eva-memory|Eva memory]] — this decision implements its scheduler
+   - [[cards/projects/iva-memory|Iva memory]] — this decision implements its scheduler
    ```
    Find siblings with:
    ```bash

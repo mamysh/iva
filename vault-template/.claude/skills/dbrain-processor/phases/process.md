@@ -20,7 +20,7 @@ For each item:
    - No match → **create** a new card.
 2. **Path & filename.** Place by type (see SKILL layout table). Filenames are
    kebab-case slugs:
-   - `cards/contacts/jane-doe.md`, `cards/projects/eva-memory.md`,
+   - `cards/contacts/jane-doe.md`, `cards/projects/iva-memory.md`,
      `cards/ideas/layered-memory-with-decay.md`,
      `cards/decisions/2026-06-20-systemd-timers.md`,
      `cards/notes/deepgram-nova3-multi.md`
@@ -47,7 +47,7 @@ A list of created/updated card paths, carried into Phase 3 (LINK):
 
 ```
 created: [cards/decisions/2026-06-20-systemd-timers.md, ...]
-updated: [cards/projects/eva-memory.md, ...]
+updated: [cards/projects/iva-memory.md, ...]
 ```
 
 Do not finish here — unlinked cards are orphans. Continue to LINK.
