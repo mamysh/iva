@@ -339,8 +339,8 @@ async function main() {
   head(5, "Часовой пояс и хранилище памяти");
   console.log("  Часовой пояс нужен, чтобы Iva понимала ваше реальное время, а не время сервера.");
   out.ASSISTANT_TIMEZONE = await ask(
-    "  Часовой пояс (IANA, напр. Asia/Almaty, Asia/Tashkent, Europe/Moscow)",
-    out.ASSISTANT_TIMEZONE || "Asia/Almaty",
+    "  Часовой пояс (IANA, напр. Europe/Minsk, Europe/Moscow, Asia/Tashkent)",
+    out.ASSISTANT_TIMEZONE || "Europe/Minsk",
   );
   out.ASSISTANT_VAULT_DIR = await ask("  Каталог vault (память + git-бэкап)", out.ASSISTANT_VAULT_DIR || "vault");
   out.ASSISTANT_DATA_DIR = out.ASSISTANT_DATA_DIR || "data";

@@ -2,7 +2,7 @@ import { defineDynamic, defineInstructions } from "eve/instructions";
 
 // Динамическая инструкция: каждый турн инжектит текущие дату/время в часовом поясе
 // пользователя в системный промпт. Самодостаточна — только eve + node Intl.
-const TIMEZONE = process.env.ASSISTANT_TIMEZONE ?? "Asia/Almaty";
+const TIMEZONE = process.env.ASSISTANT_TIMEZONE ?? "Europe/Minsk";
 
 function nowMarkdown(): string {
   const formatted = new Intl.DateTimeFormat("ru-RU", {
