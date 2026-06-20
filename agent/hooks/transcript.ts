@@ -38,7 +38,7 @@ export default defineHook({
       if (event.data.finishReason === "tool-calls") return;
       const text = (event.data.message ?? "").trim();
       if (!text) return;
-      appendDaily("[eva]", text);
+      appendDaily("[iva]", text);
     },
   },
 });
