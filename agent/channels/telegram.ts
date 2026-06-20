@@ -1,5 +1,5 @@
 import { telegramChannel } from "eve/channels/telegram";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Токен (TELEGRAM_BOT_TOKEN) и секрет вебхука (TELEGRAM_WEBHOOK_SECRET_TOKEN)
@@ -80,10 +80,10 @@ function buildAuth(msg: any) {
 // в agent/hooks/transcript.ts — общий модуль НЕ выносим (cross-authored import
 // ломает `eve dev` 0.11.4). Формат d_brain: `## HH:MM [type]` + контент.
 // Дата/время — в часовом поясе пользователя (ASSISTANT_TIMEZONE, иначе локальный TZ).
-function appendDaily(type: string, content: string): void {
+function localStamp(): { date: string; hhmm: string; hhmmss: string } {
   const tz = process.env.ASSISTANT_TIMEZONE || undefined;
   const now = new Date();
-  const localDate = new Intl.DateTimeFormat("en-CA", {
+  const date = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
     year: "numeric",
     month: "2-digit",
@@ -95,10 +95,85 @@ function appendDaily(type: string, content: string): void {
     minute: "2-digit",
     hour12: false,
   }).format(now);
+  const hhmmss = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  })
+    .format(now)
+    .replace(/:/g, "");
+  return { date, hhmm, hhmmss };
+}
+
+function appendDaily(type: string, content: string): void {
+  const { date, hhmm } = localStamp();
   const dir = join(process.env.ASSISTANT_VAULT_DIR || "vault", "daily");
   mkdirSync(dir, { recursive: true });
   // Append-only: существующие записи никогда не переписываются.
-  appendFileSync(join(dir, `${localDate}.md`), `\n## ${hhmm} ${type}\n${content}\n`, "utf8");
+  appendFileSync(join(dir, `${date}.md`), `\n## ${hhmm} ${type}\n${content}\n`, "utf8");
+}
+
+// --- Файловые вложения (фото/документы любого типа, включая docx/pdf) ---
+//
+// eve парсит фото/документы в message.attachments (kind: photo|document) и по
+// uploadPolicy сам отдаёт модели pdf/изображения нативно. Но БЛОБ на диск не пишет
+// и ССЫЛКУ в daily не ставит — делаем это сами: сохраняем в vault/attachments/<date>/,
+// пишем Obsidian-embed в daily, путь отдаём Еве. docx/прочее Ева читает через host-bash.
+
+// getFile → скачивание байтов. Возвращает байты, либо признак >20MB, либо null.
+async function fetchTelegramFile(
+  request: (method: string, body?: { file_id: string }) => Promise<{ body: unknown }>,
+  fileId: string,
+): Promise<{ bytes: ArrayBuffer } | { tooBig: true } | null> {
+  const r = await request("getFile", { file_id: fileId });
+  const body = r.body as { result?: { file_path?: string }; description?: string } | null;
+  const filePath = body?.result?.file_path;
+  if (!filePath) {
+    if (/too big/i.test(String(body?.description ?? ""))) return { tooBig: true };
+    return null;
+  }
+  const token = process.env.TELEGRAM_BOT_TOKEN ?? "";
+  const dl = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
+  if (!dl.ok) return null;
+  return { bytes: await dl.arrayBuffer() };
+}
+
+// Расширение из имени → mediaType → дефолт по виду.
+function attExt(name: string | undefined, mediaType: string | undefined, kind: string): string {
+  const m = name && /\.([a-z0-9]{1,8})$/i.exec(name);
+  if (m) return m[1].toLowerCase();
+  const sub = mediaType?.includes("/") ? mediaType.split("/")[1] : "";
+  if (/^[a-z0-9.+-]{1,8}$/i.test(sub)) return sub.toLowerCase().replace("+xml", "");
+  return kind === "photo" ? "jpg" : "bin";
+}
+
+// Сохраняет блоб в vault/attachments/<date>/<name>, возвращает rel-путь для Obsidian-embed.
+// Имя берём из присланного (санитизируем), иначе <kind>-<hhmmss>.<ext>; коллизии нумеруем.
+function saveBlob(
+  bytes: ArrayBuffer,
+  name: string | undefined,
+  kind: string,
+  mediaType: string | undefined,
+  stamp: { date: string; hhmmss: string },
+): string {
+  const ext = attExt(name, mediaType, kind);
+  const safe = (name ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[-.]+/, "")
+    .replace(/-+$/, "");
+  let fname = safe && /\.[a-z0-9]+$/.test(safe) ? safe : `${kind}-${stamp.hhmmss}.${ext}`;
+  const dir = join(process.env.ASSISTANT_VAULT_DIR || "vault", "attachments", stamp.date);
+  mkdirSync(dir, { recursive: true });
+  const dot = fname.lastIndexOf(".");
+  const base = dot > 0 ? fname.slice(0, dot) : fname;
+  const tail = dot > 0 ? fname.slice(dot) : "";
+  let i = 1;
+  while (existsSync(join(dir, fname))) fname = `${base}-${i++}${tail}`;
+  writeFileSync(join(dir, fname), Buffer.from(bytes));
+  return `attachments/${stamp.date}/${fname}`;
 }
 
 // --- Deepgram: транскрипция голоса/видео (nova-3, language=multi) ---
@@ -236,10 +311,51 @@ export default telegramChannel({
       }
     }
 
-    // 3. Штатное гейтирование диспатча (текст/фото/документы).
+    // 3. Штатное гейтирование диспатча (текст/фото/документы; в группе — только обращённое к боту).
     if (!shouldDispatch(message, ctx.telegram.botUsername)) return null;
 
-    // Сырой транскрипт: текстовая реплика юзера → daily.
+    // 4. Файловые вложения → блоб в vault/attachments + ссылка в daily + путь Еве.
+    if (message.attachments.length > 0) {
+      await ctx.telegram.startTyping();
+      const stamp = localStamp();
+      const cap = (message.caption || "").trim();
+      const capSuffix = cap ? `\n\n${cap}` : "";
+      const saved: string[] = [];
+      for (const att of message.attachments) {
+        const label = `[${att.kind}]`;
+        const named = att.fileName ? ` ${att.fileName}` : "";
+        try {
+          const f = await fetchTelegramFile(
+            (m, b) => ctx.telegram.request(m, b),
+            att.fileId,
+          );
+          if (!f) {
+            appendDaily(label, `(не удалось скачать файл${named})${capSuffix}`);
+          } else if ("tooBig" in f) {
+            appendDaily(label, `(файл >20MB — Telegram не отдаёт ботам${named})${capSuffix}`);
+          } else {
+            const rel = saveBlob(f.bytes, att.fileName, att.kind, att.mediaType, stamp);
+            saved.push(rel);
+            // Obsidian-embed: ссылка на сохранённый блоб + подпись.
+            appendDaily(label, `![[${rel}]]${capSuffix}`);
+          }
+        } catch {
+          appendDaily(label, `(ошибка обработки файла${named})${capSuffix}`);
+        }
+      }
+      const text = (message.text || "").trim();
+      if (text) appendDaily("[text]", text);
+
+      const vaultDir = process.env.ASSISTANT_VAULT_DIR || "vault";
+      const note = saved.length
+        ? `Пользователь прислал файл(ы): ${saved.join(", ")} (в ${vaultDir}). ` +
+          `Изображения и PDF доступны тебе нативно; для docx/прочих форматов извлеки текст через ` +
+          `bash (напр. pandoc/pdftotext) по сохранённому пути. Сохрани суть в память по правилам vault.`
+        : "";
+      return { auth: buildAuth(message), ...(note ? { context: [note] } : {}) };
+    }
+
+    // 5. Текстовая реплика юзера → daily.
     const userText = (message.text || "").trim();
     if (userText) appendDaily("[text]", userText);
 
