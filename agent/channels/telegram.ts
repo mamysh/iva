@@ -51,6 +51,11 @@ function shouldDispatchMedia(msg: any, bot?: string): boolean {
   );
 }
 
+function setMessageText(msg: any, text: string): void {
+  msg.text = text;
+  msg.caption = "";
+}
+
 // Воспроизводит дефолтный auth-контекст eve для Telegram-актора.
 function buildAuth(msg: any) {
   const u = msg.from;
@@ -319,7 +324,7 @@ export default telegramChannel({
       const md = data.message;
       for (const part of chunkMarkdown(md)) {
         try {
-          await channel.telegram.post({ text: mdToTelegramHtml(part), parse_mode: "HTML" });
+          await channel.telegram.post({ text: mdToTelegramHtml(part), parse_mode: "HTML" } as any);
         } catch {
           await channel.telegram.post(part);
         }
@@ -443,9 +448,19 @@ export default telegramChannel({
           return null;
         }
 
-        // Сырой транскрипт юзера → daily; расшифровка долетает до Iva через context[].
+        // Сырой транскрипт юзера → daily; расшифровка долетает до Iva как обычное сообщение.
         appendDaily(tag, transcript);
-        return { auth: buildAuth(message), context: [`${tag} ${transcript}`] };
+        setMessageText(message, transcript);
+        const kind = media.label === "voice" ? "голосовое сообщение" : "видео";
+        const context = [
+          `Пользователь прислал ${kind}.`,
+          `Расшифровка: ${transcript}`,
+          caption ? `Подпись: ${caption}` : "",
+          "Ответь на расшифровку как на обычное сообщение пользователя. Не объясняй процесс транскрибации без отдельной просьбы.",
+        ]
+          .filter(Boolean)
+          .join("\n");
+        return { auth: buildAuth(message), context: [context] };
       } catch (err) {
         try {
           await ctx.telegram.sendMessage(

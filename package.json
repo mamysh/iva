@@ -12,7 +12,7 @@
   "scripts": {
     "iva": "node bin/iva.mjs",
     "setup": "node scripts/setup.mjs",
-    "build": "eve build",
+    "build": "eve build && node scripts/prewarm-sandbox.mjs",
     "dev": "eve dev",
     "start": "eve start",
     "init-vault": "node scripts/init-vault.mjs",
@@ -31,7 +31,8 @@
   },
   "devDependencies": {
     "@types/node": "24.x",
-    "@typescript/native-preview": "7.0.0-dev.20260523.1"
+    "@typescript/native-preview": "7.0.0-dev.20260523.1",
+    "just-bash": "^3.0.1"
   },
   "overrides": {
     "ai": "7.0.0-beta.178"
