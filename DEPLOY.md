@@ -2,7 +2,7 @@
 
 ## Установка одной командой (bare VPS)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/codex/iva-voice-sandbox/install.sh | bash
 ```
 `install.sh` сам ставит системные зависимости (`git`, `gh`, `python3`, `ffmpeg`), `uv`,
 Node 24+ (nvm), npm-зависимости, проводит интерактивную настройку (`setup.mjs`), собирает

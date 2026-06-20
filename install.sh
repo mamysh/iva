@@ -2,7 +2,7 @@
 #
 # Установка Iva (личный агент с долговременной памятью) одной командой на голом VPS:
 #
-#   curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/mamysh/iva/codex/iva-voice-sandbox/install.sh | bash
 #
 # Ставит системные зависимости (git, gh, python3, ffmpeg, pandoc, poppler), uv, Node 24+ (nvm),
 # npm-зависимости, проводит интерактивную настройку (Ollama + модель + Telegram +
@@ -21,8 +21,8 @@
 printf '\n  \033[36m⏳ Идёт подготовка окружения — это может занять до минуты. Не прерывай процесс…\033[0m\n'
 set -Eeuo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/smixs/iva.git}"
-BRANCH="${BRANCH:-main}"
+REPO_URL="${REPO_URL:-https://github.com/mamysh/iva.git}"
+BRANCH="${BRANCH:-codex/iva-voice-sandbox}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/iva}"
 NODE_MAJOR_MIN=24
 

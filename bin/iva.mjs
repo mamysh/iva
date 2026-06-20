@@ -20,7 +20,9 @@ const NPM = existsSync(join(NODE_BIN_DIR, "npm")) ? join(NODE_BIN_DIR, "npm") : 
 // Дети наследуют PATH с каталогом node — иначе npm/eve не найдутся при вызове через wrapper.
 const childEnv = { ...process.env, PATH: `${NODE_BIN_DIR}:${process.env.PATH || ""}` };
 
-const SERVICES = ["iva.service", "iva-telegram-poll.service", "iva-telegram-mcp.service"];
+const BASE_SERVICES = ["iva.service", "iva-telegram-poll.service"];
+const TELEGRAM_MCP_SERVICE = "iva-telegram-mcp.service";
+const ALL_SERVICES = [...BASE_SERVICES, TELEGRAM_MCP_SERVICE];
 const TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((n) => `iva-memory-${n}.timer`);
 
 const C = { g: "\x1b[32m", y: "\x1b[33m", r: "\x1b[31m", c: "\x1b[36m", b: "\x1b[1m", d: "\x1b[2m", x: "\x1b[0m" };
@@ -50,6 +52,25 @@ function readEnv() {
     if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, "");
   }
   return env;
+}
+
+function telegramMcpState(env = readEnv()) {
+  const hasApi = Boolean((env.TELEGRAM_API_ID || "").trim() && (env.TELEGRAM_API_HASH || "").trim());
+  const hasDefaultSession = Boolean(
+    (env.TELEGRAM_SESSION_STRING || "").trim() || (env.TELEGRAM_SESSION_NAME || "").trim(),
+  );
+  const hasLabeledSession = Object.entries(env).some(
+    ([key, value]) =>
+      (key.startsWith("TELEGRAM_SESSION_STRING_") || key.startsWith("TELEGRAM_SESSION_NAME_")) &&
+      String(value || "").trim(),
+  );
+  if (hasApi && (hasDefaultSession || hasLabeledSession)) return "configured";
+  if (hasApi || hasDefaultSession || hasLabeledSession) return "partial";
+  return "disabled";
+}
+
+function managedServices(env = readEnv()) {
+  return telegramMcpState(env) === "configured" ? [...BASE_SERVICES, TELEGRAM_MCP_SERVICE] : BASE_SERVICES;
 }
 
 async function confirm(question, def = false) {
@@ -123,7 +144,7 @@ function writeUnits() {
 }
 
 function enableUnits() {
-  sc("enable", "--now", ...SERVICES);
+  sc("enable", "--now", ...managedServices());
   for (const t of TIMERS) sc("enable", "--now", t);
 }
 
@@ -174,8 +195,8 @@ async function cmdUpdate(args) {
   if (hasSystemd()) {
     step("Рефреш systemd-юнитов и перезапуск…");
     writeUnits();
-    sc("restart", ...SERVICES);
-    ok("Перезапущено: iva + telegram-poll");
+    sc("restart", ...managedServices());
+    ok("Перезапущено: активные сервисы Iva");
   } else {
     warn("systemd недоступен — перезапустите процесс вручную");
   }
@@ -187,7 +208,7 @@ async function cmdConfig() {
   const r = run(NODE, ["scripts/setup.mjs"]);
   if (r.status !== 0) process.exit(r.status ?? 1);
   if (hasSystemd() && (await confirm("Перезапустить сервисы, чтобы применить настройки?", true))) {
-    sc("restart", ...SERVICES);
+    sc("restart", ...managedServices());
     ok("Сервисы перезапущены");
   }
 }
@@ -242,8 +263,20 @@ function cmdDoctor() {
     (ok("Юниты установлены и включены"), fixN++);
   } else (ok("systemd-юниты установлены"), okN++);
 
-  // 5. Сервисы активны
-  for (const svc of SERVICES) {
+  // 5. Сервисы активны. Telegram MCP стартуем только после полной настройки user-session.
+  const mcpState = telegramMcpState(env);
+  if (mcpState === "partial") {
+    warn(
+      "Telegram MCP настроен частично — заполните TELEGRAM_API_ID, TELEGRAM_API_HASH и TELEGRAM_SESSION_STRING, " +
+        "затем запустите: iva doctor",
+    );
+    warnN++;
+  } else if (mcpState === "disabled" && scQ("is-enabled", TELEGRAM_MCP_SERVICE).out === "enabled") {
+    warn("Telegram MCP не настроен — выключаю iva-telegram-mcp.service");
+    scQ("disable", "--now", TELEGRAM_MCP_SERVICE);
+    fixN++;
+  }
+  for (const svc of managedServices(env)) {
     if (scQ("is-active", svc).out === "active") (ok(`${svc} активен`), okN++);
     else {
       warn(`${svc} неактивен — перезапускаю…`);
@@ -288,13 +321,13 @@ function cmdDoctor() {
 
 function cmdStatus() {
   requireSystemd();
-  run("systemctl", ["--user", "status", "--no-pager", "-n", "5", ...SERVICES]);
+  run("systemctl", ["--user", "status", "--no-pager", "-n", "5", ...managedServices()]);
   run("systemctl", ["--user", "list-timers", "--no-pager", "iva-memory-*"]);
 }
 function cmdRestart() {
   requireSystemd();
-  sc("restart", ...SERVICES);
-  ok("Перезапущено: iva + telegram-poll");
+  sc("restart", ...managedServices());
+  ok("Перезапущено: активные сервисы Iva");
 }
 function cmdStart() {
   requireSystemd();
@@ -303,12 +336,16 @@ function cmdStart() {
 }
 function cmdStop() {
   requireSystemd();
-  sc("stop", ...SERVICES);
+  sc("stop", ...ALL_SERVICES);
   ok("Остановлено");
 }
 function cmdLogs(args) {
   requireSystemd();
-  const unit = args.includes("poll") ? "iva-telegram-poll.service" : "iva.service";
+  const unit = args.includes("mcp")
+    ? TELEGRAM_MCP_SERVICE
+    : args.includes("poll")
+      ? "iva-telegram-poll.service"
+      : "iva.service";
   run("journalctl", ["--user", "-u", unit, "-f", "-n", "50"]);
 }
 
@@ -364,7 +401,7 @@ ${C.b}Команды:${C.x}
   ${C.c}iva status${C.x}         статус сервисов и таймеров памяти
   ${C.c}iva restart${C.x}        перезапустить агента и Telegram-мост
   ${C.c}iva start${C.x} / ${C.c}stop${C.x}    запустить / остановить
-  ${C.c}iva logs${C.x} [poll]     логи агента (или Telegram-моста) -f
+  ${C.c}iva logs${C.x} [poll|mcp] логи агента, Telegram-моста или Telegram MCP -f
   ${C.c}iva uninstall${C.x}       снять юниты и команду (--purge — удалить код+vault)
   ${C.c}iva version${C.x}         версия и git-commit
 

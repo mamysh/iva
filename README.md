@@ -7,7 +7,7 @@
 
 **Установка:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/codex/iva-voice-sandbox/install.sh | bash
 ```
 
 [![Релиз](https://img.shields.io/github/v/release/smixs/iva?label=релиз&color=brightgreen)](https://github.com/smixs/iva/releases)
@@ -118,7 +118,7 @@ Iva решает обе. Ставится одной командой, рабо�
 2. Вставьте команду и нажмите Enter:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/mamysh/iva/codex/iva-voice-sandbox/install.sh | bash
    ```
 3. Установщик проведёт по настройке и сам даст ссылки на каждый ключ - вставляете, когда попросит. Один
    раз он попросит написать вашему боту любое сообщение, так Iva вас запомнит и будет отвечать только вам.
