@@ -144,3 +144,18 @@
   периода в rollup.ts через `--`).
 - **deploy/ и scripts/memory/ на момент работы компонента F не существуют** (их создают другие компоненты).
   install.sh и package.json ссылаются на них «вперёд»; install.sh устойчив к отсутствию deploy-юнитов.
+
+## 2026-06-20 (P0 — разделение live-vault и код-репо)
+
+### Decisions
+- **Скелет vault → `vault-template/`** (трекается: правила, autograph, dbrain-processor, schema.json, пустые
+  каталоги). **Живой vault** (`ASSISTANT_VAULT_DIR`, дефолт `./vault`) — ОТДЕЛЬНЫЙ приватный git-репо, в код-репо
+  игнорируется (`/vault/`). Причина: личные транскрипты/блобы не должны попадать в код-репо, а вложенный `git init`
+  внутри трекаемого `vault/` давал embedded-repo конфликт.
+- **`scripts/init-vault.mjs`** (idempotent): копирует `vault-template/` → живой vault если он пуст, затем `git init`
+  + первый commit. install.sh зовёт его вместо инлайнового git-init; локально — `npm run init-vault`. Существующий
+  vault с данными не перетирается; первый commit в try/catch (без git-идентичности не падает, doctor.ts докоммитит).
+- Рантайм-код (telegram/rollup/doctor) уже читал `ASSISTANT_VAULT_DIR` — менять не пришлось.
+
+### Gotchas
+- Живой `vault/` отсутствует в свежем клоне код-репо — перед работой памяти нужен `npm run init-vault`.

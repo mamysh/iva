@@ -7,8 +7,10 @@ This project uses the eve framework. Before writing code, always read the releva
   полный доступ к VPS. Защита периметра — allowlist Telegram (fail-closed).
 - **Deepgram.** Голос/видео/аудио из Telegram транскрибируются (nova-3, `DEEPGRAM_LANGUAGE=multi`) и пишутся
   в дневной транскрипт vault до попадания к Еве.
-- **Vault** (`ASSISTANT_VAULT_DIR`) — приватный git-репо (память + Obsidian). `install.sh` делает `git init`;
-  пользователь при первом запуске проходит `gh auth login` и привязывает приватный remote.
+- **Vault.** Скелет (правила, autograph, dbrain-processor, schema) живёт в код-репо как `vault-template/`.
+  ЖИВОЙ vault (`ASSISTANT_VAULT_DIR`, дефолт `./vault`) — ОТДЕЛЬНЫЙ приватный git-репо: личные транскрипты/блобы
+  в код-репо не попадают (`/vault/` в `.gitignore`). Создаётся из шаблона: `npm run init-vault` (install.sh зовёт сам);
+  затем `gh auth login` + приватный remote. doctor.ts коммитит/пушит живой vault.
 - **Память — systemd-таймеры** (`deploy/eve-memory-*.{service,timer}`): daily/weekly/monthly/yearly + doctor,
   драйвят Еву через `eve/client`. eve-расписания (`defineSchedule`) на self-host НЕ срабатывают (только Vercel Cron).
 - **Время** — `ASSISTANT_TIMEZONE` (→ `TZ`) + динамическая инструкция `now`.

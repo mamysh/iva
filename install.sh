@@ -174,23 +174,14 @@ npm exec -- eve build
 ok "Сборка готова → .output"
 
 # ─────────────────────────────────────────────────────────────────────────
-# 8. Vault как приватный git-репо (память + бэкап + Obsidian)
+# 8. Live-vault: ОТДЕЛЬНЫЙ приватный git-репо (память + бэкап + Obsidian)
 # ─────────────────────────────────────────────────────────────────────────
+# Живой vault создаётся из vault-template/ (скелет в код-репо) и git-init-ится
+# как самостоятельный репозиторий — личные данные в код-репо не попадают.
 VAULT_DIR_REL="$(grep -E '^ASSISTANT_VAULT_DIR=' .env 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' || true)"
 VAULT_DIR_REL="${VAULT_DIR_REL:-vault}"
-case "$VAULT_DIR_REL" in
-  /*) VAULT_PATH="$VAULT_DIR_REL" ;;
-  *)  VAULT_PATH="$PROJECT_DIR/$VAULT_DIR_REL" ;;
-esac
-mkdir -p "$VAULT_PATH"
-if [ ! -d "$VAULT_PATH/.git" ]; then
-  step "Инициализирую vault git-репо: $VAULT_PATH"
-  git -C "$VAULT_PATH" init -q
-  [ -f "$VAULT_PATH/.gitignore" ] || printf '.DS_Store\n.obsidian/workspace*\n' > "$VAULT_PATH/.gitignore"
-  ok "vault git-репо создан"
-else
-  ok "vault уже git-репо"
-fi
+step "Готовлю live-vault из шаблона…"
+ASSISTANT_VAULT_DIR="$VAULT_DIR_REL" node scripts/init-vault.mjs || warn "init-vault не отработал — проверь vault вручную"
 
 # ─────────────────────────────────────────────────────────────────────────
 # 9. systemd: основной сервис + таймеры памяти (Linux)
