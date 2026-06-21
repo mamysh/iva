@@ -108,11 +108,13 @@
   <pre><code>curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash</code></pre>
 
   <h2>Why Iva</h2>
-  <p>Dozens of agents exist, and each one hands you a pile of choices: which model, which memory, which
-  search, how to deploy, how to wire it together. Too much choice is the real problem. Iva makes those
-  choices for you — we pick the best of each piece by hand, assemble it, set the defaults, and make sure
-  it works. The Linux Mint of AI agents: one command, and it just runs. Open code, open models, you
-  still pick the model by name (DeepSeek, Kimi, GLM) — your key, no markup.</p>
+  <p>OpenClaw, Hermes, nanobot — there are a lot of good agents out there. So why another one? Because
+  every one of them hands you the same pile of choices: which model, which memory, which search, how to
+  wire it together. Too much choice is the real problem. So I made the choices: I test agents, models,
+  stacks and harnesses all the time, keep what's actually best, and fold it into Iva — the best of every
+  agent in one. Open code on open models (DeepSeek, Kimi, GLM) — you pick the model by name, your key, no
+  markup. The Linux Mint of AI agents: one command, and it just works. Lots of agents out there; this
+  one's mine — now it's yours too.</p>
 
   <h2>What it can do</h2>
   <ul class="feat">
@@ -135,8 +137,12 @@
     🌿 BRANCHES — monthly summaries, built from weeks, built from days
    ╱      ╲
   🍃 LEAVES     — the full, word-for-word transcript of each day</div>
-  <p>Every night Iva summarizes the leaves and folds them up the branches. Zero infrastructure, fully
-  inspectable, git-diffable — no vector DB to run, sync or pay for.</p>
+  <p>Every night Iva summarizes the leaves and folds them up the branches — a hierarchical summary DAG
+  that compacts older days while keeping a pointer to every original. It's the part I've worked on
+  longest (<a href="https://github.com/smixs/agent-second-brain">agent-second-brain</a> → autograph →
+  Iva), built on the <a href="https://papers.voltropy.com/LCM">LCM: Lossless Context Management</a> paper
+  plus a lot of practice — one of the best memory designs you'll find in a personal agent today. Zero
+  infrastructure, fully inspectable, git-diffable — no vector DB to run, sync or pay for.</p>
 
   <h2>Providers &amp; cost</h2>
   <p>Free and open-source. You pay only for a small always-on server (~$5/mo) and one model subscription —

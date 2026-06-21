@@ -31,26 +31,24 @@ on your machine. You bring your own model key, and you pick the model.
 
 ## Why Iva
 
-Plenty of self-hosted personal agents exist — [OpenClaw](https://github.com/openclaw/openclaw),
-[Hermes](https://github.com/NousResearch/hermes-agent),
-[nanobot](https://github.com/HKUDS/nanobot) and more. They're good. But every one of them hands you a
-pile of decisions: which model, which memory design, which search backend, how to deploy, how to wire
-it all together. That's the real problem — not too few agents, too much choice.
+[OpenClaw](https://github.com/openclaw/openclaw), [Hermes](https://github.com/NousResearch/hermes-agent),
+[nanobot](https://github.com/HKUDS/nanobot) — there are a lot of good personal agents out there. So why
+build another one? Because every one of them hands you the same pile of decisions: which model, which
+memory, which search, how to deploy, how to wire it together. Too much choice is the real problem.
 
-Iva makes those choices for you. We picked the best of each piece by hand — the model providers, the
-voice engine, the memory, the search — assembled them, set the defaults, and made sure it works. The
-Linux Mint of AI agents: one command, and it just runs.
+So I made the choices. I test agents, models, stacks and harnesses all the time, keep what's actually
+best, and fold it into Iva — so you get the result without doing the research. The goal is one thing: a
+cheap, fast, reliable agent for every day, the kind that pings you with your morning digest on its own.
 
-- **The hard choices, already made.** Model, memory, voice, search, deployment — each one picked and
-  wired, so you don't compare five options for every part.
-- **Best of each, by hand.** Telegram for the chat, Deepgram for voice, a tree-shaped memory, nightly
-  rollups — the good tools, put together so you don't have to.
-- **Open all the way down.** Open-source code, open-source models. The open models are genuinely good
-  now, so there's no reason to rent a closed one and watch the price move under you.
-- **You still pick the model, by name.** DeepSeek V4 Pro (the default), DeepSeek V4 Flash, Kimi, GLM —
-  your key, your choice, no markup on top of the provider.
+- **The best of every agent, in one.** I've been at this a while. The good ideas from across the field,
+  tested and assembled, set up with sane defaults — that's what installs when you run the command.
+- **Open all the way down.** Open-source code on open-source models. The open models — DeepSeek, Kimi,
+  GLM — are genuinely good now: you pick one by name, your key, no markup, no closed vendor moving the
+  price under you.
+- **One command, and it works.** Telegram for the chat, Deepgram for voice, a tree-shaped memory,
+  nightly rollups — already picked, wired and configured. The Linux Mint of AI agents.
 
-One command, and it works. The agent is yours, and it keeps working the same tomorrow.
+Lots of agents out there. This one's mine — now it's yours too.
 
 ---
 
@@ -112,8 +110,13 @@ What that buys you:
 - **Cheap and private** — lives on your disk, nothing shipped to a third-party memory service.
 - **Easy to fix** — when memory is wrong, you edit a file. No re-indexing, no stale-embedding mystery.
 
-This is the same idea Iva grew out of: [agent-second-brain](https://github.com/smixs/agent-second-brain),
-now running on open models you own — no subscription required.
+Memory is the part I've worked on the longest — first
+[agent-second-brain](https://github.com/smixs/agent-second-brain), then the **autograph** typed-graph
+skill, and all of it folded into Iva. The tree above is a hierarchical summary DAG: it compacts older
+days while keeping a pointer back to every original — the idea at the heart of the
+**[LCM: Lossless Context Management](https://papers.voltropy.com/LCM)** paper (Ehrlich & Blackman,
+2026), plus my own vision and a lot of practice on top. It's one of the best memory designs you'll find
+in a personal agent today — and it runs on open models you own, no subscription required.
 
 ---
 
