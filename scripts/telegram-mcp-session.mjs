@@ -36,8 +36,15 @@ if (!existsSync(venvPython)) {
 }
 
 const args = process.argv.slice(2);
-const res = spawnSync(venvPython, ["session_string_generator.py", ...args], {
-  cwd: mcpDir,
+const generator = join(mcpDir, "session_string_generator.py");
+
+if (!existsSync(generator)) {
+  console.error(`telegram-mcp session generator not found: ${generator}`);
+  process.exit(1);
+}
+
+const res = spawnSync(venvPython, [generator, ...args], {
+  cwd: ROOT,
   stdio: "inherit",
   env: { ...process.env, ...env },
 });
