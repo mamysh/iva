@@ -48,6 +48,7 @@ const joinChunks = (v: unknown): string => arr(v).map(str).filter(Boolean).join(
 
 type Normalized = { answer?: string; results: { title: string; url: string; snippet: string }[] };
 type BuiltRequest = { url: string; method: "GET" | "POST"; headers: Record<string, string>; body?: string };
+type DuckDuckGoAttempt = { url: string; init: RequestInit };
 
 interface SearchProvider {
   name: string; // совпадает со значением SEARCH_PROVIDER
@@ -143,8 +144,13 @@ function pickProvider(): SearchProvider {
   return PROVIDERS.find((p) => p.name === name) ?? PROVIDERS[0]; // неизвестный → tavily
 }
 
-async function searchDuckDuckGo(query: string, n: number) {
-  const attempts = [
+function fallbackNote(reason?: string): string {
+  const prefix = reason ? `API-поиск не сработал (${reason}); использован DuckDuckGo fallback.` : "DuckDuckGo fallback.";
+  return `${prefix} Для стабильного поиска на VPS лучше добавить/проверить ключ выбранного SEARCH_PROVIDER.`;
+}
+
+async function searchDuckDuckGo(query: string, n: number, reason?: string, fallbackFrom?: string) {
+  const attempts: DuckDuckGoAttempt[] = [
     {
       url: `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
       init: { headers: { "User-Agent": "Mozilla/5.0 (compatible; iva-agent/1.0)" } },
@@ -172,8 +178,7 @@ async function searchDuckDuckGo(query: string, n: number) {
       }
       const found = parseDuckDuckGoHtml(await res.text(), n);
       if (found.length) {
-        const note = "DuckDuckGo fallback: для стабильного поиска на VPS лучше добавить ключ выбранного SEARCH_PROVIDER.";
-        return { provider: "duckduckgo", results: found, note };
+        return { provider: "duckduckgo", fallbackFrom, fallbackReason: reason, results: found, note: fallbackNote(reason) };
       }
       lastError = "DuckDuckGo не вернул распознаваемых результатов";
     } catch (e) {
@@ -183,8 +188,10 @@ async function searchDuckDuckGo(query: string, n: number) {
 
   return {
     provider: "duckduckgo",
+    fallbackFrom,
+    fallbackReason: reason,
     results: [],
-    note: `Ничего не найдено. ${lastError}. Для стабильного поиска на VPS лучше добавить ключ выбранного SEARCH_PROVIDER.`,
+    note: `Ничего не найдено. ${lastError}. ${fallbackNote(reason)}`,
   };
 }
 
@@ -225,7 +232,7 @@ export default defineTool({
     const provider = pickProvider();
     const key = (process.env[provider.keyEnv] || "").trim();
     if (!key) {
-      return searchDuckDuckGo(query, n);
+      return searchDuckDuckGo(query, n, `${provider.keyEnv} не задан`, provider.name);
     }
 
     const req = provider.build(query, n, key);
@@ -233,27 +240,39 @@ export default defineTool({
     try {
       res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
     } catch (e) {
-      return { error: `сеть: ${(e as Error).message}` };
+      return searchDuckDuckGo(query, n, `${provider.name}: сеть: ${(e as Error).message}`, provider.name);
     }
 
-    if (res.status === 401 || res.status === 403) return { error: `${provider.name} отклонил ключ (401/403) — проверь ${provider.keyEnv}.` };
-    if (res.status === 429) return { error: `${provider.name}: превышен лимит запросов (429) — попробуй позже.` };
-    if (!res.ok) return { error: `${provider.name} HTTP ${res.status}` };
+    if (res.status === 401 || res.status === 403)
+      return searchDuckDuckGo(query, n, `${provider.name} отклонил ключ (${res.status}) — проверь ${provider.keyEnv}`, provider.name);
+    if (res.status === 402 || res.status === 429)
+      return searchDuckDuckGo(query, n, `${provider.name}: лимит/оплата (${res.status})`, provider.name);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      const detail = body.trim() ? `: ${body.slice(0, 180)}` : "";
+      return searchDuckDuckGo(query, n, `${provider.name} HTTP ${res.status}${detail}`, provider.name);
+    }
 
     let json: unknown;
     try {
       json = await res.json();
     } catch (e) {
-      return { error: `${provider.name}: некорректный JSON (${(e as Error).message})` };
+      return searchDuckDuckGo(query, n, `${provider.name}: некорректный JSON (${(e as Error).message})`, provider.name);
     }
 
-    const norm = provider.parse(json);
+    let norm: Normalized;
+    try {
+      norm = provider.parse(json);
+    } catch (e) {
+      return searchDuckDuckGo(query, n, `${provider.name}: неожиданный ответ (${(e as Error).message})`, provider.name);
+    }
     const results = norm.results
       .filter((r) => r.url)
       .slice(0, n)
       .map((r) => ({ title: clip(r.title, TITLE_MAX), url: r.url, snippet: clip(r.snippet, SNIPPET_MAX) }));
     const answer = norm.answer && norm.answer.trim() ? norm.answer.trim() : undefined;
 
+    if (!results.length && !answer) return searchDuckDuckGo(query, n, `${provider.name}: пустой результат`, provider.name);
     if (!results.length) return { provider: provider.name, results: [], ...(answer ? { answer } : {}), note: "Ничего не найдено." };
     return answer ? { provider: provider.name, answer, results } : { provider: provider.name, results };
   },
