@@ -1,6 +1,6 @@
 {
   "name": "iva",
-  "version": "0.0.0",
+  "version": "0.1.2",
   "type": "module",
   "bin": {
     "iva": "bin/iva.mjs"
@@ -12,6 +12,7 @@
   "scripts": {
     "iva": "node bin/iva.mjs",
     "setup": "node scripts/setup.mjs",
+    "check-port": "node scripts/check-port.mjs",
     "build": "eve build && node scripts/prewarm-sandbox.mjs",
     "dev": "eve dev",
     "start": "eve start",

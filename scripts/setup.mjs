@@ -9,6 +9,7 @@ import { readFile, writeFile, access } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { defaultChecker, PortSelector } from "./lib/ports.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = join(ROOT, ".env");
@@ -47,6 +48,27 @@ const askYesNo = async (q, def = false) => {
   const a = (await ask(`${q} (${def ? "Y/n" : "y/N"})`)).toLowerCase();
   return a ? a.startsWith("y") : def;
 };
+
+// Выбор свободного порта: спрашиваем желаемый, проверяем доступность теми же Probe,
+// что и `check-port` (scripts/lib/ports.mjs); при занятости предлагаем ближайший свободный.
+// Закрывает корень бага на этапе настройки — сервер не стартанёт на занятом порту.
+async function pickPort(def) {
+  const checker = defaultChecker();
+  for (;;) {
+    const port = Number(await ask("  Порт локального eve-сервера", String(def)));
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      console.log(`  ${C.r}Некорректный порт${C.x} — нужно число 1..65535.`);
+      continue;
+    }
+    const { occupied, holders } = await checker.check(port);
+    if (!occupied) return String(port);
+    const free = await new PortSelector(checker).firstFree(port + 1);
+    const who = holders.length ? ` (${holders.join("; ")})` : "";
+    console.log(`  ${C.y}Порт ${port} занят${who}.${C.x}${free ? ` Ближайший свободный: ${C.g}${free}${C.x}.` : ""}`);
+    if (free && (await askYesNo(`  Взять ${free}?`, true))) return String(free);
+    // иначе повторяем цикл — пользователь введёт другой порт вручную
+  }
+}
 const mask = (s) => (s ? s.slice(0, 6) + "…(оставить)" : "");
 const hr = () => console.log(`${C.c}  ────────────────────────────────────────────${C.x}`);
 const head = (n, title) => console.log(`\n${C.b}${C.c}  Шаг ${n}/${TOTAL}: ${title}${C.x}`);
@@ -271,6 +293,29 @@ async function main() {
   });
   out.DEEPGRAM_LANGUAGE = await ask("  Язык распознавания (multi = авто ru/uz/en)", out.DEEPGRAM_LANGUAGE || "multi");
 
+  // ── Веб-поиск: выбор провайдера + ключ ─────────────────────────────
+  // Если ключ выбранного провайдера не задан, web_search использует DuckDuckGo fallback.
+  console.log(`\n  ${C.b}Веб-поиск${C.x} — API-провайдер стабильнее, но Enter на ключе оставит DuckDuckGo fallback.`);
+  const SEARCH = [
+    { id: "tavily", key: "TAVILY_API_KEY", url: "https://app.tavily.com", note: "free ~1000/мес, без карты, есть answer ★" },
+    { id: "exa", key: "EXA_API_KEY", url: "https://dashboard.exa.ai", note: "free ~20k/мес, без карты" },
+    { id: "parallel", key: "PARALLEL_API_KEY", url: "https://platform.parallel.ai", note: "стартовые кредиты, без карты" },
+    { id: "brave", key: "BRAVE_API_KEY", url: "https://api-dashboard.search.brave.com", note: "нужна карта (идентификация), ~$5/мес кредит" },
+  ];
+  SEARCH.forEach((s, i) => console.log(`   ${i + 1}. ${s.id}  ${C.c}${s.url}${C.x}  ${C.y}(${s.note})${C.x}`));
+  const curSearch = existing.SEARCH_PROVIDER || out.SEARCH_PROVIDER || "tavily";
+  const defIdx = Math.max(0, SEARCH.findIndex((s) => s.id === curSearch));
+  const chSearch = await ask("  Провайдер поиска (номер)", String(defIdx + 1));
+  let si = parseInt(chSearch, 10) - 1;
+  if (isNaN(si) || si < 0 || si >= SEARCH.length) si = defIdx;
+  const prov = SEARCH[si];
+  out.SEARCH_PROVIDER = prov.id;
+  console.log(`  Ключ ${prov.id}: ${C.c}${prov.url}${C.x}${prov.id === "brave" ? `  ${C.y}(потребуется карта)${C.x}` : ""}. Enter — использовать DuckDuckGo fallback.`);
+  const keyExisting = process.env[prov.key] || existing[prov.key] || out[prov.key] || "";
+  let kv = await ask(`  ${prov.id} API key`, keyExisting ? mask(keyExisting) : "");
+  if (keyExisting && (!kv || kv.endsWith("…(оставить)"))) kv = keyExisting;
+  out[prov.key] = (kv || "").trim();
+
   // ── Шаг 3: Telegram-бот ───────────────────────────────────────────
   head(3, "Telegram-бот — через него вы говорите с Iva");
   console.log("  Создайте бота у @BotFather в Telegram:");
@@ -344,7 +389,11 @@ async function main() {
   );
   out.ASSISTANT_VAULT_DIR = await ask("  Каталог vault (память + git-бэкап)", out.ASSISTANT_VAULT_DIR || "vault");
   out.ASSISTANT_DATA_DIR = out.ASSISTANT_DATA_DIR || "data";
-  out.ASSISTANT_HOST = out.ASSISTANT_HOST || "http://127.0.0.1:3000";
+  // Непопсовый порт: 3000/8000/8080 на типовом VPS заняты (docker и т.п.). Сервер слушает IVA_PORT,
+  // а клиенты (poll-мост, дайджест, роллапы) ходят на него же через ASSISTANT_HOST. Проверяем,
+  // что выбранный порт свободен, — иначе сервер упал бы с EADDRINUSE (тихий выход → бот молчит).
+  out.IVA_PORT = await pickPort(out.IVA_PORT || "8723");
+  out.ASSISTANT_HOST = out.ASSISTANT_HOST || `http://127.0.0.1:${out.IVA_PORT}`;
 
   // ── Запись .env ───────────────────────────────────────────────────
   const order = [
@@ -355,8 +404,10 @@ async function main() {
     "TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_USERNAME", "TELEGRAM_WEBHOOK_SECRET_TOKEN",
     "TELEGRAM_ALLOWED_USER_IDS", "TELEGRAM_DIGEST_CHAT_ID",
     "DEEPGRAM_API_KEY", "DEEPGRAM_LANGUAGE",
+    "SEARCH_PROVIDER",
+    "TAVILY_API_KEY", "BRAVE_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY",
     "ASSISTANT_TIMEZONE", "ASSISTANT_VAULT_DIR",
-    "ASSISTANT_DATA_DIR", "ASSISTANT_HOST", "ASSISTANT_BEARER",
+    "ASSISTANT_DATA_DIR", "IVA_PORT", "ASSISTANT_HOST", "ASSISTANT_BEARER",
   ];
   const keys = [...order.filter((k) => out[k] != null), ...Object.keys(out).filter((k) => !order.includes(k))];
   const body = keys.map((k) => `${k}=${out[k]}`).join("\n") + "\n";

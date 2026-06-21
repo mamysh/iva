@@ -25,6 +25,12 @@ const TELEGRAM_MCP_SERVICE = "iva-telegram-mcp.service";
 const ALL_SERVICES = [...BASE_SERVICES, TELEGRAM_MCP_SERVICE];
 const TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((n) => `iva-memory-${n}.timer`);
 
+// Непопсовый порт по умолчанию: 3000/8000/8080 на типовом VPS заняты (docker и т.п.).
+// Переопределяется переменной IVA_PORT в .env; от него же зависит дефолтный ASSISTANT_HOST.
+const DEFAULT_PORT = "8723";
+// Прежний (зашитый) дефолт до перехода на IVA_PORT — нужен для миграции старых .env.
+const OLD_DEFAULT_HOST = "http://127.0.0.1:3000";
+
 const C = { g: "\x1b[32m", y: "\x1b[33m", r: "\x1b[31m", c: "\x1b[36m", b: "\x1b[1m", d: "\x1b[2m", x: "\x1b[0m" };
 const ok = (m) => console.log(`${C.g}✓${C.x} ${m}`);
 const warn = (m) => console.log(`${C.y}!${C.x} ${m}`);
@@ -105,6 +111,7 @@ async function notifyTelegram(text) {
 // ── systemd-юниты: единый источник правды ─────────────────────────────────
 function ivaServiceBody() {
   // Идентично install.sh §9: PATH с каталогом node (= npm global bin при nvm), Restart=always.
+  const port = (readEnv().IVA_PORT || DEFAULT_PORT).trim();
   return [
     "[Unit]",
     "Description=Iva",
@@ -114,7 +121,7 @@ function ivaServiceBody() {
     `WorkingDirectory=${ROOT}`,
     `EnvironmentFile=${ROOT}/.env`,
     `ExecStart=${NODE} ${ROOT}/.output/server/index.mjs`,
-    "Environment=PORT=3000",
+    `Environment=PORT=${port}`,
     `Environment=PATH=${NODE_BIN_DIR}:%h/.local/bin:/usr/local/bin:/usr/bin:/bin`,
     "Environment=AGENT_BROWSER_MAX_OUTPUT=24000",
     "Restart=always",
@@ -162,6 +169,34 @@ function removeUnits() {
   return units;
 }
 
+// Миграция старых установок на IVA_PORT. Идемпотентна: при первом `iva update`
+// после перехода на новую схему гарантирует переменную и не даёт серверу
+// (Environment=PORT=$IVA_PORT) разъехаться с клиентами (их дефолт — ASSISTANT_HOST).
+function migrateEnv() {
+  if (!existsSync(ENV_PATH)) return false;
+  const env = readEnv();
+  if (env.IVA_PORT) return false; // уже на новой схеме — ничего не трогаем
+  const host = env.ASSISTANT_HOST || "";
+  const local = host.match(/^https?:\/\/(?:127\.0\.0\.1|localhost):(\d+)\/?$/i);
+  const isOldDefault = host === OLD_DEFAULT_HOST;
+  // старый дефолт :3000 → новый дефолт 8723; кастомный локальный host → его порт; иначе дефолт
+  const port = isOldDefault ? DEFAULT_PORT : local ? local[1] : DEFAULT_PORT;
+  let raw = readFileSync(ENV_PATH, "utf8").replace(/\n*$/, "\n") + `IVA_PORT=${port}\n`;
+  // не оставляем устаревший :3000 в ASSISTANT_HOST — иначе клиенты застрянут на занятом порту
+  if (isOldDefault) raw = raw.replace(/^(\s*ASSISTANT_HOST\s*=).*$/m, `$1http://127.0.0.1:${port}`);
+  writeFileSync(ENV_PATH, raw);
+  ok(`.env мигрирован → IVA_PORT=${port}${isOldDefault ? ", ASSISTANT_HOST уведён с :3000" : ""}`);
+  return true;
+}
+
+// Любой рестарт через `iva` сперва регенерит юнит → Environment=PORT всегда равен
+// текущему IVA_PORT из .env. Без этого правка IVA_PORT + restart оставляла бы сервер
+// на старом порту (юнит уже запечён), а клиенты читали бы новый — тот же рассинхрон.
+function restartServices() {
+  writeUnits();
+  sc("restart", ...managedServices());
+}
+
 // ── команды ───────────────────────────────────────────────────────────────
 async function cmdUpdate(args) {
   const force = args.includes("--force");
@@ -187,6 +222,7 @@ async function cmdUpdate(args) {
       run(NPM, [hasLock ? "ci" : "install"]);
     }
   }
+  migrateEnv(); // старые .env: добавить IVA_PORT и увести с занятого :3000 (до сборки/рестарта)
   step("Сборка (eve build)…");
   if (run(NPM, ["run", "build"]).status !== 0) {
     bad("Сборка упала — сервис НЕ перезапускаю (старая сборка осталась рабочей)");
@@ -194,8 +230,7 @@ async function cmdUpdate(args) {
   }
   if (hasSystemd()) {
     step("Рефреш systemd-юнитов и перезапуск…");
-    writeUnits();
-    sc("restart", ...managedServices());
+    restartServices();
     ok("Перезапущено: активные сервисы Iva");
   } else {
     warn("systemd недоступен — перезапустите процесс вручную");
@@ -208,7 +243,7 @@ async function cmdConfig() {
   const r = run(NODE, ["scripts/setup.mjs"]);
   if (r.status !== 0) process.exit(r.status ?? 1);
   if (hasSystemd() && (await confirm("Перезапустить сервисы, чтобы применить настройки?", true))) {
-    sc("restart", ...managedServices());
+    restartServices(); // setup мог сменить IVA_PORT → регенерим юнит, иначе сервер останется на старом порту
     ok("Сервисы перезапущены");
   }
 }
@@ -239,6 +274,15 @@ function cmdDoctor() {
     const missing = REQUIRED.filter((k) => !(env[k] || "").trim());
     if (!missing.length) (ok(`.env заполнен (провайдер: ${prov})`), okN++);
     else (bad(`.env неполный, нет: ${missing.join(", ")} — запустите: iva config`), badN++);
+    // старые .env без IVA_PORT (или с :3000) — мигрируем здесь же
+    if (migrateEnv()) fixN++;
+    // веб-поиск опционален; без ключа ВЫБРАННОГО провайдера работает DuckDuckGo fallback
+    const SEARCH_KEY = { tavily: "TAVILY_API_KEY", brave: "BRAVE_API_KEY", exa: "EXA_API_KEY", parallel: "PARALLEL_API_KEY" };
+    const sp = (env.SEARCH_PROVIDER || "tavily").trim().toLowerCase();
+    const skey = SEARCH_KEY[sp] || SEARCH_KEY.tavily;
+    if (!(env[skey] || "").trim())
+      (warn(`web_search: SEARCH_PROVIDER=${sp}, но ${skey} не задан — используется DuckDuckGo fallback (iva config для API)`), warnN++);
+    else (ok(`web_search: ${sp}`), okN++);
   }
 
   // 3. Сборка
@@ -261,7 +305,10 @@ function cmdDoctor() {
     writeUnits();
     enableUnits();
     (ok("Юниты установлены и включены"), fixN++);
-  } else (ok("systemd-юниты установлены"), okN++);
+  } else {
+    writeUnits(); // рефреш: Environment=PORT синхронизируется с актуальным IVA_PORT (устраняет дрейф)
+    (ok("systemd-юниты установлены (рефреш)"), okN++);
+  }
 
   // 5. Сервисы активны. Telegram MCP стартуем только после полной настройки user-session.
   const mcpState = telegramMcpState(env);
@@ -326,7 +373,7 @@ function cmdStatus() {
 }
 function cmdRestart() {
   requireSystemd();
-  sc("restart", ...managedServices());
+  restartServices(); // регенерим юнит перед рестартом → PORT синхронен с IVA_PORT в .env
   ok("Перезапущено: активные сервисы Iva");
 }
 function cmdStart() {
