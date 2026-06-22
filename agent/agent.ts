@@ -1,8 +1,8 @@
 import { defineAgent } from "eve";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
-// Провайдер модели выбирается на этапе setup (MODEL_PROVIDER): Ollama Cloud или OpenCode Zen.
-// Оба — OpenAI-совместимые, ключ из .env. Оба проверены на работу с российского IP.
+// Model provider is chosen at setup (MODEL_PROVIDER): Ollama Cloud or OpenCode Zen.
+// Both are OpenAI-compatible; the key comes from .env. Both work behind any network.
 const PROVIDER = process.env.MODEL_PROVIDER ?? "ollama";
 
 const PROVIDERS = {
@@ -15,7 +15,10 @@ const PROVIDERS = {
   opencode: {
     baseURL: "https://opencode.ai/zen/go/v1",
     apiKey: process.env.OPENCODE_API_KEY,
-    model: process.env.OPENCODE_MODEL ?? "opencode-go/deepseek-v4-pro",
+    // Эндпоинт ждёт bare-ID (deepseek-v4-pro). Префикс провайдера "opencode-go/" —
+    // внутреннее имя UI, в тело запроса он уходить НЕ должен, иначе сервер отвечает
+    // "Model ... is not supported". Срезаем его и из дефолта, и из старых .env.
+    model: (process.env.OPENCODE_MODEL ?? "deepseek-v4-pro").replace(/^opencode-go\//, ""),
     window: Number(process.env.OPENCODE_CONTEXT_WINDOW ?? 131072),
   },
 } as const;

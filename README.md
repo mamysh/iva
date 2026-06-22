@@ -1,212 +1,224 @@
 <div align="center">
 
-<img src="assets/iva-header.webp" alt="IVA — Personal AI agent with long-term memory" width="100%">
+**English | [Русский](README.ru.md)**
 
-**Персональный AI-агент с долговременной памятью. Который просто работает.**
+<img src="assets/iva-header.webp" alt="Iva — personal AI agent with long-term memory" width="100%">
 
+**Your own AI agent. Your server, your memory — one command and it just works.**
 
-**Установка:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/codex/iva-voice-sandbox/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/codex/iva-prod/install.sh | bash
 ```
 
-[![Релиз](https://img.shields.io/github/v/release/smixs/iva?label=релиз&color=brightgreen)](https://github.com/smixs/iva/releases)
+[![Release](https://img.shields.io/github/v/release/mamysh/iva?color=brightgreen)](https://github.com/mamysh/iva/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Telegram](https://img.shields.io/badge/в-Telegram-26A5E4.svg)](https://telegram.org)
+[![Stars](https://img.shields.io/github/stars/mamysh/iva?style=social)](https://github.com/mamysh/iva/stargazers)
 
 </div>
 
 ---
 
-## Что это
+## What it is
 
-Iva - персональный AI-агент, который живёт у вас в Telegram. Ставите одной командой, дальше просто
-пишете: текстом или голосом. Он отвечает и помнит всё, о чём говорили: ваши дела, решения, договорённости.
-Чем дольше пользуетесь, тем лучше он вас знает.
+Iva is a personal AI agent that lives in your Telegram and runs on a server you own. Install it with
+one command, then just talk to it — by text or by voice. It answers, and it remembers: your tasks,
+decisions, the people and projects you mention. The longer you use it, the better it knows you.
 
-Эта ветка - открытый форк [smixs/iva](https://github.com/smixs/iva). Первичная идея, название и базовый
-релиз принадлежат автору оригинального проекта; здесь мы аккуратно развиваем self-host версию под новые
-сценарии: медиа, Telegram MCP и более автономный VPS-деплой.
+No dashboard to log into, no SaaS account, no per-message meter running. The code and the memory sit
+on your machine. You bring your own model key, and you pick the model.
 
 ---
 
-## Почему Iva
+## Why Iva
 
-Личных агентов, которых держат на своём сервере, сейчас хватает -
 [OpenClaw](https://github.com/openclaw/openclaw), [Hermes](https://github.com/NousResearch/hermes-agent),
-[nanobot](https://github.com/HKUDS/nanobot) и другие. Но почти все упираются в две вещи: их сложно
-настроить, и они не работают на серверах с IP из России и Беларуси.
+[nanobot](https://github.com/HKUDS/nanobot) — there are a lot of good personal agents out there. So why
+build another one? Because every one of them hands you the same pile of decisions: which model, which
+memory, which search, how to deploy, how to wire it together. Too much choice is the real problem.
 
-Iva решает обе. Ставится одной командой, работает с любого IP - включая Россию и Беларусь, без VPN. Код
-и память остаются у вас, а не в чужом облаке. Справится даже человек без технического бэкграунда.
+So I made the choices. I test agents, models, stacks and harnesses all the time, keep what's actually
+best, and fold it into Iva — so you get the result without doing the research. The goal is one thing: a
+cheap, fast, reliable agent for every day, the kind that pings you with your morning digest on its own.
 
-Под капотом - лучшие открытые модели для агентов, выбираете сами:
+- **The best of every agent, in one.** I've been at this a while. The good ideas from across the field,
+  tested and assembled, set up with sane defaults — that's what installs when you run the command.
+- **Open all the way down.** Open-source code on open-source models. The open models — DeepSeek, Kimi,
+  GLM — are genuinely good now: you pick one by name, your key, no markup, no closed vendor moving the
+  price under you.
+- **One command, and it works.** Telegram for the chat, Deepgram for voice, a tree-shaped memory,
+  nightly rollups — already picked, wired and configured. The Linux Mint of AI agents.
 
-- **DeepSeek V4 Pro** - мощная, наш выбор по умолчанию
-- **DeepSeek V4 Flash** - быстрая и дешёвая
-- **Kimi** - длинный контекст, сильна в коде
-- **GLM** - крепкий универсал
-
----
-
-## Что умеет
-
-- 🎙️ **Голос и видео** - расшифрует голосовые и кружки, поймёт речь на любом языке
-- 🖼️ **Фото и картинки** - сначала прочитает изображение vision-моделью, потом ответит по содержимому
-- 📎 **Файлы** - сохранит вложения в vault, запомнит ссылку и сможет разобрать PDF, картинки и документы
-- 🧠 **Долгая память** - помнит разговоры и сам наводит в них порядок
-- 🔎 **Быстрый поиск** - находит нужное за секунды
-- ⏰ **По расписанию** - сам пришлёт дайджест дня или недели, рутина идёт на автопилоте
-- 🔔 **Задачи и напоминания** - ведёт список дел и помогает не потерять важное
-- 🤖 **Выбор модели** - решаете сами, какой ИИ внутри (берите DeepSeek - дёшево и сильно)
-- 🌐 **Умеет больше** - ищет в интернете, заходит на сайты, подключается к другим сервисам
-- 💬 **Telegram MCP** - может читать историю доступных чатов, групп и каналов через ваш Telegram-аккаунт
-- 🎭 **Характер** - меняете прямо в разговоре
+Lots of agents out there. This one's mine — now it's yours too.
 
 ---
 
-## Что добавлено в этой ветке
+## What it can do
 
-- **Vision fallback для Telegram-фото.** Если основная модель текстовая, Iva не падает на картинке:
-  изображение сначала описывает отдельная vision-модель, а основной агент получает уже понятный текст.
-- **Сохранение вложений в память.** Фото и документы складываются в `vault/attachments/`, а в дневной
-  транскрипт попадает Obsidian-ссылка и, для картинок, описание vision-модели.
-- **Telegram MCP read-only.** Отдельный локальный MCP-сервис на VPS подключает
-  [`chigwell/telegram-mcp`](https://github.com/chigwell/telegram-mcp), чтобы Iva могла анализировать
-  историю чатов, участников, сообщения и контекст не только из личного транскрипта.
-- **Более надёжный self-host.** Установка этой ветки идёт из `mamysh/iva`, MCP-сервис включается только
-  после настройки session string, а субагент-планировщик использует тот же провайдер модели, что и основной
-  агент.
+| | |
+|---|---|
+| 🎙️ **Voice & video** | Transcribes voice notes and video circles, understands speech in many languages (Deepgram nova-3). |
+| 🧠 **Long-term memory** | Remembers your conversations and tidies them up on its own, every night. |
+| 🔎 **Fast recall** | Finds the right note in seconds — straight over plain files, no index to rebuild. |
+| ⏰ **On a schedule** | Day or week digests, recurring jobs. Can check your inbox and send you a summary, on time. |
+| 🔔 **Reminders** | Tell it what and when, and it won't let you forget. |
+| 🤖 **Your choice of model** | DeepSeek, Kimi, GLM and other open models — switch any time. |
+| 🌐 **Does more** | Searches the web (free Tavily/Exa key), opens pages, drives a browser, connects to MCP servers. |
+| 🎭 **A character** | Change its tone and rules right in the chat — it rewrites itself. |
 
----
-
-## Как устроена память
-
-Память Iva устроена как дерево, **ива**:
-
-- 🍃 **Листья** - полный транскрипт каждого дня: всё, что было сказано, целиком и дословно.
-- 🌿 **Ветви** - короткие выжимки. Сначала за день, потом неделя собирается из дней, месяц из недель.
-- 🪵 **Ствол** - всё сходится в общую картину: год и карточки важных фактов (люди, проекты, решения, идеи).
-
-Каждую ночь Iva сам наводит порядок: из листьев-транскриптов делает выжимки и собирает их вверх по веткам.
-Поэтому он одинаково легко и вспомнит дословно, что было в конкретный вторник, и расскажет, чем вы
-занимались весь месяц.
-
-Это лучшая память, какая бывает у личного агента - граф в виде дерева из обычных текстовых файлов. Никаких
-тяжёлых баз данных и векторных движков, которые грузят сервер: Iva ищет прямо по файлам, поэтому остаётся
-лёгким даже на самом дешёвом VPS. И вся память хранится у вас.
+Everything the best agents have — voice, search, skills, MCP — Iva has too. The difference is what
+happens underneath.
 
 ---
 
-## Управление - просто говорите
+## Memory — the part that compounds
 
-Никаких файлов и команд. Хотите поменять характер, тон, поправить факт в памяти или добавить правило -
-просто скажите Iva об этом в чате. Он перепишет себя сам. Вы управляете агентом через разговор, как живым
-ассистентом.
+Most agents forget you the moment the context window fills up. Iva doesn't. Its memory is shaped like
+a tree — and the name *Iva* means *willow* in Russian.
+
+```
+        🪵  TRUNK   — year + cards on people, projects, decisions (the durable picture)
+       ╱  ╲
+      🌿 BRANCHES   — monthly summaries, built from weeks, built from days
+     ╱      ╲
+    🍃 LEAVES        — the full, word-for-word transcript of each day
+```
+
+- **Leaves** — every day's raw transcript, kept verbatim.
+- **Branches** — short summaries: first per day, then a week folded from days, a month from weeks.
+- **Trunk** — it all converges into the big picture: the year, plus fact cards on the people,
+  projects and decisions that matter.
+
+Every night Iva does the gardening itself: it summarizes the leaves and folds them up the branches.
+So it can recall word-for-word what was said on a specific Tuesday *and* tell you what you spent the
+whole month on.
+
+**It's "low-context memory" by design.** Iva never loads its whole history into the model. Always in
+context is one tiny CORE file (who you are, your standing preferences, active goals); everything else
+is pulled in only when a task needs it, found by a literal search over the files.
+
+The heavy memory systems — [Papr](https://platform.papr.ai), mem0, MemGPT/Letta — buy semantic recall
+with an embedding model plus a vector or graph database to run, sync and pay for. Iva spends its
+complexity budget at the other end: it **structures memory when it's written** (the nightly rollup and
+the entity cards) so reading it back can stay a plain search. The trade is honest — this wins on
+local-first, zero-infrastructure, fully inspectable, git-diffable memory for a personal vault. If you
+ever outgrow it, adding a real index is the upgrade path, not a rewrite.
+
+What that buys you:
+
+- **Zero infrastructure** — no vector DB, no embedding model, no graph server. Memory is Markdown files.
+- **Fully yours and readable** — open any memory in a text editor, grep it, diff it in git.
+- **Cheap and private** — lives on your disk, nothing shipped to a third-party memory service.
+- **Easy to fix** — when memory is wrong, you edit a file. No re-indexing, no stale-embedding mystery.
+
+Memory is the part I've worked on the longest — first
+[agent-second-brain](https://github.com/smixs/agent-second-brain), then the **autograph** typed-graph
+skill, and all of it folded into Iva. The tree above is a hierarchical summary DAG: it compacts older
+days while keeping a pointer back to every original — the idea at the heart of the
+**[LCM: Lossless Context Management](https://papers.voltropy.com/LCM)** paper (Ehrlich & Blackman,
+2026), plus my own vision and a lot of practice on top. It's one of the best memory designs you'll find
+in a personal agent today — and it runs on open models you own, no subscription required.
 
 ---
 
-## Что нужно для старта
+## How it works
 
-Сам Iva бесплатный, код открытый. Платите только за сервер (~$5/мес) и за подписку на модель ($5-20/мес,
-смотря какие лимиты). Приготовьте два пункта, остальное установщик сделает сам.
+```
+Telegram  ──(long-polling, getUpdates)──►  Iva (eve agent on your host)  ──►  vault (Markdown files)
+                                                                              ▲
+                                          systemd timers ─ nightly rollups ───┘
+```
 
-**1. Сервер, который не выключается.** Iva работает круглосуточно, значит ему нужен всегда включённый
-компьютер. Проще всего арендовать маленький сервер (VPS с Ubuntu, от ~$5/мес, 1-2 ГБ памяти). Можно и
-свой компьютер, но тогда Iva работает, только пока он включён.
-
-> Как попасть на арендованный сервер: хостинг пришлёт вам адрес (IP), логин и пароль. На Mac/Linux
-> откройте «Терминал», на Windows - «PowerShell», введите `ssh root@ВАШ_АДРЕС`, затем пароль. Готово,
-> вы внутри.
-
-**2. Три ключа для базового режима** - заранее заводить не обязательно, установщик даст прямые ссылки и
-проведёт по шагам. Просто знайте, что понадобятся.
-
-- 🤖 **Доступ к модели** - это «мозг» Iva. Два варианта, оба работают из России:
-  - **OpenCode Go** - $5/мес, лимиты поскромнее. Самый дешёвый старт.
-  - **Ollama Cloud** - $20/мес, лимиты побольше.
-
-  Внутри любого выбираете модель, советую DeepSeek. Отдельно на сайте DeepSeek регистрироваться не нужно.
-- 🎙️ **Deepgram** - чтобы Iva понимал голос и видео ([console.deepgram.com](https://console.deepgram.com),
-  дают бесплатный стартовый кредит).
-- 💬 **Telegram-бот** - это и есть Iva в мессенджере. Напишете боту [@BotFather](https://t.me/BotFather),
-  отправите `/newbot`, придумаете имя - он пришлёт ключ (токен).
-
-**Опционально для этой ветки.**
-
-- 🖼️ **Vision-модель** - нужна для чтения картинок, если основная модель текстовая. В Ollama Cloud
-  установщик подберёт модель автоматически; при OpenCode укажите отдельный `VISION_API_KEY` или ключ Ollama.
-- 💬 **Telegram API ID/HASH + session string** - нужны только если хотите, чтобы Iva читала историю
-  доступных вам Telegram-чатов через MCP. Это user-account доступ, не Bot API, поэтому включайте осознанно.
+No public domain, no webhook, no reverse proxy. Iva polls Telegram from inside, so it runs on any
+plain server. At night, systemd timers roll the day's transcript up into summaries and back up the
+vault to a private git repo.
 
 ---
 
-## Установка
+## Providers & cost
 
-1. Зайдите на свой сервер (или откройте терминал на компьютере).
-2. Вставьте команду и нажмите Enter:
+Iva is free and open-source. You pay only for a server and a model subscription:
+
+- **Server** — any small always-on box (a VPS with ~1–2 GB RAM, around **$5/mo**), or your own
+  computer if you keep it on.
+- **Model** — pick one provider, both OpenAI-compatible, your own key:
+  - **OpenCode Zen (Go)** — around **$5/mo**, leaner limits. Cheapest start.
+  - **Ollama Cloud** — around **$20/mo**, higher limits.
+
+  Inside either, you choose the model (DeepSeek recommended). No markup over the provider's price.
+- **Voice** — [Deepgram](https://console.deepgram.com) for transcription (free starter credit).
+
+---
+
+## Install
+
+1. Open a terminal on your server (or your own computer).
+2. Paste the command and hit Enter:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/mamysh/iva/codex/iva-voice-sandbox/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/mamysh/iva/codex/iva-prod/install.sh | bash
    ```
-3. Установщик проведёт по настройке и сам даст ссылки на каждый ключ - вставляете, когда попросит. Один
-   раз он попросит написать вашему боту любое сообщение, так Iva вас запомнит и будет отвечать только вам.
-4. Готово. Напишите боту в Telegram - Iva ответит.
+3. The installer asks your language first (English or Russian), then walks you through each key with a
+   direct link — paste them when prompted. Once it asks, send your bot any message so Iva learns who
+   you are and answers only you.
+4. Done. Message your bot in Telegram — Iva replies.
+
+More on running it on a VPS: [DEPLOY.md](DEPLOY.md).
 
 ---
 
-## Как пользоваться
+## Talking to Iva
 
-Пишите боту обычными сообщениями: текстом, голосом, видео, фото или файлом. Прямо в чате работают команды:
+Message the bot like a normal chat — text or voice. Commands work right in the chat:
 
-| Команда | Что делает |
-|---------|------------|
-| `/task купить молоко` | добавить дело |
-| `/tasks` | показать список дел |
-| `/digest` | сводка дня |
-| `/new` | начать разговор заново |
-| `/help` | список команд |
-
-Если включён Telegram MCP, можно попросить: «проанализируй последние сообщения в таком-то чате»,
-«найди, что писал конкретный человек», «собери контекст по группе». Iva сначала попробует MCP, а в vault
-пойдёт только за уже записанными личными транскриптами.
+| Command | What it does |
+|---------|--------------|
+| `/task buy milk` | add a task |
+| `/tasks` | show the task list |
+| `/digest` | day summary |
+| `/new` | start the conversation fresh |
+| `/help` | list of commands |
+| `/restart` | restart if it ever hangs |
 
 ---
 
-## Команда `iva` (когда понадобится)
+## Privacy
 
-На сервере есть команда `iva` для обслуживания, нужна редко:
+The code and the memory stay on your server. The vault is its own **private** git repo — set the
+remote once and your memory backs itself up. Keys live in `.env`, never in the code, and the bot
+answers only the Telegram IDs you allow (it stays silent to everyone else by default).
 
-| Команда | Что делает |
-|---------|------------|
-| `iva update` | обновить до новой версии |
-| `iva doctor` | проверить и починить, если что-то отвалилось |
-| `iva status` | посмотреть, всё ли работает |
-| `iva restart` | перезапустить |
-| `iva logs mcp` | посмотреть логи Telegram MCP |
+Honest about the boundary: the **model** and **voice transcription** run through cloud APIs (the ones
+you picked and pay for). Self-hosted means your code and memory — not the model weights.
 
 ---
 
-## Что нового
+## What Iva does *not* do
 
-<details>
-<summary><b>История релизов</b></summary>
+So you know exactly what you're getting:
 
-**2026-06-20 - v0.1.0.** Первый релиз: персональный AI-агент с памятью в Telegram, который заводится
-одной командой. [Подробнее](https://github.com/smixs/iva/releases/tag/v0.1.0).
-
-</details>
+- **Telegram only.** No web app or dashboard — the chat is the whole interface.
+- **Replies in the language you chose at install.** Switchable, but it's one language at a time.
+- **Memory backup is a `git push`** to a repo you create once — not a managed cloud sync.
+- **Search is literal, not semantic.** It greps your files; there's no vector/embedding recall.
+- **Single user.** One owner, one vault — not a team or multi-tenant assistant.
+- **Pre-1.0.** It works and it's in daily use, but it's young. Expect rough edges, report them.
 
 ---
 
-## Лицензия
+## Star it
 
-[MIT](LICENSE), по-человечески: берите код и делайте с ним что хотите. Меняйте под себя, ставьте хоть на
-сто серверов, используйте в своих проектах. Одно условие - не предъявляйте претензий, если что-то
-сломается. Теперь он ваш.
+If Iva is useful to you, a ⭐ genuinely helps other people find it — that's the whole marketing budget.
 
-<div align="center">
+[![Star History Chart](https://api.star-history.com/svg?repos=smixs/iva&type=Date)](https://star-history.com/#smixs/iva&Date)
 
-Iva вырос из проекта [agent-second-brain](https://github.com/smixs/agent-second-brain)
+---
 
-</div>
+## Built on
+
+[eve](https://www.npmjs.com/package/eve) (the agent framework), autograph (the typed-graph memory
+skill), and the ideas from [agent-second-brain](https://github.com/smixs/agent-second-brain).
+
+## License
+
+[MIT](LICENSE) — take the code and do what you want with it. Change it, run it on a hundred servers,
+use it in your own projects. One condition: don't blame anyone if something breaks. It's yours now.
