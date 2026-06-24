@@ -503,6 +503,23 @@ function cmdVersion() {
   console.log(`iva ${v} · commit ${gitHead() || "?"}`);
 }
 
+async function cmdUsage(args) {
+  const { readEntries, summarize, formatUsageReport, parseWindow } = await import("../scripts/lib/usage.mjs");
+  const env = readEnv();
+  const dataDir = join(ROOT, env.ASSISTANT_DATA_DIR || "data");
+  if (args[0] === "tail") {
+    const n = Number(args[1]) || 10;
+    for (const e of readEntries(dataDir).slice(-n)) console.log(JSON.stringify(e));
+    return;
+  }
+  const agg = summarize(readEntries(dataDir), {
+    window: parseWindow(args[0]),
+    now: Date.now(),
+    tz: env.ASSISTANT_TIMEZONE,
+  });
+  console.log(formatUsageReport(agg));
+}
+
 function cmdHelp() {
   console.log(`
 ${C.b}Iva CLI${C.x} — управление личным агентом
@@ -515,6 +532,7 @@ ${C.b}Команды:${C.x}
   ${C.c}iva restart${C.x}        перезапустить агента и Telegram-мост
   ${C.c}iva start${C.x} / ${C.c}stop${C.x}    запустить / остановить
   ${C.c}iva reminders${C.x}      показать активные напоминания
+  ${C.c}iva usage${C.x} [win]    расход токенов (last|today|week|month|by-model|by-source|tail)
   ${C.c}iva logs${C.x} [poll|mcp|reminders] логи агента, Telegram-моста, reminders или Telegram MCP -f
   ${C.c}iva reset${C.x}          архивировать .workflow-data и сбросить зависшую сессию
   ${C.c}iva workflow-reset${C.x} то же, явное имя для reset
@@ -538,6 +556,7 @@ const cmds = {
   logs: cmdLogs,
   reset: cmdWorkflowReset,
   reminders: cmdReminders,
+  usage: cmdUsage,
   "workflow-reset": cmdWorkflowReset,
   uninstall: cmdUninstall,
   version: cmdVersion,

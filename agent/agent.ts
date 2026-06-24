@@ -29,6 +29,7 @@ const provider = createOpenAICompatible({
   name: `iva-${PROVIDER}`,
   baseURL: cfg.baseURL,
   apiKey: cfg.apiKey,
+  includeUsage: true,
 });
 
 export default defineAgent({

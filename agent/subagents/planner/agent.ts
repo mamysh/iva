@@ -25,6 +25,7 @@ const provider = createOpenAICompatible({
   name: `iva-planner-${PROVIDER}`,
   baseURL: cfg.baseURL,
   apiKey: cfg.apiKey,
+  includeUsage: true,
 });
 
 export default defineAgent({

@@ -14,6 +14,7 @@ import { execFile } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { formatReminder, loadReminders } from "./lib/reminders-store.mjs";
+import { readEntries, summarize, formatUsageReport, parseWindow } from "./lib/usage.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW_DIR = join(ROOT, ".workflow-data");
@@ -41,11 +42,12 @@ const COMMANDS = [
   { command: "task", description: "добавить задачу" },
   { command: "tasks", description: "показать задачи" },
   { command: "reminders", description: "активные напоминания" },
+  { command: "usage", description: "расход токенов" },
   { command: "digest", description: "утренний дайджест" },
   { command: "advanced", description: "служебные команды" },
 ];
 const MODEL_COMMANDS = new Set(["/task", "/tasks", "/digest"]);
-const CONTROL_COMMANDS = new Set(["/help", "/advanced", "/restart", "/new", "/clear", "/compact", "/reminders"]);
+const CONTROL_COMMANDS = new Set(["/help", "/advanced", "/restart", "/new", "/clear", "/compact", "/reminders", "/usage"]);
 
 const HELP = [
   "Команды Iva:",
@@ -58,6 +60,7 @@ const ADVANCED_HELP = [
   "/new — начать заново (сброс текущего диалога)",
   "/clear — то же, что /new",
   "/compact — то же, что /new",
+  "/usage [today|week|month|by-model|by-source] — расход токенов",
   "",
   "Обычные команды смотри в /help.",
 ].join("\n");
@@ -203,6 +206,20 @@ async function handleControl(update) {
       ? ["Активные напоминания:", ...reminders.slice(0, 30).map((r) => formatReminder(r))].join("\n")
       : "Активных напоминаний нет.";
     await reply(chatId, text);
+    return true;
+  }
+  if (cmd === "/usage") {
+    const arg = text.split(/\s+/).slice(1).join(" ");
+    try {
+      const agg = summarize(readEntries(), {
+        window: parseWindow(arg),
+        now: Date.now(),
+        tz: process.env.ASSISTANT_TIMEZONE,
+      });
+      await reply(chatId, formatUsageReport(agg));
+    } catch (e) {
+      await reply(chatId, "Не смог прочитать usage-лог: " + e.message);
+    }
     return true;
   }
   // /restart, /new, /clear, /compact → сброс workflow-state + перезапуск агента.
