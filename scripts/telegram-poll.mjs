@@ -8,12 +8,15 @@
 // поэтому сами забираем апдейты у Telegram (getUpdates, long-poll) и POST-им их в
 // локальный роут eve с тем же секретом — Telegram видит обычного бота, прокси не нужен.
 // Канал/агент не меняются. Webhook и polling взаимоисключающи → на старте deleteWebhook.
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { formatReminder, loadReminders } from "./lib/reminders-store.mjs";
 
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const WORKFLOW_DIR = join(ROOT, ".workflow-data");
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const SECRET = process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN;
 const PORT = process.env.IVA_PORT ?? "8723";
@@ -156,10 +159,19 @@ async function reply(chatId, text) {
   }
 }
 
-function restartAgent() {
-  return new Promise((resolve) => {
-    execFile("systemctl", ["--user", "restart", "iva.service"], (err) => resolve(!err));
-  });
+const sc = (...args) =>
+  new Promise((resolve) => execFile("systemctl", ["--user", ...args], (err) => resolve(!err)));
+
+// Recovery commands clear parked/running eve workflows while the server is stopped.
+// Plain restart can resurrect the same stuck turn from .workflow-data on startup.
+async function resetAgentWorkflow() {
+  await sc("stop", "iva.service");
+  try {
+    await rm(WORKFLOW_DIR, { recursive: true, force: true });
+  } catch (e) {
+    log("reset: не удалось очистить .workflow-data:", e.message);
+  }
+  return sc("start", "iva.service");
 }
 
 // Управляющие команды обрабатываются МОСТОМ (out-of-band) — работают, даже если агент завис.
@@ -193,9 +205,9 @@ async function handleControl(update) {
     await reply(chatId, text);
     return true;
   }
-  // /restart, /new, /clear, /compact → перезапуск процесса (надёжный сброс/recovery).
-  await reply(chatId, cmd === "/restart" ? "Перезапускаю агента…" : "Начинаю заново — перезапускаю сессию…");
-  const ok = await restartAgent();
+  // /restart, /new, /clear, /compact → сброс workflow-state + перезапуск агента.
+  await reply(chatId, cmd === "/restart" ? "Перезапускаю агента…" : "Начинаю заново — сбрасываю сессию…");
+  const ok = await resetAgentWorkflow();
   await reply(chatId, ok ? "Готово — пиши." : "Не смог перезапустить (systemctl). Проверь сервис на сервере.");
   return true;
 }

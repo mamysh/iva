@@ -516,7 +516,8 @@ ${C.b}Команды:${C.x}
   ${C.c}iva start${C.x} / ${C.c}stop${C.x}    запустить / остановить
   ${C.c}iva reminders${C.x}      показать активные напоминания
   ${C.c}iva logs${C.x} [poll|mcp|reminders] логи агента, Telegram-моста, reminders или Telegram MCP -f
-  ${C.c}iva workflow-reset${C.x} архивировать .workflow-data и сбросить зависшую сессию
+  ${C.c}iva reset${C.x}          архивировать .workflow-data и сбросить зависшую сессию
+  ${C.c}iva workflow-reset${C.x} то же, явное имя для reset
   ${C.c}iva uninstall${C.x}       снять юниты и команду (--purge — удалить код+vault)
   ${C.c}iva version${C.x}         версия и git-commit
 
@@ -535,6 +536,7 @@ const cmds = {
   start: cmdStart,
   stop: cmdStop,
   logs: cmdLogs,
+  reset: cmdWorkflowReset,
   reminders: cmdReminders,
   "workflow-reset": cmdWorkflowReset,
   uninstall: cmdUninstall,

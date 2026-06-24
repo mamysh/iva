@@ -26,6 +26,17 @@ const escAttr = (s) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
+// HTML → readable plain text for Telegram fallbacks. Sent WITHOUT parse_mode, so
+// decode entities back (&amp;→&, &lt;→<, etc.); amp goes last to avoid double-decoding.
+export function htmlToPlain(html) {
+  return String(html)
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&");
+}
+
 // ── inline markdown → html ──────────────────────────────────────────────────────
 // Protect inline code first (placeholders), escape the rest, then overlay tags.
 function inlineHtml(text) {

@@ -2,7 +2,7 @@ import { telegramChannel, type TelegramMessageBody } from "eve/channels/telegram
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 // Разметка Telegram — ЕДИНЫЙ источник правды (тот же модуль, что у cron-скриптов).
-import { mdToTelegramHtml, chunkMarkdown } from "../../scripts/lib/telegram-format.mjs";
+import { toTelegramHtmlChunks, htmlToPlain } from "../../scripts/lib/telegram-format.mjs";
 
 // Токен (TELEGRAM_BOT_TOKEN) и секрет вебхука (TELEGRAM_WEBHOOK_SECRET_TOKEN)
 // читаются из окружения автоматически.
@@ -344,9 +344,9 @@ export default telegramChannel({
     // уже закрыт, реформат произойдёт на следующем сообщении (ошибка видна в логе/vault).
     async "message.completed"(data, channel) {
       if (data.finishReason === "tool-calls" || !data.message) return;
-      const md = data.message;
-      for (const part of chunkMarkdown(md)) {
-        const html = mdToTelegramHtml(part);
+      // Чанки режутся ПОСЛЕ markdown→HTML, чтобы Telegram не отклонил раздутый тегами кусок.
+      for (const html of toTelegramHtmlChunks(data.message, 4096)) {
+        if (!html) continue;
         try {
           // eve's TelegramMessageBody type omits parse_mode, но рантайм
           // (normalizeTelegramMessageBody) спредит тело прямо в sendMessage —
@@ -358,7 +358,7 @@ export default telegramChannel({
         } catch (err) {
           console.error("[telegram] HTML отвергнут, шлю plain:", err, "| HTML:", html.slice(0, 300));
           try {
-            await channel.telegram.post(html.replace(/<[^>]+>/g, ""));
+            await channel.telegram.post(htmlToPlain(html));
           } catch (e2) {
             console.error("[telegram] plain-фолбэк тоже упал:", e2);
           }

@@ -4,3 +4,4 @@ export function sanitizeTelegramHtml(html: unknown): string;
 export function mdToTelegramHtml(md: unknown): string;
 export function chunkMarkdown(md: unknown, limit?: number): string[];
 export function toTelegramHtmlChunks(md: unknown, limit?: number): string[];
+export function htmlToPlain(html: unknown): string;
