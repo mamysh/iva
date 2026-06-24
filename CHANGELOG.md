@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.5] - 2026-06-24
+
+Feature: local token-usage accounting (issue #7).
+
+- 📊 **See where your tokens go** — every model call now logs its real usage (input/output/cache tokens, model, source) to a plain local `data/usage.jsonl`. No dashboard, no SaaS meter, no external billing — just a file you can grep, diff, and back up. A single agent hook captures everything that spends tokens through Iva: foreground chat, the morning digest, and the nightly memory rollups, plus the `planner` subagent — with no double counting.
+- 💬 **`/usage` in Telegram** — `/usage last` (the last turn), `/usage today`, `/usage week`, `/usage month`, `/usage by-model`, `/usage by-source`. The command is handled out-of-band by the poll bridge, so it costs zero tokens and works even while the agent is busy. Source attribution separates interactive chat from background jobs.
+- 🖥️ **`iva usage` in the terminal** — the same summaries over the same log (`iva usage today`, `iva usage by-model`, `iva usage tail` for raw lines), for watching a VPS from the shell.
+- Tokens only for now — Ollama/OpenCode are flat-rate subscriptions, so a fabricated dollar figure would mislead. Budget guardrails and a large-context heads-up are deferred to a later release.
+
+[0.1.5]: https://github.com/smixs/iva/releases/tag/v0.1.5
+
 ## [0.1.4] - 2026-06-24
 
 Patch: model switching no longer mutes the bot, and a real reset for stuck background work.
