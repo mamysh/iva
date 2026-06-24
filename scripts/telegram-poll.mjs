@@ -31,15 +31,32 @@ const ALLOWED = new Set(
   (process.env.TELEGRAM_ALLOWED_USER_IDS ?? "").split(/[,\s]+/).map((s) => s.trim()).filter(Boolean),
 );
 
+const COMMANDS = [
+  { command: "help", description: "список команд" },
+  { command: "new", description: "начать заново" },
+  { command: "restart", description: "перезапустить агента" },
+  { command: "task", description: "добавить задачу" },
+  { command: "tasks", description: "показать задачи" },
+  { command: "reminders", description: "активные напоминания" },
+  { command: "digest", description: "утренний дайджест" },
+  { command: "advanced", description: "служебные команды" },
+];
+const MODEL_COMMANDS = new Set(["/task", "/tasks", "/digest"]);
+const CONTROL_COMMANDS = new Set(["/help", "/advanced", "/restart", "/new", "/clear", "/compact", "/reminders"]);
+
 const HELP = [
   "Команды Iva:",
-  "/help — этот список",
+  ...COMMANDS.map((c) => `/${c.command} — ${c.description}`),
+].join("\n");
+
+const ADVANCED_HELP = [
+  "Служебные команды:",
   "/restart — перезапустить агента, если завис",
   "/new — начать заново (сброс текущего диалога)",
-  "/task <текст> — добавить задачу",
-  "/tasks — показать задачи",
-  "/reminders — активные напоминания",
-  "/digest — утренний дайджест",
+  "/clear — то же, что /new",
+  "/compact — то же, что /new",
+  "",
+  "Обычные команды смотри в /help.",
 ].join("\n");
 
 if (!TOKEN) {
@@ -104,6 +121,11 @@ async function tg(method, body) {
   return res.json();
 }
 
+async function syncBotCommands() {
+  const data = await tg("setMyCommands", { commands: COMMANDS });
+  log("setMyCommands:", data.ok ? "ок" : data.description);
+}
+
 // Доставить один апдейт в локальный eve (имитируем webhook). Ждём 2xx — не теряем апдейт,
 // даже если сервер ещё поднимается (бэкофф до 15с).
 async function deliver(update) {
@@ -147,12 +169,20 @@ async function handleControl(update) {
   const text = (msg?.text || "").trim();
   if (!text.startsWith("/")) return false;
   const cmd = text.split(/\s+/)[0].replace(/@\w+$/, "").toLowerCase();
-  if (!["/help", "/restart", "/new", "/clear", "/compact", "/reminders"].includes(cmd)) return false;
   const from = String(msg?.from?.id ?? "");
   if (ALLOWED.size === 0 || !ALLOWED.has(from)) return false; // не доверенный — пусть eve дропнет
   const chatId = msg?.chat?.id;
+  if (!CONTROL_COMMANDS.has(cmd)) {
+    if (MODEL_COMMANDS.has(cmd)) return false; // эти команды роутятся в модель/инструменты Iva
+    await reply(chatId, `Не знаю такой команды: ${cmd}\n\n${HELP}`);
+    return true;
+  }
   if (cmd === "/help") {
     await reply(chatId, HELP);
+    return true;
+  }
+  if (cmd === "/advanced") {
+    await reply(chatId, ADVANCED_HELP);
     return true;
   }
   if (cmd === "/reminders") {
@@ -178,6 +208,7 @@ async function main() {
   const firstRun = !existsSync(OFFSET_FILE);
   const dw = await tg("deleteWebhook", { drop_pending_updates: firstRun });
   log("deleteWebhook:", dw.ok ? `ок (drop_pending=${firstRun})` : dw.description);
+  await syncBotCommands();
 
   let offset = await loadOffset();
   if (offset === null) {
