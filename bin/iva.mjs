@@ -5,7 +5,7 @@
 // ЕДИНЫЙ источник правды для systemd-юнитов (writeUnits): install.sh делегирует сюда
 // (`iva _install-units`), а update/doctor переиспользуют ту же запись.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, renameSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -23,7 +23,8 @@ const childEnv = { ...process.env, PATH: `${NODE_BIN_DIR}:${process.env.PATH || 
 const BASE_SERVICES = ["iva.service", "iva-telegram-poll.service"];
 const TELEGRAM_MCP_SERVICE = "iva-telegram-mcp.service";
 const ALL_SERVICES = [...BASE_SERVICES, TELEGRAM_MCP_SERVICE];
-const TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((n) => `iva-memory-${n}.timer`);
+const MEMORY_TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((n) => `iva-memory-${n}.timer`);
+const TIMERS = [...MEMORY_TIMERS, "iva-reminders.timer"];
 
 // Непопсовый порт по умолчанию: 3000/8000/8080 на типовом VPS заняты (docker и т.п.).
 // Переопределяется переменной IVA_PORT в .env; от него же зависит дефолтный ASSISTANT_HOST.
@@ -49,6 +50,23 @@ const hasSystemd = () => !!cap("sh", ["-c", "command -v systemctl"]).out;
 const sc = (...args) => run("systemctl", ["--user", ...args]);
 const scQ = (...args) => cap("systemctl", ["--user", ...args]);
 const gitHead = () => cap("git", ["rev-parse", "--short", "HEAD"]).out;
+
+function dirSize(path) {
+  if (!existsSync(path)) return 0;
+  const st = statSync(path);
+  if (st.isFile()) return st.size;
+  if (!st.isDirectory()) return 0;
+  let total = 0;
+  for (const name of readdirSync(path)) total += dirSize(join(path, name));
+  return total;
+}
+
+function humanBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KiB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
+  return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
+}
 
 function readEnv() {
   const env = {};
@@ -348,7 +366,7 @@ function cmdDoctor() {
       else (bad(`${svc} не стартует — journalctl --user -u ${svc} -e`), badN++);
     }
   }
-  // Таймеры памяти включены
+  // Таймеры включены: память + напоминания.
   for (const t of TIMERS) {
     if (scQ("is-enabled", t).out === "enabled") okN++;
     else {
@@ -357,7 +375,16 @@ function cmdDoctor() {
       fixN++;
     }
   }
-  ok(`Таймеры памяти проверены (${TIMERS.length})`);
+  ok(`Таймеры проверены (${TIMERS.length})`);
+
+  const workflowBytes = dirSize(join(ROOT, ".workflow-data"));
+  if (workflowBytes > 512 * 1024 * 1024) {
+    warn(`.workflow-data разросся до ${humanBytes(workflowBytes)} — если бот зависает, выполните: iva workflow-reset`);
+    warnN++;
+  } else if (workflowBytes > 0) {
+    ok(`.workflow-data: ${humanBytes(workflowBytes)}`);
+    okN++;
+  }
 
   // 6. Vault + git origin (только репорт — git-операции не инициируем)
   const vaultRel = env.ASSISTANT_VAULT_DIR || "vault";
@@ -384,7 +411,7 @@ function cmdDoctor() {
 function cmdStatus() {
   requireSystemd();
   run("systemctl", ["--user", "status", "--no-pager", "-n", "5", ...managedServices()]);
-  run("systemctl", ["--user", "list-timers", "--no-pager", "iva-memory-*"]);
+  run("systemctl", ["--user", "list-timers", "--no-pager", "iva-memory-*", "iva-reminders.timer"]);
 }
 function cmdRestart() {
   requireSystemd();
@@ -405,10 +432,34 @@ function cmdLogs(args) {
   requireSystemd();
   const unit = args.includes("mcp")
     ? TELEGRAM_MCP_SERVICE
+    : args.includes("reminders")
+      ? "iva-reminders.service"
     : args.includes("poll")
       ? "iva-telegram-poll.service"
       : "iva.service";
   run("journalctl", ["--user", "-u", unit, "-f", "-n", "50"]);
+}
+
+async function cmdWorkflowReset(args) {
+  requireSystemd();
+  if (!args.includes("--yes") && !(await confirm("Остановить Iva, архивировать .workflow-data и запустить заново?", false))) {
+    return console.log("Отменено.");
+  }
+  sc("stop", ...BASE_SERVICES);
+  const src = join(ROOT, ".workflow-data");
+  if (existsSync(src)) {
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+    const dst = join(ROOT, `.workflow-data.bak-${stamp}`);
+    renameSync(src, dst);
+    ok(`.workflow-data архивирован: ${dst}`);
+  }
+  mkdirSync(src, { recursive: true });
+  restartServices();
+  ok("Workflow runtime-state сброшен, сервисы перезапущены");
+}
+
+function cmdReminders() {
+  run(NODE, ["--env-file=.env", "scripts/reminders-run.mjs", "--list"]);
 }
 
 async function cmdUninstall(args) {
@@ -463,7 +514,9 @@ ${C.b}Команды:${C.x}
   ${C.c}iva status${C.x}         статус сервисов и таймеров памяти
   ${C.c}iva restart${C.x}        перезапустить агента и Telegram-мост
   ${C.c}iva start${C.x} / ${C.c}stop${C.x}    запустить / остановить
-  ${C.c}iva logs${C.x} [poll|mcp] логи агента, Telegram-моста или Telegram MCP -f
+  ${C.c}iva reminders${C.x}      показать активные напоминания
+  ${C.c}iva logs${C.x} [poll|mcp|reminders] логи агента, Telegram-моста, reminders или Telegram MCP -f
+  ${C.c}iva workflow-reset${C.x} архивировать .workflow-data и сбросить зависшую сессию
   ${C.c}iva uninstall${C.x}       снять юниты и команду (--purge — удалить код+vault)
   ${C.c}iva version${C.x}         версия и git-commit
 
@@ -482,6 +535,8 @@ const cmds = {
   start: cmdStart,
   stop: cmdStop,
   logs: cmdLogs,
+  reminders: cmdReminders,
+  "workflow-reset": cmdWorkflowReset,
   uninstall: cmdUninstall,
   version: cmdVersion,
   help: cmdHelp,

@@ -4,7 +4,7 @@ node_modules
 !.env.example
 .eve
 .vercel
-.workflow-data
+.workflow-data*
 .next
 .output
 .nitro
@@ -16,4 +16,3 @@ data
 # Живой vault памяти — отдельный приватный git-репо (личные данные).
 # Скелет хранится в vault-template/ (трекается); живой vault создаёт scripts/init-vault.mjs.
 /vault/
-

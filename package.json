@@ -19,6 +19,7 @@
     "start": "eve start",
     "init-vault": "node scripts/init-vault.mjs",
     "digest": "node scripts/daily-digest.ts",
+    "reminders": "node --env-file=.env scripts/reminders-run.mjs",
     "poll": "node --env-file=.env scripts/telegram-poll.mjs",
     "telegram:mcp:setup": "node scripts/telegram-mcp-setup.mjs",
     "telegram:mcp:serve": "python3 scripts/telegram-mcp-http.py",

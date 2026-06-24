@@ -154,24 +154,26 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 ```
 (05:00 UTC ≈ 08:00 Минск. Агент должен быть запущен.)
 
-## Система памяти — systemd-таймеры (DAG-роллапы)
+## Systemd-таймеры: напоминания и память
 > eve-расписания (`defineSchedule`) на self-host НЕ срабатывают — они становятся Vercel Cron
-> только на Vercel. Поэтому роллапы памяти крутятся через systemd user-таймеры, которые драйвят
-> Iva через `eve/client`.
+> только на Vercel. Поэтому серверные расписания крутятся через systemd user-таймеры.
 
-`install.sh` устанавливает юниты из `deploy/iva-memory-*.{service,timer}` в
+`install.sh` устанавливает юниты из `deploy/iva-*.{service,timer}` в
 `~/.config/systemd/user/` и включает их (`systemctl --user enable --now`, `loginctl enable-linger`).
-`OnCalendar` берёт `TZ` из `EnvironmentFile=.env` (`ASSISTANT_TIMEZONE`). Таймеры:
+`OnCalendar` берёт `TZ` из `EnvironmentFile=.env` (`ASSISTANT_TIMEZONE`). Таймеры памяти драйвят
+Iva через `eve/client`; напоминания отправляются коротким отдельным процессом напрямую в Telegram,
+не через workflow.
 
 | Таймер | Когда | Что делает |
 |--------|-------|-----------|
+| `iva-reminders`      | каждую минуту | проверяет `data/reminders.json`, отправляет due-напоминания |
 | `iva-memory-daily`   | ночью     | транскрипт дня → карточки + daily-summary, отчёт в Telegram |
 | `iva-memory-weekly`  | Вс ночью  | 7 daily-summary → weekly-summary + MOC, отчёт в Telegram |
 | `iva-memory-monthly` | 1-е число | weekly → monthly-summary |
 | `iva-memory-yearly`  | 1 января  | monthly → yearly-summary |
 | `iva-memory-doctor`  | ночью     | autograph health/decay/moc/dedup + `git commit && push` vault |
 
-Ручной прогон: `npm run memory -- daily` (или `weekly`/`monthly`/`yearly`), `npm run doctor`.
+Ручной прогон: `npm run reminders`, `npm run memory -- daily` (или `weekly`/`monthly`/`yearly`), `npm run doctor`.
 Статус: `systemctl --user list-timers`.
 
 ## Если переедешь на Vercel — нативное расписание

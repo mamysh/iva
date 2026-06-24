@@ -12,6 +12,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { join } from "node:path";
+import { formatReminder, loadReminders } from "./lib/reminders-store.mjs";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const SECRET = process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN;
@@ -37,6 +38,7 @@ const HELP = [
   "/new — начать заново (сброс текущего диалога)",
   "/task <текст> — добавить задачу",
   "/tasks — показать задачи",
+  "/reminders — активные напоминания",
   "/digest — утренний дайджест",
 ].join("\n");
 
@@ -145,12 +147,20 @@ async function handleControl(update) {
   const text = (msg?.text || "").trim();
   if (!text.startsWith("/")) return false;
   const cmd = text.split(/\s+/)[0].replace(/@\w+$/, "").toLowerCase();
-  if (!["/help", "/restart", "/new", "/clear", "/compact"].includes(cmd)) return false;
+  if (!["/help", "/restart", "/new", "/clear", "/compact", "/reminders"].includes(cmd)) return false;
   const from = String(msg?.from?.id ?? "");
   if (ALLOWED.size === 0 || !ALLOWED.has(from)) return false; // не доверенный — пусть eve дропнет
   const chatId = msg?.chat?.id;
   if (cmd === "/help") {
     await reply(chatId, HELP);
+    return true;
+  }
+  if (cmd === "/reminders") {
+    const reminders = (await loadReminders()).filter((r) => r.status === "pending");
+    const text = reminders.length
+      ? ["Активные напоминания:", ...reminders.slice(0, 30).map((r) => formatReminder(r))].join("\n")
+      : "Активных напоминаний нет.";
+    await reply(chatId, text);
     return true;
   }
   // /restart, /new, /clear, /compact → перезапуск процесса (надёжный сброс/recovery).

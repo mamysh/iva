@@ -1,0 +1,12 @@
+[Unit]
+Description=Iva reminders dispatcher — every minute
+
+[Timer]
+OnBootSec=30s
+OnCalendar=*-*-* *:*:00
+AccuracySec=10s
+Persistent=true
+Unit=iva-reminders.service
+
+[Install]
+WantedBy=timers.target

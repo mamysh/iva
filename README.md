@@ -174,6 +174,7 @@ Message the bot like a normal chat — text or voice. Commands work right in the
 |---------|--------------|
 | `/task buy milk` | add a task |
 | `/tasks` | show the task list |
+| `/reminders` | show active reminders |
 | `/digest` | day summary |
 | `/new` | start the conversation fresh |
 | `/help` | list of commands |
