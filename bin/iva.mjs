@@ -137,12 +137,18 @@ function ivaServiceBody() {
     "",
     "[Service]",
     `WorkingDirectory=${ROOT}`,
+    `EnvironmentFile=${ROOT}/deploy/iva-workflow.environment`,
     `EnvironmentFile=${ROOT}/.env`,
     `ExecStart=${NODE} ${ROOT}/.output/server/index.mjs`,
     `Environment=PORT=${port}`,
     `Environment=PATH=${NODE_BIN_DIR}:%h/.local/bin:/usr/local/bin:/usr/bin:/bin`,
     "Environment=AGENT_BROWSER_MAX_OUTPUT=24000",
     "Restart=always",
+    "RestartSec=2s",
+    // Eve currently keeps workflow/HTTP handles open after SIGTERM. Bound the
+    // stop phase so deploys cannot leave the service deactivating for 90s.
+    "TimeoutStopSec=15s",
+    "SendSIGKILL=yes",
     "",
     "[Install]",
     "WantedBy=default.target",

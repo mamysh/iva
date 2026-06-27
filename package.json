@@ -31,8 +31,9 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.0-beta.57",
     "@vercel/connect": "0.2.2",
+    "@workflow/world-postgres": "5.0.0-beta.16",
     "ai": "7.0.0-beta.178",
-    "eve": "^0.11.4",
+    "eve": "0.11.10",
     "zod": "4.4.3"
   },
   "devDependencies": {

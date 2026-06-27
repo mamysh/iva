@@ -40,4 +40,12 @@ export default defineAgent({
   // Защита от overflow: компактуем заранее (0.7 вместо дефолтных 0.9), оставляя запас на
   // summary-вызов и следующий ход. eve сам саммаризирует старые ходы, сохраняя todo и read-tracking.
   compaction: { thresholdPercent: 0.7 },
+  // world-local хранит каждый stream event отдельным файлом и на self-host со временем
+  // деградирует из-за polling плоского chunks-каталога. PostgreSQL World оставляет
+  // модель/контекст/harness неизменными, заменяя только durable workflow backend.
+  experimental: {
+    workflow: {
+      world: "@workflow/world-postgres",
+    },
+  },
 });
