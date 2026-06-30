@@ -163,8 +163,6 @@ So you know exactly what you're getting.
 
 If Iva is useful to you, a ⭐ genuinely helps other people find it — that's the whole marketing budget.
 
-[![Star History Chart](https://api.star-history.com/svg?repos=smixs/iva&type=Date)](https://star-history.com/#smixs/iva&Date)
-
 ---
 
 ## Built on

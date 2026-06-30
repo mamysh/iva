@@ -163,8 +163,6 @@ Telegram  ──(long-polling, getUpdates)──►  Iva (eve-агент на в
 
 Если Iva вам полезна, ⭐ правда помогает другим её найти - это весь маркетинговый бюджет проекта.
 
-[![Star History Chart](https://api.star-history.com/svg?repos=smixs/iva&type=Date)](https://star-history.com/#smixs/iva&Date)
-
 ---
 
 ## На чём построено
