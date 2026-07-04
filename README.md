@@ -48,8 +48,8 @@ There are plenty of agents around. This one's mine. Now it's yours too.
 | | |
 |---|---|
 | 🎙️ **Voice & video** | Transcribes voice notes and video messages in any language (Deepgram nova-3). |
-| 🧠 **Long memory** | Remembers your conversations and tidies them up on its own at night. |
-| 🔎 **Fast search** | Finds what you need in seconds, straight over the files — no index to rebuild. |
+| 🧠 **Long memory** | Remembers your conversations, tidies them at night, and rewrites facts that change instead of piling up contradictions. |
+| 🔎 **Smart search** | Ranks memory by relevance and by links between cards — finds things by meaning, not the exact word, in any language. |
 | ⏰ **On a schedule** | Day or week digests, recurring jobs; it can check your inbox and send you a summary. |
 | 🔔 **Reminders** | Tell it what and when — it won't forget. |
 | 🤖 **Your choice of model** | DeepSeek, Kimi, GLM and other open models — switch any time. |
@@ -78,9 +78,9 @@ Most agents forget you the moment the context window fills up. Iva doesn't. Its 
 
 Every night Iva does the tidying itself: it summarizes the leaves and folds them up the branches. So it can recall word-for-word what was said on a particular Tuesday, and tell you what you spent the whole month on.
 
-This is low-context memory by design. Iva never loads its whole history into the model. Always in context is one tiny CORE file — who you are, your standing preferences, active goals. Everything else is pulled in for the specific task, found by a plain search over the files.
+This is low-context memory by design. Iva never loads its whole history into the model. Always in context is one tiny CORE file — who you are, your standing preferences, active goals. Everything else is pulled in for the specific task by a ranked search that scores cards by relevance and by the links between them. When a fact changes, the current value is rewritten and the old one kept in a dated history — so the longer you use it, the fewer stale contradictions it carries.
 
-Memory is the part I've worked on longest: first [agent-second-brain](https://github.com/smixs/agent-second-brain), then the typed-graph skill [autograph](https://github.com/smixs/autograph/tree/main), and all of that experience is gathered here. The tree above is a hierarchical summary DAG: older days get compressed, but a pointer back to the original stays. At its core is the idea from the [LCM: Lossless Context Management](https://papers.voltropy.com/LCM) paper (Ehrlich & Blackman, 2026), plus my own work on top. One of the best memory designs a personal agent has today — and it runs on open models you own, no subscription.
+Memory is the part I've worked on longest: first [agent-second-brain](https://github.com/smixs/agent-second-brain), then the typed-graph skill [autograph](https://github.com/smixs/autograph/tree/main), and all of that experience is gathered here. The tree above is a hierarchical summary DAG: older days get compressed, but a pointer back to the original stays. At its core is the idea from the [LCM: Lossless Context Management](https://arxiv.org/abs/2605.04050) paper (Ehrlich & Blackman, 2026), plus my own work on top. One of the best memory designs a personal agent has today — and it runs on open models you own, no subscription.
 
 ---
 
@@ -142,6 +142,8 @@ Message the bot like any normal chat — text or voice. Commands work right in t
 
 The code and the memory stay on your server. The vault is its own private git repository: link the remote once, and the memory backs itself up. Keys live in `.env`, not in the code. The bot answers only the Telegram IDs you allow, and stays silent to everyone else by default.
 
+Untrusted content — forwarded messages, attachments, web pages — passes through deterministic gates: hidden prompt-injection is defused before the model sees it, and secrets are scrubbed from replies before they go out.
+
 Honest about the boundary: the model and the voice transcription run through cloud APIs — the ones you chose and pay for yourself. Self-hosted here means your code and memory, not the model weights.
 
 ---
@@ -153,7 +155,7 @@ So you know exactly what you're getting.
 - Telegram only. No web app, no dashboard — the chat is the whole interface.
 - Replies in the language you chose at install. Switchable, but not two at once.
 - Memory backup is a `git push` to a repo you set up once, not a managed cloud sync.
-- Search is literal, not semantic. Iva greps your files; there's no vector search.
+- Search is ranked keyword + link-graph by default (no external key, any language). Semantic vector search is optional — one key, off unless you turn it on.
 - Single user. One owner, one vault — not a team or multi-tenant assistant.
 - Pre-1.0. It works and it's in daily use, but it's young. Expect rough edges — report them.
 

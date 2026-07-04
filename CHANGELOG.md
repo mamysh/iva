@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0] - 2026-07-04
+
+Feature: memory that finds things by meaning and keeps facts current, plus deterministic hardening against prompt injection and secret leaks.
+
+- 🧠 **Search by meaning, not the exact word** — recall used to be a raw `grep`: type the wrong synonym or a different word-form and the fact stayed hidden. Memory is now a ranked search — BM25 over your cards and summaries (built in on `node:sqlite`, no dependency, no index to babysit) plus a rerank by the **links between cards**, so asking about a person surfaces the people and projects connected to them. It's language-agnostic by design: term weight comes from your own vault, so it works the same in Russian, English, Chinese, or a mix — no hardcoded word lists.
+- ♻️ **Facts that change get rewritten, not stacked** — when today contradicts an old card (you changed jobs, moved city, a decision was reverted), the nightly rollup now **rewrites the current value** and files the old one under a dated `## History`, instead of leaving two contradictory facts for search to trip over. A deterministic nightly pass flags same-entity conflicts; each fact is tagged `EXTRACTED` (you said it) or `INFERRED` (deduced) so Iva can hedge when it's guessing. The longer you use it, the fewer stale contradictions it carries.
+- 🔒 **Strictly typed cards** — a new `write_card` path validates type and schema at write time, so the model can't invent a card type or smuggle in stray fields; the nightly maintenance coerces anything written the old way back into schema.
+- 🛡️ **Untrusted content is gated** — forwarded messages, attachments, voice transcripts and web pages now pass through deterministic gates before and after the model: hidden prompt-injection (invisible characters, homoglyph tricks, override phrases) is defused on the way in, and API keys, tokens and exfiltration URLs are scrubbed from replies on the way out. Legitimate non-Latin text is never mangled — normalization is used only to detect, never to rewrite what you wrote.
+- 🔌 **Optional semantic search** — for a large vault or genuinely fuzzy/cross-language queries, an opt-in hybrid mode adds vector search fused with the keyword ranking (RRF). One external key (Jina — no-train/EU, or DeepInfra — cheapest), or point it at a local Ollama endpoint and use no external key at all. Off by default; the installer asks once. Base memory needs nothing.
+
+[0.2.0]: https://github.com/smixs/iva/releases/tag/v0.2.0
+
 ## [0.1.7] - 2026-06-29
 
 Feature: Iva sees images, takes any attachment, and learns your corrections — plus the stability fixes that make all of it reliable.
