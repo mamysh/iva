@@ -25,22 +25,22 @@
     "note": {
       "description": "Knowledge note, captured thought, learning, or reference",
       "required": ["description", "tags"],
-      "status": ["active", "draft", "archived"]
+      "status": ["active", "draft", "archived", "superseded"]
     },
     "contact": {
       "description": "Person or organization the user interacts with",
       "required": ["description", "tags", "status"],
-      "status": ["active", "inactive"]
+      "status": ["active", "inactive", "superseded"]
     },
     "project": {
       "description": "Ongoing project or initiative with deliverables",
       "required": ["description", "tags", "status"],
-      "status": ["active", "done", "paused", "cancelled", "draft"]
+      "status": ["active", "done", "paused", "cancelled", "draft", "superseded"]
     },
     "idea": {
       "description": "Idea, proposal, or hypothesis worth keeping",
       "required": ["description", "tags"],
-      "status": ["active", "explored", "archived", "draft"]
+      "status": ["active", "explored", "archived", "draft", "superseded"]
     },
     "decision": {
       "description": "A decision made, with rationale; can later be superseded or reverted",

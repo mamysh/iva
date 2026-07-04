@@ -75,15 +75,29 @@ function maint(label: string, args: string[]): void {
   const r = run("uv", ["run", ...args]);
   if (r.status !== 0) failures.push(label);
 }
+// enforce — strict-typing backstop: coerce type aliases, fix invalid status, backfill
+// system fields. Runs FIRST (before graph) so the graph is built on canonical frontmatter.
+// This is the deterministic guarantee that cards written outside write_card stay in-schema.
+maint("enforce", [`${SCRIPTS}/enforce.py`, ".", `${SCRIPTS.replace("/scripts", "")}/schema.json`, "--apply"]);
 // graph.health rebuilds the graph and writes health-history.json (for drop detection).
 maint("graph.health", [`${SCRIPTS}/graph.py`, "health", "."]);
 // engine.decay updates card relevance/tiers.
 maint("engine.decay", [`${SCRIPTS}/engine.py`, "decay", "."]);
 // moc.generate rebuilds the MOC indexes.
 maint("moc.generate", [`${SCRIPTS}/moc.py`, "generate", "."]);
+// supersede — deterministic contradiction scan (dry-run): reports same-entity cards with
+// conflicting fields to .graph/supersede-candidates.json; the nightly LLM rollup resolves them.
+maint("supersede", [`${SCRIPTS}/supersede.py`, "."]);
 // dedup and link_cleanup — dry-run only (autograph policy: never apply automatically).
 maint("dedup", [`${SCRIPTS}/dedup.py`, ".", "--dry-run"]);
 maint("link_cleanup", [`${SCRIPTS}/link_cleanup.py`, "."]);
+
+// Плагин: пересобрать сайдкар эмбеддингов для hybrid-поиска (только если включён). Запускаем
+// из корня проекта (cwd), а не из VAULT — скрипт лежит в scripts/, ключ читается из .env.
+if (process.env.MEMORY_SEARCH_MODE === "hybrid") {
+  const r = run("node", ["--env-file=.env", "scripts/memory/embed-index.ts"], process.cwd());
+  if (r.status !== 0) failures.push("embed-index");
+}
 
 if (failures.length) {
   await telegram(

@@ -77,15 +77,28 @@ function buildPrompt(p: Period, now: string): string {
       return (
         intro +
         `Process the raw transcript of the completed day (${VAULT}/daily/${yesterday}.md): ` +
-        `extract entities and create/update autograph cards, ` +
-        `then assemble a daily-summary for ${yesterday} with the day's topics and MOC links down to the cards ` +
+        `extract entities and create/update autograph cards. Prefer the write_card tool over write_file ` +
+        `for cards — it enforces the schema. For each fact choose one operation: ADD (new), ` +
+        `SUPERSEDE (contradicts a current value), or NOOP (already known). ` +
+        `On SUPERSEDE: REWRITE the card's current value (frontmatter + top description) to the new fact, ` +
+        `and move the OLD value to a '## History' section as a dated line (e.g. '- 2026-03→06: TDI Group'). ` +
+        `Never leave two contradictory CURRENT values; History is append-only, never edited. ` +
+        `Tag each fact's certainty with 'confidence:' — EXTRACTED (user stated it directly) or ` +
+        `INFERRED (you deduced it). ` +
+        `First read ${VAULT}/.graph/supersede-candidates.json (the deterministic conflict scan) and ` +
+        `resolve every listed same-entity conflict by superseding the stale card. ` +
+        `Then assemble a daily-summary for ${yesterday} with the day's topics and MOC links down to the cards ` +
         `and to the raw transcript daily/${yesterday}.md. ` +
         `Then update ${VAULT}/CORE.md per the .claude/rules/core-format.md rule: refresh permanent ` +
         `facts about the user, preferences, active goals (≤3), and the pointer to the last day (${yesterday}); ` +
         `keep it ≤~1200 characters — compress on overflow, don't bloat. ` +
-        `Separately, scan the transcript for user corrections (where they corrected you, asked again, ` +
-        `or expressed dissatisfaction with an answer or format): if a REPEATABLE behavioral lesson is visible, ` +
-        `not a one-off fix — add/refine a line in the CORE Preferences section so you don't repeat the mistake. ` +
+        `Separately, reflect on the day's interactions: for each notable exchange judge the outcome — ` +
+        `useful, dead_end, or corrected (user corrected you, asked again, or was dissatisfied). ` +
+        `When a corrected/dead_end outcome reveals a REPEATABLE behavioral lesson (not a one-off fix), ` +
+        `add/refine ONE dated line in the CORE Preferences section (e.g. '- 2026-07: отвечать короче, ` +
+        `без преамбул') so you don't repeat it. Keep lessons recency-ordered, drop the stalest when the ` +
+        `section grows; a lesson consistently honored for weeks can be dropped. Skip this whole step if ` +
+        `the day held no corrections (no-op — don't invent lessons). ` +
         tail
       );
     case "weekly":

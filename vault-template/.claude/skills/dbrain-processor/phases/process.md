@@ -17,7 +17,11 @@ For each item:
    ```
    - Match found → **update** that card (sharpen description, add tags, bump status,
      append a dated line under `## Log`). Do not create a duplicate.
-   - No match → **create** a new card.
+     - If the new fact **contradicts** a current value → **SUPERSEDE**: rewrite the current
+       value (Compiled Truth) and move the old one to `## History` with a date range.
+       See `references/classification.md` → "ADD / SUPERSEDE / NOOP".
+   - No match → **create** a new card (prefer the `write_card` tool — it enforces type/schema).
+   - Tag each card with `confidence: EXTRACTED|INFERRED` (see classification.md → "Confidence").
 2. **Path & filename.** Place by type (see SKILL layout table). Filenames are
    kebab-case slugs:
    - `cards/contacts/jane-doe.md`, `cards/projects/iva-memory.md`,
