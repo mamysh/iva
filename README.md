@@ -77,16 +77,6 @@ Memory is the part I've worked on longest: first [agent-second-brain](https://gi
 
 ---
 
-## How it works
-
-```
-Telegram  ──(long-polling, getUpdates)──►  Iva (eve agent on your host)  ──►  vault (markdown files)
-                                                                            ▲
-                                       systemd timers ─ nightly rollups ────┘
-```
-
----
-
 ## Providers & cost
 
 Iva itself is free and open-source. You pay only for a server and a model subscription:
@@ -118,19 +108,6 @@ More on running it on a VPS — [DEPLOY.md](DEPLOY.md).
 
 ---
 
-## How to use it
-
-Message the bot like any normal chat — text or voice. Commands work right in the chat.
-
-| Command | What it does |
-|---------|------------|
-| `/digest` | day summary |
-| `/new` | start the conversation fresh |
-| `/help` | list of commands |
-| `/restart` | restart if it ever hangs |
-
----
-
 ## Privacy
 
 The code and the memory stay on your server. The vault is its own private git repository: link the remote once, and the memory backs itself up. Keys live in `.env`, not in the code. The bot answers only the Telegram IDs you allow, and stays silent to everyone else by default.
@@ -147,19 +124,6 @@ Iva runs on your own box and you'll forward it things from the outside — a lin
 - **Going out** — every reply is scanned before it leaves: API keys, tokens and secret-leaking links are scrubbed.
 
 The bot also answers only the Telegram IDs you allow. Honest boundary: this is defense in depth, not a magic shield — but it closes the obvious ways a forwarded payload could turn your own assistant against you.
-
----
-
-## What Iva does not do
-
-So you know exactly what you're getting.
-
-- Telegram only. No web app, no dashboard — the chat is the whole interface.
-- Replies in the language you chose at install. Switchable, but not two at once.
-- Memory backup is a `git push` to a repo you set up once, not a managed cloud sync.
-- Search is ranked keyword + link-graph by default (no external key, any language). Semantic vector search is optional — one key, off unless you turn it on.
-- Single user. One owner, one vault — not a team or multi-tenant assistant.
-- Pre-1.0. It works and it's in daily use, but it's young. Expect rough edges — report them.
 
 ---
 
