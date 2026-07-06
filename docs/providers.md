@@ -8,16 +8,17 @@ Iva runs on your server with your keys. Here is every external service it talks 
 |---|---|---|---|
 | **OpenCode Zen Go** | ~$5/mo | `deepseek-v4-pro` (default), `deepseek-v4-flash`, `kimi-k2.7-code`, `glm-5.2`, `qwen3.7` | `gemini-3-flash` |
 | **Ollama Cloud** | ~$20/mo | `deepseek-v4-pro` (default) | `gemma3:12b` |
+| **OpenRouter** | pay-as-you-go | 300+ models across vendors — pick any slug (`vendor/model`) | `google/gemini-2.5-flash` |
 | **OpenAI (ChatGPT subscription)** | your existing Plus/Pro/Team | the models your plan exposes (`gpt-5.x`, `-codex`), fetched live | same subscription (multimodal) |
 
-The first two are plain API keys; the third rides your personal OpenAI subscription:
+The first three are plain API keys; the last rides your personal OpenAI subscription:
 
-- 🔌 **OpenAI-compatible** — Zen and Ollama share the same wire format, so switching is one line in `.env`
-- 🌍 **Any IP** — all three answer from any server location, no region blocks
+- 🔌 **OpenAI-compatible** — Zen, Ollama and OpenRouter share the same wire format, so switching is one line in `.env`
+- 🌍 **Any IP** — all answer from any server location, no region blocks
 - 💸 **No markup** — you pay the provider directly; Iva adds nothing on top
 
 ```bash
-MODEL_PROVIDER=opencode   # or ollama / codex, then `iva restart`
+MODEL_PROVIDER=opencode   # or ollama / openrouter / codex, then `iva restart`
 ```
 
 Start with Zen: a quarter of the price, five models to switch between. Keys, model pick and context-window settings live in [configuration.md](configuration.md).
@@ -34,6 +35,16 @@ iva restart
 ```
 
 Notes: the model list is pulled from your subscription at setup time, so you always see exactly what your plan allows. Set `CODEX_CONTEXT_WINDOW` to the real window of the model you picked (compaction derives its threshold from it). Routing a self-hosted assistant through the ChatGPT subscription backend is a grey area under OpenAI's terms — you are using your own subscription on your own server, but weigh that yourself.
+
+### OpenRouter (`openrouter`)
+
+One key, [300+ models](https://openrouter.ai/models) from every major vendor (Anthropic, OpenAI, Google, DeepSeek, Meta…), billed pay-as-you-go straight by OpenRouter. Because there are hundreds of models, setup doesn't show a picker — you paste the model **slug** yourself:
+
+1. Grab a key at [openrouter.ai/keys](https://openrouter.ai/keys) (`sk-or-…`).
+2. Open [openrouter.ai/models](https://openrouter.ai/models), pick a model, copy its slug — the `vendor/model` id shown under the name (e.g. `anthropic/claude-sonnet-4.5`, `openai/gpt-5.1`, `google/gemini-2.5-pro`). Optional routing suffixes like `:free`/`:nitro` are allowed.
+3. `iva config` → provider `4` → paste the key, then the slug. **It sends a live test request** and only moves on once the model actually answers — so a mistyped slug can't slip through and leave the bot silent.
+
+Set `OPENROUTER_CONTEXT_WINDOW` to the real window of the model you picked. Images are described through `google/gemini-2.5-flash` (cheap, always multimodal) regardless of your text model, so vision works even if the text model you chose is text-only — those image calls bill to your OpenRouter credit too.
 
 ## Vision
 
