@@ -64,13 +64,16 @@ The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed.
 
 ## Providers & cost
 
-| What | Cost |
-|---|---|
-| OpenCode Zen — model API | ~$5/mo |
-| Ollama Cloud — model API | ~$20/mo |
-| VPS — 512 MB is enough | $4–5/mo |
+Four model providers. Pick one and fill its block in `.env`:
 
-Pick one provider; the default model is deepseek-v4-pro with a 131k context. About $9/mo total, no markup. Voice rides Deepgram's free starter credit. Model lists, limits and the search-provider matrix: [docs/providers.md](docs/providers.md).
+| Provider | How you pay |
+|---|---|
+| OpenCode Zen | API key, ~$5/mo |
+| Ollama Cloud | API key, ~$20/mo |
+| OpenRouter | API key, pay-as-you-go, 300+ models |
+| OpenAI (ChatGPT) | your Plus/Pro subscription, no API key |
+
+Default model is deepseek-v4-pro, 131k context. On Zen it runs about $9/mo all-in ($5 model + $4–5 VPS), no markup; voice rides Deepgram's free starter credit. Model lists, limits and the search matrix: [docs/providers.md](docs/providers.md).
 
 ## Security & privacy
 
