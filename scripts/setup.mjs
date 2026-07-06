@@ -245,7 +245,8 @@ async function main() {
   const prov0 = existing.MODEL_PROVIDER || "ollama";
   const provModel = { opencode: "OPENCODE_MODEL", codex: "CODEX_MODEL" }[prov0] || "OLLAMA_MODEL";
   // codex — доступ по OAuth-токену (data/codex-auth.json), у ollama/opencode — API-ключ в .env.
-  const provKey = { opencode: "OPENCODE_API_KEY", codex: null }[prov0] ?? "OLLAMA_API_KEY";
+  // ollama задан явно: `null ?? default` вернул бы ключ и для codex (null нуллиш) → мастер зацикливался бы.
+  const provKey = { ollama: "OLLAMA_API_KEY", opencode: "OPENCODE_API_KEY", codex: null }[prov0];
   const REQUIRED = [provModel, "DEEPGRAM_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS", ...(provKey ? [provKey] : [])];
   const loggedInCodex = prov0 !== "codex" || existsSync(authFilePath(dataDirAbs(existing)));
   const isComplete = loggedInCodex && REQUIRED.every((k) => (existing[k] || "").trim());

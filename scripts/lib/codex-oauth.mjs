@@ -210,9 +210,13 @@ export async function runDeviceCodeLogin({ dataDir = defaultDir(), log = console
 
 // ── browser-PKCE flow (локальный сервер + авто-открытие браузера) ───────────
 function openBrowser(url) {
-  const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  const win = process.platform === "win32";
+  const cmd = process.platform === "darwin" ? "open" : win ? "start" : "xdg-open";
+  // win32: `start` берёт первый аргумент как заголовок окна, а в authorize-URL есть `&` →
+  // передаём пустой заголовок "" перед URL, иначе cmd.exe не откроет ссылку.
+  const args = win ? ["", url] : [url];
   try {
-    spawn(cmd, [url], { stdio: "ignore", detached: true, shell: process.platform === "win32" }).unref();
+    spawn(cmd, args, { stdio: "ignore", detached: true, shell: win }).unref();
   } catch {
     /* нет графики (headless) — пользователь откроет ссылку сам */
   }
