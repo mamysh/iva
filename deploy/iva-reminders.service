@@ -1,0 +1,14 @@
+# systemd USER unit — short-lived reminder dispatcher.
+#
+# Runs from iva-reminders.timer. Sends due reminders directly via Telegram Bot API
+# without calling the Eve webhook/workflow.
+[Unit]
+Description=Iva reminders dispatcher
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__PROJECT_DIR__
+EnvironmentFile=__PROJECT_DIR__/.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=__NODE_BIN__ --env-file=.env scripts/reminders-run.mjs

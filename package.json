@@ -18,19 +18,23 @@
     "start": "eve start",
     "init-vault": "node scripts/init-vault.mjs",
     "digest": "node scripts/daily-digest.ts",
+    "reminders": "node --env-file=.env scripts/reminders-run.mjs",
     "poll": "node --env-file=.env scripts/telegram-poll.mjs",
     "memory": "node --env-file=.env scripts/memory/rollup.ts",
     "doctor": "node --env-file=.env scripts/memory/doctor.ts",
+    "workflow:smoke": "node --env-file=.env scripts/workflow-smoke.mjs",
     "typecheck": "tsgo",
+    "test": "node scripts/check-reasoning-strip.mjs && node scripts/check-workflow-config.mjs && node scripts/check-reminders-store.mjs",
     "postinstall": "patch-package"
   },
   "dependencies": {
     "@ai-sdk/openai": "4.0.0-beta.76",
     "@ai-sdk/openai-compatible": "^3.0.0-beta.57",
     "@vercel/connect": "0.2.2",
+    "@workflow/world-postgres": "5.0.0-beta.23",
     "ai": "7.0.0-beta.178",
-    "eve": "0.11.4",
-    "just-bash": "^3.0.0",
+    "eve": "0.11.10",
+    "just-bash": "^3.0.1",
     "zod": "4.4.3"
   },
   "devDependencies": {

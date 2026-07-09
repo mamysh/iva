@@ -426,13 +426,13 @@ case ":$PATH:" in
 esac
 
 # ─────────────────────────────────────────────────────────────────────────
-# 9. systemd: the main service + memory timers (Linux). Requires a configured .env.
+# 9. systemd: the main service + timers (Linux). Requires a configured .env.
 # ─────────────────────────────────────────────────────────────────────────
 if ! command -v systemctl >/dev/null 2>&1; then
   : # not Linux/systemd — skip silently
 elif [ ! -f .env ]; then
   warn "$(t "No .env — not setting up autostart. First: npm run setup, then re-run install.sh." "Нет .env — автозапуск не настраиваю. Сначала: npm run setup, потом перезапустите install.sh.")"
-elif prompt_yes_no "$(t "Set up autostart via systemd (service + memory timers)?" "Завести автозапуск через systemd (сервис + таймеры памяти)?")" yes; then
+elif prompt_yes_no "$(t "Set up autostart via systemd (service + timers)?" "Завести автозапуск через systemd (сервис + таймеры)?")" yes; then
   # Delegate writing the units to the iva CLI — the single source of truth (see bin/iva.mjs writeUnits).
   step "$(t "Installing systemd units (via the iva CLI)…" "Ставлю systemd-юниты (через iva CLI)…")"
   node "$PROJECT_DIR/bin/iva.mjs" _install-units || die "$(t "couldn't write the systemd units" "не удалось записать systemd-юниты")"
@@ -446,12 +446,12 @@ elif prompt_yes_no "$(t "Set up autostart via systemd (service + memory timers)?
       || warn "$(t "couldn't start iva-telegram-poll (manually: npm run poll)" "не удалось запустить iva-telegram-poll (вручную: npm run poll)")"
   fi
   if [ "$timers_installed" -eq 1 ]; then
-    for t in "$PROJECT_DIR"/deploy/iva-memory-*.timer; do
+    for t in "$PROJECT_DIR"/deploy/iva-*.timer; do
       [ -e "$t" ] || continue
       tname="$(basename "$t")"
       systemctl --user enable --now "$tname" || warn "$(t "couldn't enable $tname" "не удалось включить $tname")"
     done
-    ok "$(t "Memory timers enabled: systemctl --user list-timers" "Таймеры памяти включены: systemctl --user list-timers")"
+    ok "$(t "Timers enabled: systemctl --user list-timers" "Таймеры включены: systemctl --user list-timers")"
   fi
   loginctl enable-linger "$USER" >/dev/null 2>&1 || warn "$(t "couldn't enable linger (the service won't start before login)" "не удалось включить linger (сервис не стартует до логина)")"
   ok "$(t "Service started: systemctl --user status iva" "Сервис запущен: systemctl --user status iva")"

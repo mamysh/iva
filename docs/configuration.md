@@ -81,8 +81,23 @@ The nightly doctor builds the hybrid index; to build it now, run `node --env-fil
 | `AGENT_LANGUAGE` | `ru` | `en` or `ru`. Sets Iva's reply language, date locale, and which CORE.md seed `init-vault` uses. |
 | `ASSISTANT_TIMEZONE` | `Asia/Almaty` | IANA name. Sets daily-transcript dates, the 5 nightly memory timers, and the date/time Iva sees each turn. Exported as `TZ`. |
 | `ASSISTANT_VAULT_DIR` | `vault` | The live memory: a separate private git repo, opens in Obsidian. |
-| `ASSISTANT_DATA_DIR` | `data` | Runtime data: `tasks.json`, token log `usage.jsonl`. |
+| `ASSISTANT_DATA_DIR` | `data` | Runtime data: `tasks.json`, `reminders.json`, token log `usage.jsonl`. |
 | `IVA_PORT` | `8723` | Local eve server port. Deliberately unfashionable — 3000/8000/8080 are usually taken on a stock VPS by docker and friends. Change it via `iva config`, not by hand: the systemd unit pins the port literally and must match ([deploy.md](./deploy.md)). |
 | `ASSISTANT_HOST` | `http://127.0.0.1:${IVA_PORT}` | Where the poll bridge and memory scripts reach the server. Change only if the agent runs on another host. |
 | `ASSISTANT_BEARER` | *(empty)* | Only when the eve HTTP channel requires a bearer token — the Vercel variant in [deploy.md](./deploy.md). |
 | `AGENT_BROWSER_MAX_OUTPUT` | `24000` | Character cap on agent-browser output, so one page dump can't eat the context window. |
+
+## Workflow backend
+
+Leave these unset for the default local `.workflow-data` backend. For long-running self-host installs, enable the official PostgreSQL Workflow World:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `WORKFLOW_TARGET_WORLD` | *(empty)* | Set to `@workflow/world-postgres` to enable PostgreSQL workflow state. `postgres` is accepted as a shorthand in Iva's config helper. |
+| `WORKFLOW_POSTGRES_URL` | — | PostgreSQL connection string. Local socket example: `postgresql:///iva_workflow?host=/var/run/postgresql`. |
+| `WORKFLOW_QUEUE_NAMESPACE` | `eve` | Queue namespace expected by the generated eve workflow routes. |
+| `WORKFLOW_POSTGRES_JOB_PREFIX` | `iva_` | Prefix for graphile-worker job names. |
+| `WORKFLOW_POSTGRES_WORKER_CONCURRENCY` | `8` | Conservative default for a tiny single-user VPS. |
+| `WORKFLOW_POSTGRES_MAX_POOL_SIZE` | `10` | Keep below PostgreSQL `max_connections` after system overhead. |
+
+The repository includes `deploy/iva-workflow-postgres.environment.example` and a small PostgreSQL profile in `deploy/postgresql-iva.conf`. Full setup and smoke-test steps: [deploy.md](./deploy.md#workflow-backend).

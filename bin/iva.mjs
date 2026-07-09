@@ -10,9 +10,11 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
+import { isPostgresWorkflow } from "../scripts/lib/workflow-config.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = join(ROOT, ".env");
+const WORKFLOW_ENV_PATH = join(ROOT, "deploy/iva-workflow.environment");
 const UNIT_DIR = join(homedir(), ".config/systemd/user");
 const NODE = process.execPath;
 const NODE_BIN_DIR = dirname(NODE);
@@ -21,7 +23,8 @@ const NPM = existsSync(join(NODE_BIN_DIR, "npm")) ? join(NODE_BIN_DIR, "npm") : 
 const childEnv = { ...process.env, PATH: `${NODE_BIN_DIR}:${process.env.PATH || ""}` };
 
 const SERVICES = ["iva.service", "iva-telegram-poll.service"];
-const TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((n) => `iva-memory-${n}.timer`);
+const MEMORY_TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((n) => `iva-memory-${n}.timer`);
+const TIMERS = [...MEMORY_TIMERS, "iva-reminders.timer"];
 
 // Uncommon default port: 3000/8000/8080 are typically taken on a VPS (docker, etc.).
 // Overridden by the IVA_PORT variable in .env; the default ASSISTANT_HOST depends on it too.
@@ -48,14 +51,22 @@ const sc = (...args) => run("systemctl", ["--user", ...args]);
 const scQ = (...args) => cap("systemctl", ["--user", ...args]);
 const gitHead = () => cap("git", ["rev-parse", "--short", "HEAD"]).out;
 
-function readEnv() {
+function readEnvFile(path) {
   const env = {};
-  if (!existsSync(ENV_PATH)) return env;
-  for (const line of readFileSync(ENV_PATH, "utf8").split("\n")) {
+  if (!existsSync(path)) return env;
+  for (const line of readFileSync(path, "utf8").split("\n")) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
     if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, "");
   }
   return env;
+}
+
+function readEnv() {
+  return readEnvFile(ENV_PATH);
+}
+
+function readRuntimeEnv() {
+  return { ...readEnvFile(WORKFLOW_ENV_PATH), ...readEnv() };
 }
 
 // Абсолютный путь к каталогу data (тот же, что видит агент из cwd=ROOT). Абсолютный
@@ -105,6 +116,7 @@ function ivaServiceBody() {
     "",
     "[Service]",
     `WorkingDirectory=${ROOT}`,
+    `EnvironmentFile=-${WORKFLOW_ENV_PATH}`,
     `EnvironmentFile=${ROOT}/.env`,
     // Стартуем через `eve start`, а НЕ напрямую `node .output/server/index.mjs`: eve start
     // вызывает prewarmBuiltAppSandboxes() и собирает шаблон песочницы ДО приёма трафика. Сырой
@@ -116,6 +128,9 @@ function ivaServiceBody() {
     `Environment=PATH=${NODE_BIN_DIR}:%h/.local/bin:/usr/local/bin:/usr/bin:/bin`,
     "Environment=AGENT_BROWSER_MAX_OUTPUT=24000",
     "Restart=always",
+    "RestartSec=2s",
+    "TimeoutStopSec=15s",
+    "SendSIGKILL=yes",
     "",
     "[Install]",
     "WantedBy=default.target",
@@ -458,7 +473,7 @@ function cmdDoctor() {
 function cmdStatus() {
   requireSystemd();
   run("systemctl", ["--user", "status", "--no-pager", "-n", "5", ...SERVICES]);
-  run("systemctl", ["--user", "list-timers", "--no-pager", "iva-memory-*"]);
+  run("systemctl", ["--user", "list-timers", "--no-pager", "iva-memory-*", "iva-reminders.timer"]);
 }
 function cmdRestart() {
   requireSystemd();
@@ -471,6 +486,17 @@ function cmdRestart() {
 // is stopped (otherwise we'd delete files out from under a live process). Wipes ALL parked dialogs.
 function cmdReset() {
   requireSystemd();
+  if (isPostgresWorkflow(readRuntimeEnv())) {
+    step("Workflow reset: stopping services…");
+    sc("stop", ...SERVICES);
+    warn("PostgreSQL workflow state is durable and is not deleted by `iva reset`.");
+    warn("To purge sessions, back up and drop/truncate the workflow database intentionally.");
+    const wf = join(ROOT, ".workflow-data");
+    if (existsSync(wf)) warn(".workflow-data exists but Postgres is active; leaving it untouched.");
+    restartServices();
+    ok("Restarted: iva + telegram-poll");
+    return;
+  }
   step("Full reset: stopping services…");
   sc("stop", ...SERVICES);
   const wf = join(ROOT, ".workflow-data");
@@ -497,7 +523,11 @@ function cmdStop() {
 }
 function cmdLogs(args) {
   requireSystemd();
-  const unit = args.includes("poll") ? "iva-telegram-poll.service" : "iva.service";
+  const unit = args.includes("poll")
+    ? "iva-telegram-poll.service"
+    : args.includes("reminders")
+      ? "iva-reminders.service"
+      : "iva.service";
   run("journalctl", ["--user", "-u", unit, "-f", "-n", "50"]);
 }
 
@@ -557,6 +587,22 @@ async function cmdUsage(args) {
   console.log(formatUsageReport(agg));
 }
 
+function cmdReminders() {
+  const r = run(NODE, ["--env-file=.env", "scripts/reminders-run.mjs", "--list"]);
+  process.exit(r.status ?? 1);
+}
+
+function cmdWorkflowSmoke(args) {
+  const mode = args[0];
+  if (mode !== "seed" && mode !== "resume") {
+    console.log("Usage: iva workflow-smoke seed");
+    console.log("       iva workflow-smoke resume");
+    return;
+  }
+  const r = run(NODE, ["--env-file=.env", "scripts/workflow-smoke.mjs", mode]);
+  process.exit(r.status ?? 1);
+}
+
 // OpenAI subscription (ChatGPT) login — device code by default, --browser for the PKCE flow.
 // Writes an OAuth token to data/codex-auth.json (0600); used when MODEL_PROVIDER=codex.
 async function cmdLogin(args) {
@@ -590,9 +636,11 @@ ${C.b}Commands:${C.x}
   ${C.c}iva status${C.x}         status of services and memory timers
   ${C.c}iva restart${C.x}        restart the agent and Telegram bridge
   ${C.c}iva reset${C.x}          full reset: clear stuck workflows and restart
+  ${C.c}iva workflow-smoke${C.x} seed|resume  verify workflow session survives restart
   ${C.c}iva start${C.x} / ${C.c}stop${C.x}    start / stop
+  ${C.c}iva reminders${C.x}    show active reminders
   ${C.c}iva usage${C.x} [win]      token usage (last|today|week|month|by-model|by-source|tail)
-  ${C.c}iva logs${C.x} [poll]     agent logs (or the Telegram bridge) -f
+  ${C.c}iva logs${C.x} [poll|reminders] agent, Telegram bridge, or reminders logs -f
   ${C.c}iva uninstall${C.x}       remove units and the command (--purge — delete code+vault)
   ${C.c}iva version${C.x}         version and git commit
 
@@ -610,6 +658,8 @@ const cmds = {
   status: cmdStatus,
   restart: cmdRestart,
   reset: cmdReset,
+  "workflow-smoke": cmdWorkflowSmoke,
+  reminders: cmdReminders,
   usage: cmdUsage,
   start: cmdStart,
   stop: cmdStop,

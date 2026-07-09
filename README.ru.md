@@ -86,7 +86,7 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
 
 | В Telegram | На сервере |
 |---|---|
-| `/help` · `/task` · `/digest` · `/new` · `/usage` | `iva status` · `iva update` · `iva doctor` · `iva logs` |
+| `/help` · `/task` · `/reminders` · `/digest` · `/new` · `/usage` | `iva status` · `iva update` · `iva reminders` · `iva doctor` · `iva logs` |
 
 Полный справочник, включая разбивку `/usage` по моделям и источникам: [docs/cli.md](docs/cli.md).
 
@@ -98,7 +98,7 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
 
 ## На чём построено
 
-Агента запускает [eve](https://eve.dev/docs/introduction), агентный фреймворк Vercel; поисковый индекс живёт на SQLite, встроенном в Node 24, — без отдельной базы. Iva выросла из [agent-second-brain](https://github.com/smixs/agent-second-brain) и [autograph](https://github.com/smixs/autograph) — эта история рассказана в [docs/ru/memory.md](docs/ru/memory.md).
+Агента запускает [eve](https://eve.dev/docs/introduction), агентный фреймворк Vercel; поисковый индекс живёт на SQLite, встроенном в Node 24. Workflow state по умолчанию файловый, а для долгоживущего self-host можно включить PostgreSQL. Iva выросла из [agent-second-brain](https://github.com/smixs/agent-second-brain) и [autograph](https://github.com/smixs/autograph) — эта история рассказана в [docs/ru/memory.md](docs/ru/memory.md).
 
 ## Лицензия
 

@@ -1,6 +1,6 @@
 # Deploy
 
-Iva runs on one VPS as two systemd user services and five timers. `install.sh` sets all of it up ([install](./install.md)); this page is what's actually running and how to operate it.
+Iva runs on one VPS as two systemd user services and six timers. `install.sh` sets all of it up ([install](./install.md)); this page is what's actually running and how to operate it.
 
 ## Transport: long polling
 
@@ -40,6 +40,7 @@ Note: `getUpdates` — which the setup wizard uses to discover your user ID — 
 | `iva-memory-monthly.timer` | 1st, 04:20 | weeklies → monthly summary (silent) |
 | `iva-memory-yearly.timer` | Jan 1, 04:25 | monthlies → yearly summary (silent) |
 | `iva-memory-doctor.timer` | 05:00 nightly | schema/health/decay/MOC checks + vault `git push` |
+| `iva-reminders.timer` | every 5 minutes | short-lived reminder dispatcher; sends due reminders without calling the workflow |
 
 Timers fire in the server's **local time** and carry `Persistent=true`, so a run missed during downtime fires after reboot. Set the server clock to match your `.env`:
 
@@ -60,24 +61,53 @@ Full CLI reference: [cli](./cli.md). What the rollups actually write: [memory](.
 
 One thing that trips people up: eve has a `defineSchedule` API, but on self-host it never fires — it only becomes a cron job on Vercel. That is the whole reason memory runs on systemd timers.
 
+## Workflow backend
+
+Default installs use eve's local file-backed workflow state in `.workflow-data`. That is the lightest setup and needs no database. Long-running self-host installs can opt into the official PostgreSQL Workflow World instead:
+
+```bash
+sudo install -m 0644 deploy/postgresql-iva.conf /etc/postgresql/16/main/conf.d/iva.conf
+sudo systemctl restart postgresql
+
+sudo -u postgres createuser iva_workflow --no-createdb --no-createrole --no-superuser
+sudo -u postgres createdb iva_workflow --owner=iva_workflow
+
+cp deploy/iva-workflow-postgres.environment.example deploy/iva-workflow.environment
+iva restart
+```
+
+The generated `iva.service` loads `deploy/iva-workflow.environment` if it exists, then `.env`. Keep secrets in `.env` if your database URL contains a password. The checked-in example uses a local Unix socket URL and conservative pool settings for a 1 vCPU / 1 GiB VPS.
+
+Run a restart/resume smoke test after enabling Postgres:
+
+```bash
+iva workflow-smoke seed
+iva restart
+iva workflow-smoke resume
+```
+
+`iva reset` has different semantics by backend. With the default local backend it clears `.workflow-data`. With Postgres enabled it restarts services but intentionally does not drop or truncate the workflow database.
+
+The variables match Workflow's official Postgres world naming: `WORKFLOW_TARGET_WORLD=@workflow/world-postgres` and `WORKFLOW_POSTGRES_URL`.
+
 ## nginx and TLS
 
 You need neither for Telegram — polling is outbound-only. Add an nginx reverse proxy with Let's Encrypt only if you expose the eve HTTP channel (or webhook mode) to the internet.
 
 ## Moving servers
 
-Your state is three things: the vault (its own git repo, pushed nightly by the doctor), `.env` (all keys), and `data/` (`tasks.json`, `usage.jsonl`).
+Your state is three things: the vault (its own git repo, pushed nightly by the doctor), `.env` (all keys), and `data/` (`tasks.json`, `reminders.json`, `usage.jsonl`). If you enabled the PostgreSQL workflow backend, the workflow database is a fourth stateful component.
 
 1. Old box: `npm run doctor` to push the vault, then copy `.env` and `data/` off.
 2. New box: run the installer ([install](./install.md)) with `--skip-setup`, drop in `.env`.
 3. Clone the vault back — `gh repo clone <user>/iva-vault <vault-dir>` — restore `data/`, then `iva restart`.
 
-If all you have left is the vault repo, you lose open tasks and token history. Memory survives intact.
+If all you have left is the vault repo, you lose open tasks, reminders and token history. Memory survives intact.
 
 ## Vercel (advanced)
 
 Iva is built on eve, which deploys to Vercel natively — but self-host is the intended path. If you go there anyway:
 
 - **Schedules** — `defineSchedule` in `agent/schedules/*.ts` becomes a real Vercel Cron Job (cron times are UTC there).
-- **Storage** — `./data` is ephemeral on Vercel; tasks and usage logs need a real DB or KV store.
+- **Storage** — `./data` is ephemeral on Vercel; tasks, reminders and usage logs need a real DB or KV store.
 - **Auth** — the scaffold eve channel ships `localDev()` + `placeholderAuth()`. In prod, `localDev` is ignored and `placeholderAuth` admits nobody. Wire a real auth provider, or for a single-user deployment issue a bearer token and pass it to your scripts as `ASSISTANT_BEARER`.

@@ -325,6 +325,11 @@ export default telegramChannel({
         await ctx.telegram.startTyping();
         return { auth: buildAuth(message), context: ["Покажи мой список задач (вызови инструмент tasks)."] };
       }
+      if (cmd === "/reminders") {
+        appendDaily("[text]", cmdText);
+        await ctx.telegram.startTyping();
+        return { auth: buildAuth(message), context: ["Покажи мои активные напоминания (вызови инструмент reminders)."] };
+      }
       if (cmd === "/digest") {
         appendDaily("[text]", cmdText);
         await ctx.telegram.startTyping();

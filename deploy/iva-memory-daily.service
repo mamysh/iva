@@ -1,10 +1,11 @@
 # systemd USER unit — консолидация памяти Iva за день.
 #
 # Установка (один раз, под пользователем, НЕ root):
-#   cp deploy/iva-memory-*.{service,timer} ~/.config/systemd/user/
+#   cp deploy/iva-*.{service,timer} ~/.config/systemd/user/
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now iva-memory-daily.timer iva-memory-weekly.timer \
-#       iva-memory-monthly.timer iva-memory-yearly.timer iva-memory-doctor.timer
+#       iva-memory-monthly.timer iva-memory-yearly.timer iva-memory-doctor.timer \
+#       iva-reminders.timer
 #   loginctl enable-linger "$USER"   # чтобы таймеры шли без активного логина
 #
 # Проверка:  systemctl --user list-timers

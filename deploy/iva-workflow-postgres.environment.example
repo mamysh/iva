@@ -1,0 +1,9 @@
+# Optional durable Workflow backend for long-running self-hosted installs.
+# Copy to .env or to an untracked deploy/iva-workflow.environment file, then restart with `iva restart`.
+
+WORKFLOW_TARGET_WORLD=@workflow/world-postgres
+WORKFLOW_QUEUE_NAMESPACE=eve
+WORKFLOW_POSTGRES_URL=postgresql:///iva_workflow?host=/var/run/postgresql
+WORKFLOW_POSTGRES_JOB_PREFIX=iva_
+WORKFLOW_POSTGRES_WORKER_CONCURRENCY=8
+WORKFLOW_POSTGRES_MAX_POOL_SIZE=10

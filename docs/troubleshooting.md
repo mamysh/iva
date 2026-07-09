@@ -26,11 +26,13 @@ iva restart
 
 ### Turn stuck / no reply
 
-Cause: a wedged turn lives in `.workflow-data`, and eve re-enqueues it on every start — plain `iva restart` brings it right back.
+Cause: on the default local workflow backend, a wedged turn lives in `.workflow-data`, and eve re-enqueues it on every start — plain `iva restart` brings it right back.
 
 ```bash
-iva reset   # stop services, clear .workflow-data, restart
+iva reset   # local backend: stop services, clear .workflow-data, restart
 ```
+
+If you enabled the optional PostgreSQL workflow backend, `iva reset` restarts services but does not drop the database. Back up and purge the workflow DB manually only if you deliberately want to erase durable sessions.
 
 From Telegram, `/restart` does the same. The poll bridge handles it out-of-band, so it works even while the agent is busy.
 

@@ -14,6 +14,7 @@ import { execFile } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readEntries, summarize, formatUsageReport, parseWindow } from "./lib/usage.mjs";
+import { loadReminders, formatReminder } from "./lib/reminders-store.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW_DIR = join(ROOT, ".workflow-data");
@@ -42,6 +43,7 @@ const HELP = [
   "/new — start over (reset the current conversation)",
   "/task <text> — add a task",
   "/tasks — show tasks",
+  "/reminders — show active reminders",
   "/digest — morning digest",
   "/usage [today|week|month|by-model|by-source] — token usage",
 ].join("\n");
@@ -163,7 +165,7 @@ async function handleControl(update) {
   const text = (msg?.text || "").trim();
   if (!text.startsWith("/")) return false;
   const cmd = text.split(/\s+/)[0].replace(/@\w+$/, "").toLowerCase();
-  if (!["/help", "/usage", "/restart", "/new", "/clear", "/compact"].includes(cmd)) return false;
+  if (!["/help", "/usage", "/reminders", "/restart", "/new", "/clear", "/compact"].includes(cmd)) return false;
   const from = String(msg?.from?.id ?? "");
   if (ALLOWED.size === 0 || !ALLOWED.has(from)) return false; // untrusted — let eve drop it
   const chatId = msg?.chat?.id;
@@ -179,6 +181,15 @@ async function handleControl(update) {
       await reply(chatId, formatUsageReport(agg));
     } catch (e) {
       await reply(chatId, "Couldn't read the usage log: " + e.message);
+    }
+    return true;
+  }
+  if (cmd === "/reminders") {
+    try {
+      const items = (await loadReminders()).filter((r) => r.status === "pending");
+      await reply(chatId, items.length ? items.map((r) => formatReminder(r)).join("\n") : "No active reminders.");
+    } catch (e) {
+      await reply(chatId, "Couldn't read reminders: " + e.message);
     }
     return true;
   }

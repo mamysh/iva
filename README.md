@@ -86,7 +86,7 @@ Inbound content passes a prompt-injection sanitizer, every reply passes a secret
 
 | In Telegram | On the server |
 |---|---|
-| `/help` · `/task` · `/digest` · `/new` · `/usage` | `iva status` · `iva update` · `iva doctor` · `iva logs` |
+| `/help` · `/task` · `/reminders` · `/digest` · `/new` · `/usage` | `iva status` · `iva update` · `iva reminders` · `iva doctor` · `iva logs` |
 
 Full reference, including `/usage` breakdowns by model and by source: [docs/cli.md](docs/cli.md).
 
@@ -98,7 +98,7 @@ Full reference, including `/usage` breakdowns by model and by source: [docs/cli.
 
 ## Built on
 
-[eve](https://eve.dev/docs/introduction), Vercel's agent framework, runs the agent; Node 24's built-in SQLite runs the search index — no separate database. Iva grew out of [agent-second-brain](https://github.com/smixs/agent-second-brain) and [autograph](https://github.com/smixs/autograph) — that story is in [docs/memory.md](docs/memory.md).
+[eve](https://eve.dev/docs/introduction), Vercel's agent framework, runs the agent; Node 24's built-in SQLite runs the search index. The default workflow state is file-backed, with optional PostgreSQL for long-running self-host installs. Iva grew out of [agent-second-brain](https://github.com/smixs/agent-second-brain) and [autograph](https://github.com/smixs/autograph) — that story is in [docs/memory.md](docs/memory.md).
 
 ## License
 
