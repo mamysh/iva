@@ -97,7 +97,7 @@ iva restart
 | Переменная | По умолчанию | Заметки |
 |---|---|---|
 | `WORKFLOW_TARGET_WORLD` | *(пусто)* | `@workflow/world-postgres` включает PostgreSQL workflow state. В helper Iva также принимается сокращение `postgres`. |
-| `WORKFLOW_POSTGRES_URL` | — | Строка подключения PostgreSQL. Локальный socket-пример: `postgresql:///iva_workflow?host=/var/run/postgresql`. |
+| `WORKFLOW_POSTGRES_URL` | — | Строка подключения PostgreSQL. Локальный socket-пример: `postgresql:///iva_workflow?host=/var/run/postgresql`; при peer auth нужна PostgreSQL-роль с именем service-user. |
 | `WORKFLOW_QUEUE_NAMESPACE` | `eve` | Queue namespace, который ожидают сгенерированные eve workflow routes. |
 | `WORKFLOW_POSTGRES_JOB_PREFIX` | `iva_` | Префикс имён graphile-worker jobs. |
 | `WORKFLOW_POSTGRES_WORKER_CONCURRENCY` | `8` | Осторожный дефолт для маленького single-user VPS. |

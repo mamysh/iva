@@ -94,7 +94,7 @@ Leave these unset for the default local `.workflow-data` backend. For long-runni
 | Variable | Default | Notes |
 |---|---|---|
 | `WORKFLOW_TARGET_WORLD` | *(empty)* | Set to `@workflow/world-postgres` to enable PostgreSQL workflow state. `postgres` is accepted as a shorthand in Iva's config helper. |
-| `WORKFLOW_POSTGRES_URL` | — | PostgreSQL connection string. Local socket example: `postgresql:///iva_workflow?host=/var/run/postgresql`. |
+| `WORKFLOW_POSTGRES_URL` | — | PostgreSQL connection string. Local socket example: `postgresql:///iva_workflow?host=/var/run/postgresql`; with peer auth this expects a PostgreSQL role matching the service user. |
 | `WORKFLOW_QUEUE_NAMESPACE` | `eve` | Queue namespace expected by the generated eve workflow routes. |
 | `WORKFLOW_POSTGRES_JOB_PREFIX` | `iva_` | Prefix for graphile-worker job names. |
 | `WORKFLOW_POSTGRES_WORKER_CONCURRENCY` | `8` | Conservative default for a tiny single-user VPS. |

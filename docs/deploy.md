@@ -69,14 +69,14 @@ Default installs use eve's local file-backed workflow state in `.workflow-data`.
 sudo install -m 0644 deploy/postgresql-iva.conf /etc/postgresql/16/main/conf.d/iva.conf
 sudo systemctl restart postgresql
 
-sudo -u postgres createuser iva_workflow --no-createdb --no-createrole --no-superuser
-sudo -u postgres createdb iva_workflow --owner=iva_workflow
+sudo -u postgres createuser iva --no-createdb --no-createrole --no-superuser
+sudo -u postgres createdb iva_workflow --owner=iva
 
 cp deploy/iva-workflow-postgres.environment.example deploy/iva-workflow.environment
 iva restart
 ```
 
-The generated `iva.service` loads `deploy/iva-workflow.environment` if it exists, then `.env`. Keep secrets in `.env` if your database URL contains a password. The checked-in example uses a local Unix socket URL and conservative pool settings for a 1 vCPU / 1 GiB VPS.
+The generated `iva.service` loads `deploy/iva-workflow.environment` if it exists, then `.env`. Keep secrets in `.env` if your database URL contains a password. The checked-in example uses a local Unix socket URL, so PostgreSQL peer auth expects a database role matching the systemd service user (`iva`). It also uses conservative pool settings for a 1 vCPU / 1 GiB VPS.
 
 Run a restart/resume smoke test after enabling Postgres:
 

@@ -1,5 +1,6 @@
 # Optional durable Workflow backend for long-running self-hosted installs.
 # Copy to .env or to an untracked deploy/iva-workflow.environment file, then restart with `iva restart`.
+# The socket URL below uses PostgreSQL peer auth, so create a database role matching the service user.
 
 WORKFLOW_TARGET_WORLD=@workflow/world-postgres
 WORKFLOW_QUEUE_NAMESPACE=eve
