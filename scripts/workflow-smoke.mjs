@@ -7,6 +7,27 @@ const port = process.env.IVA_PORT ?? "8723";
 const host = process.env.SMOKE_HOST ?? process.env.ASSISTANT_HOST ?? `http://127.0.0.1:${port}`;
 const stateFile = process.env.SMOKE_STATE ?? "/tmp/iva-workflow-smoke.json";
 const marker = process.env.SMOKE_MARKER ?? "CEDAR-4729";
+const healthTimeoutMs = Number(process.env.SMOKE_HEALTH_TIMEOUT_MS ?? "60000");
+const healthIntervalMs = Number(process.env.SMOKE_HEALTH_INTERVAL_MS ?? "1000");
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForHealth(client) {
+  const deadline = Date.now() + healthTimeoutMs;
+  let lastError;
+  while (Date.now() <= deadline) {
+    try {
+      await client.health();
+      return;
+    } catch (error) {
+      lastError = error;
+      await sleep(healthIntervalMs);
+    }
+  }
+  throw lastError ?? new Error(`Timed out waiting for ${host}`);
+}
 
 async function main() {
   if (mode !== "seed" && mode !== "resume") {
@@ -15,7 +36,7 @@ async function main() {
   }
 
   const client = new Client({ host });
-  await client.health();
+  await waitForHealth(client);
 
   let session;
   let prompt;
