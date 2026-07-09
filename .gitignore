@@ -5,6 +5,7 @@ node_modules
 .eve
 .vercel
 .workflow-data
+.workflow-data.bak-*
 deploy/iva-workflow.environment
 .next
 .output
