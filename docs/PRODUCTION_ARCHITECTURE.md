@@ -3,6 +3,28 @@
 This is the architecture of the final `main` branch. It combines Iva v0.2.4 with the self-host
 hardening needed by the running single-user VPS; it is not a PR handoff or a list of unmerged ideas.
 
+## Origin and upstream
+
+The original Iva project was created by [Shima (`smixs`)](https://github.com/smixs) as [smixs/iva](https://github.com/smixs/iva). This repository retains that upstream as the source project and carries the production-specific hardening and operations described below.
+
+`origin` is this deployment repository; the read-only `upstream` remote tracks only `smixs/iva`'s `main` branch. Do not develop directly on `upstream/main`.
+
+To bring in an upstream release safely, create a short-lived integration branch from `main`, merge `upstream/main` there, resolve and test the result, deploy it for verification, then merge the verified integration branch into `main` and delete it. This keeps the steady-state layout to one production branch while preserving a clean, reviewable integration point.
+
+```bash
+git fetch upstream
+git switch -c update/upstream-YYYYMMDD main
+git merge --no-ff upstream/main
+npm ci && npm test && npm run typecheck && npm run build
+# verify the deployment, then:
+git switch main
+git merge --no-ff update/upstream-YYYYMMDD
+git push origin main
+git branch -d update/upstream-YYYYMMDD
+```
+
+Git's recorded conflict resolutions (`rerere`) are enabled locally to make repeated upstream merges gentler. Before any integration, inspect `git log --oneline main..upstream/main` and keep local production changes where they intentionally differ.
+
 ## What this branch includes
 
 | Layer | Implementation | Why it is here |

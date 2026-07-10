@@ -24,6 +24,8 @@ Iva is a self-hosted Telegram AI assistant with layered memory that turns your m
 curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash
 ```
 
+**Origin & authorship.** Iva was created by [Shima (`smixs`)](https://github.com/smixs) as [smixs/iva](https://github.com/smixs/iva). This repository is a production-hardened continuation of that upstream project for this deployment.
+
 ## Features
 
 - 🎙️ **Voice** — voice, audio and video notes transcribed with Deepgram nova-3; auto-detects ru/uz/en.
