@@ -10,6 +10,7 @@
 // Возвращает { ok, fellBack, error } — вызывающий cron-скрипт по fellBack даёт агенту
 // обратную связь в ту же сессию, чтобы он переформатировал следующий отчёт.
 import { toTelegramHtmlChunks, htmlToPlain } from "./telegram-format.mjs";
+import { scanOutbound } from "./security-gate.mjs";
 
 async function post(bot, body) {
   const res = await fetch(`https://api.telegram.org/bot${bot}/sendMessage`, {
@@ -22,6 +23,9 @@ async function post(bot, body) {
 
 export async function sendTelegramHtml(bot, chat, md, { caption = false } = {}) {
   let fellBack = false;
+  const guarded = scanOutbound(md);
+  if (!guarded.clean) console.error("[security] outbound scheduled report redacted", guarded.findings.length);
+  md = guarded.text;
   try {
     for (const chunk of toTelegramHtmlChunks(md, caption ? 1024 : 4096)) {
       const r = await post(bot, { chat_id: chat, text: chunk, parse_mode: "HTML" });

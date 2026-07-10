@@ -4,6 +4,8 @@
 # --- autograph runtime caches & derived data (regenerable) ---
 .graph/
 **/.graph/
+.index/
+**/.index/
 .obsidian/workspace*.json
 
 # --- soft-deletes from dedup ---

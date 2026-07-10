@@ -24,8 +24,8 @@ Iva is a personal AI agent that lives in your Telegram and runs on a server you 
 one command, then just talk to it — by text or by voice. It answers, and it remembers: your tasks,
 decisions, the people and projects you mention. The longer you use it, the better it knows you.
 
-No dashboard to log into, no SaaS account, no per-message meter running. The code and the memory sit
-on your machine. You bring your own model key, and you pick the model.
+No Iva dashboard or Iva SaaS account. The code and the memory sit on your machine. You bring your
+own model-provider key and pick the model; that provider bills you directly under its own terms.
 
 ---
 
@@ -58,7 +58,7 @@ Lots of agents out there. This one's mine — now it's yours too.
 |---|---|
 | 🎙️ **Voice & video** | Transcribes voice notes and video circles, understands speech in many languages (Deepgram nova-3). |
 | 🧠 **Long-term memory** | Remembers your conversations and tidies them up on its own, every night. |
-| 🔎 **Fast recall** | Finds the right note in seconds — straight over plain files, no index to rebuild. |
+| 🔎 **Fast recall** | Finds the right note in seconds with a local FTS index over plain Markdown files. |
 | ⏰ **On a schedule** | Day or week digests, recurring jobs. Can check your inbox and send you a summary, on time. |
 | 🔔 **Reminders** | Tell it what and when, and it won't let you forget. |
 | 🤖 **Your choice of model** | DeepSeek, Kimi, GLM and other open models — switch any time. |
@@ -94,21 +94,23 @@ whole month on.
 
 **It's "low-context memory" by design.** Iva never loads its whole history into the model. Always in
 context is one tiny CORE file (who you are, your standing preferences, active goals); everything else
-is pulled in only when a task needs it, found by a literal search over the files.
+is pulled in only when a task needs it, found by a local lexical FTS5 index over the files.
 
 The heavy memory systems — [Papr](https://platform.papr.ai), mem0, MemGPT/Letta — buy semantic recall
 with an embedding model plus a vector or graph database to run, sync and pay for. Iva spends its
 complexity budget at the other end: it **structures memory when it's written** (the nightly rollup and
-the entity cards) so reading it back can stay a plain search. The trade is honest — this wins on
-local-first, zero-infrastructure, fully inspectable, git-diffable memory for a personal vault. If you
-ever outgrow it, adding a real index is the upgrade path, not a rewrite.
+the entity cards) so reading it can stay a local lexical search. The trade is honest — this wins on
+local-first, zero-infrastructure, fully inspectable, git-diffable memory for a personal vault. SQLite FTS5
+is a local, rebuildable sidecar; if you ever outgrow lexical recall, embeddings are an upgrade path, not a rewrite.
 
 What that buys you:
 
-- **Zero infrastructure** — no vector DB, no embedding model, no graph server. Memory is Markdown files.
+- **Zero extra infrastructure** — no vector DB, embedding model or graph server. Memory is Markdown files;
+  the local FTS index is derived and rebuildable.
 - **Fully yours and readable** — open any memory in a text editor, grep it, diff it in git.
 - **Cheap and private** — lives on your disk, nothing shipped to a third-party memory service.
-- **Easy to fix** — when memory is wrong, you edit a file. No re-indexing, no stale-embedding mystery.
+- **Easy to fix** — when memory is wrong, you edit a file. The local index refreshes from changed files;
+  there are no stale embeddings to chase.
 
 Memory is the part I've worked on the longest — first
 [agent-second-brain](https://github.com/smixs/agent-second-brain), then the **autograph** typed-graph
@@ -136,15 +138,18 @@ vault to a private git repo.
 
 ## Providers & cost
 
-Iva is free and open-source. You pay only for a server and a model subscription:
+Iva is free and open-source. You pay only for a server and whichever model service you choose:
 
 - **Server** — any small always-on box (a VPS with ~1–2 GB RAM, around **$5/mo**), or your own
   computer if you keep it on.
-- **Model** — pick one provider, both OpenAI-compatible, your own key:
-  - **OpenCode Zen (Go)** — around **$5/mo**, leaner limits. Cheapest start.
-  - **Ollama Cloud** — around **$20/mo**, higher limits.
+- **Model** — pick one provider, both OpenAI-compatible, with your own key:
+  - **[OpenCode Zen](https://opencode.ai/zen)** — pay as you go. Its initial balance, model prices and
+    payment-processing fee change over time; set a monthly spend limit in Zen.
+  - **[Ollama Cloud](https://ollama.com/pricing)** — a free tier is available; Pro is **$20/mo** and
+    includes more cloud usage.
 
-  Inside either, you choose the model (DeepSeek recommended). No markup over the provider's price.
+  Inside either, you choose the model (DeepSeek recommended). Check the provider's current model list,
+  availability and price before subscribing.
 - **Voice** — [Deepgram](https://console.deepgram.com) for transcription (free starter credit).
 
 ---
@@ -200,7 +205,8 @@ So you know exactly what you're getting:
 - **Telegram only.** No web app or dashboard — the chat is the whole interface.
 - **Replies in the language you chose at install.** Switchable, but it's one language at a time.
 - **Memory backup is a `git push`** to a repo you create once — not a managed cloud sync.
-- **Search is literal, not semantic.** It greps your files; there's no vector/embedding recall.
+- **Search is lexical, not semantic.** It uses a local SQLite FTS5 index over your files; there's no
+  vector/embedding recall.
 - **Single user.** One owner, one vault — not a team or multi-tenant assistant.
 - **Pre-1.0.** It works and it's in daily use, but it's young. Expect rough edges, report them.
 

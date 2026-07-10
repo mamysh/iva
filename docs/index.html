@@ -131,7 +131,7 @@
   <h2>Memory — the part that compounds</h2>
   <p>Iva's memory is shaped like a tree (and <em>iva</em> means <em>willow</em>). It's
   "low-context memory" by design: never the whole history in the model, just a tiny always-on core plus
-  whatever a task needs, found by a literal search over plain files.</p>
+  whatever a task needs, found by a local lexical FTS5 index over plain files.</p>
   <div class="tree">      🪵  TRUNK   — year + cards on people, projects, decisions
      ╱  ╲
     🌿 BRANCHES — monthly summaries, built from weeks, built from days
@@ -142,11 +142,13 @@
   longest (<a href="https://github.com/smixs/agent-second-brain">agent-second-brain</a> → autograph →
   Iva), built on the <a href="https://papers.voltropy.com/LCM">LCM: Lossless Context Management</a> paper
   plus a lot of practice — one of the best memory designs you'll find in a personal agent today. Zero
-  infrastructure, fully inspectable, git-diffable — no vector DB to run, sync or pay for.</p>
+  infrastructure, fully inspectable, git-diffable — no vector DB to run, sync or pay for. The local
+  SQLite FTS5 sidecar is derived and rebuildable from Markdown.</p>
 
   <h2>Providers &amp; cost</h2>
-  <p>Free and open-source. You pay only for a small always-on server (~$5/mo) and one model subscription —
-  OpenCode Zen Go (~$5/mo) or Ollama Cloud (~$20/mo), both OpenAI-compatible, your own key. Voice runs on
+  <p>Free and open-source. You pay only for a small always-on server (~$5/mo) and the model service you
+  choose: <a href="https://opencode.ai/zen">OpenCode Zen</a> is pay-as-you-go; <a href="https://ollama.com/pricing">Ollama Cloud</a>
+  has a free tier and a $20/mo Pro plan. Both are OpenAI-compatible and use your own key. Voice runs on
   <a href="https://console.deepgram.com">Deepgram</a> (free starter credit).</p>
 
   <p style="text-align:center; margin-top:40px">

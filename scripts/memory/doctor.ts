@@ -128,7 +128,9 @@ if (remote.status !== 0 || !remote.stdout.trim()) {
   process.exit(failures.length ? 1 : 0);
 }
 
-run("git", ["add", "-A"]);
+// SQLite FTS5 is a local rebuildable sidecar. Never put its database/WAL files in
+// the private-memory history, even for vaults created before the .index gitignore rule.
+run("git", ["add", "-A", "--", ".", ":(exclude).index", ":(exclude).index/**"]);
 // commit может вернуть non-zero, если нечего коммитить — это норма.
 run("git", ["commit", "-m", `chore: memory ${today}`]);
 const push = run("git", ["push"]);
