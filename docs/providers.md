@@ -35,7 +35,7 @@ iva config             # pick the provider (option 3) and a model from your plan
 iva restart
 ```
 
-Notes: the model list is pulled from your subscription at setup time, so you always see exactly what your plan allows. Set `CODEX_CONTEXT_WINDOW` to the real window of the model you picked (compaction derives its threshold from it). Routing a self-hosted assistant through the ChatGPT subscription backend is a grey area under OpenAI's terms — you are using your own subscription on your own server, but weigh that yourself.
+Notes: the model list is pulled from your subscription at setup time, so you see the models your plan currently allows; re-run `iva config` when a newly released model should appear. Codex turns deliberately use stateless, inline history (`store:false`) rather than server-side response references, so a multi-turn chat remains usable without persisted backend items. Set `CODEX_CONTEXT_WINDOW` to the real window of the model you picked (compaction derives its threshold from it). Routing a self-hosted assistant through the ChatGPT subscription backend is a grey area under OpenAI's terms — you are using your own subscription on your own server, but weigh that yourself.
 
 ### OpenRouter (`openrouter`)
 

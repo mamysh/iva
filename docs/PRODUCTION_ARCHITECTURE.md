@@ -40,7 +40,7 @@ Git's recorded conflict resolutions (`rerere`) are enabled locally to make repea
 
 ## Model and integration stack
 
-- Providers: Ollama Cloud, OpenCode Zen, OpenRouter, or an OpenAI ChatGPT subscription through Codex OAuth.
+- Providers: Ollama Cloud, OpenCode Zen, OpenRouter, or an OpenAI ChatGPT subscription through Codex OAuth. Codex requests use stateless inline history (`store:false`), not backend-persisted response references.
 - Voice: Deepgram transcription; vision uses the selected provider's compatible vision path.
 - Web search: the selected API provider with a graceful DuckDuckGo fallback.
 - Google Workspace: the optional `gws` CLI skill, configured only when the owner explicitly connects it.
