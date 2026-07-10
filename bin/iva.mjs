@@ -5,7 +5,7 @@
 // SINGLE source of truth for systemd units (writeUnits): install.sh delegates here
 // (`iva _install-units`), and update/doctor reuse the same write.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, realpathSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -458,6 +458,26 @@ function cmdDoctor() {
       `vault without git origin — memory backup not configured:\n    gh repo create <user>/iva-vault --private --source="${vaultPath}" --remote=origin --push`,
     ),
     warnN++);
+
+  // A migrated install can have ASSISTANT_VAULT_DIR outside the project while an old ./vault
+  // directory remains behind. Host tools invoked with a literal "vault/..." would then inspect
+  // stale memory. Never change or delete it automatically; make the mismatch visible instead.
+  const projectVault = join(ROOT, "vault");
+  if (vaultRel.startsWith("/") && existsSync(vaultPath) && existsSync(projectVault)) {
+    let pointsToLiveVault = false;
+    try {
+      pointsToLiveVault = realpathSync(vaultPath) === realpathSync(projectVault);
+    } catch {
+      // The existing vault check above has already supplied the actionable diagnostic.
+    }
+    if (!pointsToLiveVault) {
+      warn(
+        `stale project vault detected (${projectVault}) differs from ASSISTANT_VAULT_DIR (${vaultPath}) — ` +
+          "remove it after backup or replace it with a symlink to the live vault",
+      );
+      warnN++;
+    }
+  }
 
   return summary();
 

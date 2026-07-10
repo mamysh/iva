@@ -74,6 +74,45 @@ npm run typecheck
 npm run build
 ```
 
+### Verified VPS update runbook
+
+The running DigitalOcean installation is owned by the `iva` user and lives at
+`/home/iva/iva` (not `/srv/assistant`). Run operational commands as that user from this
+directory. Do not put credentials in Git: `.env` and `deploy/iva-workflow.environment` stay
+local, mode `0600`, and are already ignored.
+
+Before an update, make local backups of those two files if present. The normal update is then:
+
+```bash
+cd /home/iva/iva
+iva update --force
+iva doctor
+iva status
+```
+
+`iva doctor` must report both `iva.service` and `iva-telegram-poll.service` active, six enabled
+timers, the vault Git remote, and no failed checks. The polling bridge requires
+`TELEGRAM_WEBHOOK_SECRET_TOKEN`; if it is absent from a legacy `.env`, create a new random secret
+locally on the VPS before restarting the bridge. Never paste the value into a terminal transcript,
+issue, or commit.
+
+For a runtime release, prove durable workflow state survives restart:
+
+```bash
+iva workflow-smoke seed
+iva restart
+iva workflow-smoke resume
+iva reminders
+```
+
+The successful expected smoke result is a seed reply `REMEMBERED`, then a resume reply containing
+`CEDAR-4729`; `status=waiting` is normal for this interactive workflow. Finally, send the Telegram
+bot `/help` (or a normal message) and inspect recent service logs if it does not reply:
+
+```bash
+journalctl --user -u iva -u iva-telegram-poll -n 100 --no-pager
+```
+
 For a PostgreSQL workflow migration or recovery check:
 
 ```bash
