@@ -6,9 +6,9 @@
 
 **Ваш ассистент. Ваш сервер. Ваша память.**
 
-[![Release](https://img.shields.io/github/v/release/smixs/iva?color=brightgreen)](https://github.com/smixs/iva/releases)
+[![Release](https://img.shields.io/github/v/release/mamysh/iva?color=brightgreen)](https://github.com/mamysh/iva/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/smixs/iva?style=social)](https://github.com/smixs/iva/stargazers)
+[![Stars](https://img.shields.io/github/stars/mamysh/iva?style=social)](https://github.com/mamysh/iva/stargazers)
 [![built on eve](https://img.shields.io/badge/built%20on-eve-000000?logo=vercel&logoColor=white)](https://eve.dev/docs/introduction)
 [![Node 24](https://img.shields.io/badge/node-24.x-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 
@@ -21,7 +21,7 @@
 Iva — self-hosted AI-ассистент в Telegram с многослойной памятью, который превращает ваши сообщения в vault, совместимый с Obsidian. Вы говорите — она раскладывает: голосовые, фото, пересланные посты и решения становятся обычными markdown-карточками, которые она действительно помнит. Всё крутится на вашем собственном сервере, с вашими ключами и вашими данными. Ставится одной командой:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash
 ```
 
 ## Что умеет
@@ -69,12 +69,14 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
 
 | Провайдер | Как платите |
 |---|---|
-| OpenCode Zen | API-ключ, ~$5/мес |
-| Ollama Cloud | API-ключ, ~$20/мес |
+| OpenCode Zen | API-ключ, оплата по факту с месячным лимитом трат |
+| Ollama Cloud | API-ключ, бесплатный уровень или Pro за $20/мес |
 | OpenRouter | API-ключ, оплата по факту, 300+ моделей |
 | OpenAI (ChatGPT) | ваша подписка Plus/Pro, ключ не нужен |
 
-Модель по умолчанию deepseek-v4-pro, контекст 131k. На Zen выходит около $9/мес со всем ($5 модель плюс $4–5 VPS), без наценки; голос едет на бесплатном кредите Deepgram. Списки моделей, лимиты и матрица поиска: [docs/providers.md](docs/providers.md).
+Модель по умолчанию deepseek-v4-pro, контекст 131k. Реальная цена зависит от выбранной модели,
+использования, VPS и доступности провайдера; Iva не добавляет наценку за использование. Голос использует
+стартовый кредит Deepgram, если он доступен. Списки моделей, лимиты и матрица поиска: [docs/providers.md](docs/providers.md).
 
 ## Безопасность и приватность
 

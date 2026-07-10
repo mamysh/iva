@@ -4,16 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Iva — a personal assistant in Telegram that remembers everything</title>
-<meta name="description" content="Iva is an open-source, self-hosted personal assistant that lives in Telegram and remembers everything. Send it voice notes, files, forwarded posts and videos — it reads, files and links them. One command, your own server, open models (DeepSeek, Kimi, GLM), about $9 a month. You talk, it files.">
+<meta name="description" content="Iva is an open-source, self-hosted Telegram assistant with layered Markdown memory, ranked local recall, secure message boundaries, reminders and a choice of model providers.">
 <meta name="keywords" content="personal AI agent, open source AI agent, self-hosted AI assistant, long-term memory, AI agent with memory, Telegram AI bot, DeepSeek, Ollama, second brain, local-first AI">
-<meta name="author" content="smixs">
+<meta name="author" content="mamysh">
 <meta name="robots" content="index, follow">
 <meta name="yandex-verification" content="a68136518ad24ff6">
 <meta name="theme-color" content="#0a0a0a">
-<link rel="canonical" href="https://smixs.github.io/iva/">
-<link rel="alternate" hreflang="en" href="https://smixs.github.io/iva/">
-<link rel="alternate" hreflang="ru" href="https://smixs.github.io/iva/ru/">
-<link rel="alternate" hreflang="x-default" href="https://smixs.github.io/iva/">
+<link rel="canonical" href="https://mamysh.github.io/iva/">
+<link rel="alternate" hreflang="en" href="https://mamysh.github.io/iva/">
+<link rel="alternate" hreflang="ru" href="https://mamysh.github.io/iva/ru/">
+<link rel="alternate" hreflang="x-default" href="https://mamysh.github.io/iva/">
 <link rel="icon" type="image/png" href="favicon.png">
 
 <!-- Open Graph -->
@@ -22,9 +22,9 @@
 <meta property="og:locale" content="en_US">
 <meta property="og:locale:alternate" content="ru_RU">
 <meta property="og:title" content="Iva — a personal assistant in Telegram that remembers everything">
-<meta property="og:description" content="Open-source personal assistant that lives in Telegram and remembers everything. Throw it voice notes, files and forwarded posts — it files and links them. One command, your own server, about $9 a month. You talk, it files.">
-<meta property="og:url" content="https://smixs.github.io/iva/">
-<meta property="og:image" content="https://smixs.github.io/iva/iva-og.png">
+<meta property="og:description" content="Open-source, self-hosted Telegram assistant with layered memory, ranked local recall, secure message boundaries and durable reminders.">
+<meta property="og:url" content="https://mamysh.github.io/iva/">
+<meta property="og:image" content="https://mamysh.github.io/iva/iva-og.png">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
@@ -33,8 +33,8 @@
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Iva — a personal assistant in Telegram that remembers everything">
-<meta name="twitter:description" content="Open-source personal assistant in Telegram that remembers everything. Send it voice, files, forwarded posts — it files and links them. One command, about $9 a month. You talk, it files.">
-<meta name="twitter:image" content="https://smixs.github.io/iva/iva-og.png">
+<meta name="twitter:description" content="Open-source, self-hosted Telegram assistant with layered memory, ranked local recall and durable reminders.">
+<meta name="twitter:image" content="https://mamysh.github.io/iva/iva-og.png">
 <meta name="twitter:image:alt" content="Iva — a personal assistant in Telegram that remembers everything">
 
 <script type="application/ld+json">
@@ -43,15 +43,15 @@
   "@type": "SoftwareApplication",
   "name": "Iva",
   "alternateName": "Iva — personal AI agent",
-  "description": "Open-source, self-hosted personal assistant that lives in Telegram and remembers everything. Reads and files your voice notes, documents and forwarded posts. Installs with one command, runs on open models from about $9 a month.",
+  "description": "Open-source, self-hosted Telegram assistant with layered Markdown memory, ranked local recall, reminders and configurable model providers.",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "Linux, macOS",
-  "url": "https://smixs.github.io/iva/",
-  "image": "https://smixs.github.io/iva/iva-og.png",
-  "softwareVersion": "0.1.7",
-  "license": "https://github.com/smixs/iva/blob/main/LICENSE",
-  "codeRepository": "https://github.com/smixs/iva",
-  "author": { "@type": "Person", "name": "smixs", "url": "https://github.com/smixs" },
+  "url": "https://mamysh.github.io/iva/",
+  "image": "https://mamysh.github.io/iva/iva-og.png",
+  "softwareVersion": "0.2.4",
+  "license": "https://github.com/mamysh/iva/blob/main/LICENSE",
+  "codeRepository": "https://github.com/mamysh/iva",
+  "author": { "@type": "Person", "name": "mamysh", "url": "https://github.com/mamysh" },
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
 }
 </script>
@@ -97,15 +97,15 @@
     <img src="iva-header.webp" alt="Iva — a personal assistant in Telegram that remembers everything" width="2429" height="630">
     <h1>Iva — a personal assistant in Telegram that remembers everything</h1>
     <p class="tagline">A personal assistant in Telegram that remembers everything. Throw it voice notes, files, forwarded posts and videos — it reads them, files them, and links them. You talk, it files.</p>
-    <p class="sub">Lives in Telegram. Built on <a href="https://eve.dev/docs/introduction">eve</a>, Vercel's agent framework. About $9 a month.</p>
+    <p class="sub">Lives in Telegram. Built on <a href="https://eve.dev/docs/introduction">eve</a>, with your own server and model provider.</p>
     <p>
-      <a class="cta" href="https://github.com/smixs/iva">Open on GitHub</a>
-      <a class="cta alt" href="https://github.com/smixs/iva#install">How to install</a>
+      <a class="cta" href="https://github.com/mamysh/iva">Open on GitHub</a>
+      <a class="cta alt" href="https://github.com/mamysh/iva#install">How to install</a>
     </p>
   </header>
 
   <h2>Install with one command</h2>
-  <pre><code>curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash</code></pre>
+  <pre><code>curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash</code></pre>
 
   <h2>Why Iva</h2>
   <p>Every agent out there hands you the same pile of choices: which model, which memory, which search,
@@ -118,7 +118,7 @@
   <ul class="feat">
     <li>🎙️ <b>Voice &amp; video</b> — transcribes voice notes and video circles, understands many languages.</li>
     <li>🧠 <b>Layered memory</b> — day → week → month → year, plus fact cards on people, projects and decisions; rewrites facts that change instead of piling up contradictions.</li>
-    <li>🔎 <b>Smart search</b> — finds things by meaning and by links between cards, in any language — not just the exact word.</li>
+    <li>🔎 <b>Ranked local recall</b> — BM25/FTS5 plus graph links; optional hybrid mode adds semantic embeddings.</li>
     <li>🧭 <b>Decision memory</b> — what you decided, when and why, with the old version kept dated as it changes.</li>
     <li>📇 <b>Personal CRM</b> — quietly tracks your people: who they are, what you agreed, when to follow up.</li>
     <li>🛡️ <b>Safe by default</b> — forwards, files and web pages are screened for prompt-injection; secrets are scrubbed from replies.</li>
@@ -131,7 +131,7 @@
   <h2>Memory — the part that compounds</h2>
   <p>Iva's memory is shaped like a tree (and <em>iva</em> means <em>willow</em>). It's
   "low-context memory" by design: never the whole history in the model, just a tiny always-on core plus
-  whatever a task needs, pulled in by a ranked search that scores cards by relevance and by the links between them.</p>
+  whatever a task needs, pulled in by a ranked local search over the vault and its graph links.</p>
   <div class="tree">      🪵  TRUNK   — year + cards on people, projects, decisions
      ╱  ╲
     🌿 BRANCHES — monthly summaries, built from weeks, built from days
@@ -160,17 +160,17 @@
   but it closes the obvious ways a forwarded payload could turn your own assistant against you.</p>
 
   <h2>Providers &amp; cost</h2>
-  <p>Free and open-source. You pay only for a small always-on server (a $4 droplet — 1 CPU, 512 MB, 10 GB)
-  and one model subscription — OpenCode Zen Go (~$5/mo) or Ollama Cloud (~$20/mo), both OpenAI-compatible,
-  your own key. About $9 a month all in. Voice runs on <a href="https://console.deepgram.com">Deepgram</a>
-  (free starter credit).</p>
+  <p>Free and open-source. You pay only for a small always-on server (the PostgreSQL production profile
+  recommends at least 1 GB RAM) and the model service you choose: OpenCode Zen is pay-as-you-go, while Ollama Cloud has a free tier and
+  a $20/mo Pro plan. OpenRouter and a ChatGPT subscription are also supported. Voice runs on
+  <a href="https://console.deepgram.com">Deepgram</a> (free starter credit).</p>
 
   <p style="text-align:center; margin-top:40px">
-    <a class="cta" href="https://github.com/smixs/iva">Get Iva →</a>
+    <a class="cta" href="https://github.com/mamysh/iva">Get Iva →</a>
   </p>
 
   <footer>
-    Built on <a href="https://eve.dev/docs/introduction">eve</a> · Open-source · MIT · <a href="https://github.com/smixs/iva">github.com/smixs/iva</a><br>
+    Built on <a href="https://eve.dev/docs/introduction">eve</a> · Open-source · MIT · <a href="https://github.com/mamysh/iva">github.com/mamysh/iva</a><br>
     Grew out of <a href="https://github.com/smixs/agent-second-brain">agent-second-brain</a>
   </footer>
 </div>

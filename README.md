@@ -6,9 +6,9 @@
 
 **Your assistant. Your server. Your memory.**
 
-[![Release](https://img.shields.io/github/v/release/smixs/iva?color=brightgreen)](https://github.com/smixs/iva/releases)
+[![Release](https://img.shields.io/github/v/release/mamysh/iva?color=brightgreen)](https://github.com/mamysh/iva/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/smixs/iva?style=social)](https://github.com/smixs/iva/stargazers)
+[![Stars](https://img.shields.io/github/stars/mamysh/iva?style=social)](https://github.com/mamysh/iva/stargazers)
 [![built on eve](https://img.shields.io/badge/built%20on-eve-000000?logo=vercel&logoColor=white)](https://eve.dev/docs/introduction)
 [![Node 24](https://img.shields.io/badge/node-24.x-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 
@@ -21,7 +21,7 @@
 Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data. One command installs it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash
 ```
 
 ## Features
@@ -69,12 +69,14 @@ Four model providers. Pick one and fill its block in `.env`:
 
 | Provider | How you pay |
 |---|---|
-| OpenCode Zen | API key, ~$5/mo |
-| Ollama Cloud | API key, ~$20/mo |
+| OpenCode Zen | API key, pay-as-you-go with a monthly spend limit |
+| Ollama Cloud | API key, free tier or $20/mo Pro plan |
 | OpenRouter | API key, pay-as-you-go, 300+ models |
 | OpenAI (ChatGPT) | your Plus/Pro subscription, no API key |
 
-Default model is deepseek-v4-pro, 131k context. On Zen it runs about $9/mo all-in ($5 model + $4–5 VPS), no markup; voice rides Deepgram's free starter credit. Model lists, limits and the search matrix: [docs/providers.md](docs/providers.md).
+Default model is deepseek-v4-pro, 131k context. Actual cost depends on the selected model, usage, VPS and
+provider availability; Iva adds no usage markup. Voice uses Deepgram's starter credit when available.
+Model lists, limits and the search matrix: [docs/providers.md](docs/providers.md).
 
 ## Security & privacy
 

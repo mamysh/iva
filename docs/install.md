@@ -13,7 +13,7 @@ Everything between `curl` and a working bot. One command on a fresh server: the 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash
 ```
 
 The first question is your language — English or Russian — before anything touches the system. Input is read from `/dev/tty`, so the wizard stays interactive even piped through `curl`. If there's no terminal at all (Docker, CI), setup is skipped and the script prints how to run it later.
@@ -46,7 +46,7 @@ Re-running the same command later is safe: it reuses the existing checkout, fast
 Flags pass through the pipe with `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash -s -- --skip-setup
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash -s -- --skip-setup
 ```
 
 | Option | Effect |
@@ -54,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash -s
 | `--skip-setup` | install everything, don't run the wizard |
 | `--non-interactive` | no questions at all — defaults only, wizard skipped |
 | `-h`, `--help` | show the built-in help and exit |
-| `REPO_URL=…` | install from a fork (default `https://github.com/smixs/iva.git`) |
+| `REPO_URL=…` | install from a fork (default `https://github.com/mamysh/iva.git`) |
 | `BRANCH=…` | install a branch (default `main`) |
 | `INSTALL_DIR=…` | where the code goes (default `~/iva`) |
 
