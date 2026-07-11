@@ -15,7 +15,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import date, datetime
 from collections import defaultdict
 
 from common import (
@@ -25,6 +25,24 @@ from common import (
 )
 
 EMBED_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.svg', '.pdf', '.mp3', '.mp4', '.webp'}
+
+
+def is_pending_rollup_target(target: str, today: date | None = None) -> bool:
+    """True for a parent rollup that is expected to be generated at period end."""
+    today = today or date.today()
+    weekly = re.fullmatch(r"weekly/(\d{4})-W(\d{2})", target)
+    if weekly:
+        year, week = map(int, weekly.groups())
+        iso = today.isocalendar()
+        return (year, week) == (iso.year, iso.week)
+
+    monthly = re.fullmatch(r"monthly/(\d{4})-(\d{2})", target)
+    if monthly:
+        year, month = map(int, monthly.groups())
+        return (year, month) == (today.year, today.month)
+
+    yearly = re.fullmatch(r"yearly/(\d{4})", target)
+    return bool(yearly and int(yearly.group(1)) == today.year)
 
 
 def build_graph(vault_dir: Path, schema: dict) -> dict:
@@ -75,6 +93,10 @@ def build_graph(vault_dir: Path, schema: dict) -> dict:
             if resolved:
                 outgoing.append(resolved)
                 all_links.append((rp_noext, target_clean, resolved))
+            elif is_pending_rollup_target(target_clean):
+                # Daily/weekly/monthly summaries link to their current parent before
+                # the parent is generated at the end of that period.
+                continue
             else:
                 broken_links.append((rp_noext, target_clean))
 
