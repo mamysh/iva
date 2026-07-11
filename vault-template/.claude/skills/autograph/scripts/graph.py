@@ -61,6 +61,16 @@ def build_graph(vault_dir: Path, schema: dict) -> dict:
             if any(target.lower().endswith(ext) for ext in EMBED_EXTS):
                 continue
             target_clean = normalize_link_target(target)
+            # Attachments are not graph nodes, but an existing file is still a valid
+            # Obsidian link. Do not count such embeds as broken merely because the
+            # graph intentionally indexes Markdown files only.
+            attachment = (vault_dir / target_clean).resolve()
+            try:
+                attachment.relative_to(vault_dir.resolve())
+            except ValueError:
+                attachment = None
+            if attachment and attachment.is_file():
+                continue
             resolved, _ = resolve_link_target(target_clean, link_index)
             if resolved:
                 outgoing.append(resolved)
