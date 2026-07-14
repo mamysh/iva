@@ -51,7 +51,9 @@ iva userbot off      # stop and disable the proxy
 - `TELEGRAM_EXPOSED_TOOLS=read-only` in `.env` — the agent can read/search but physically
   cannot send or mutate (the proxy prunes all write tools). Onboarding still works.
 - `TELEGRAM_MCP_PORT` (default `8724`), `TELEGRAM_USERBOT_QR_CHAT_ID` (defaults to the first
-  of `TELEGRAM_ALLOWED_USER_IDS`).
+  of `TELEGRAM_ALLOWED_USER_IDS`). Both iva and the proxy read the port from `.env` at start,
+  so after changing it rerun **`iva userbot setup`** (restarts both) — a bare `iva restart`
+  only reloads iva, leaving the proxy on the old port.
 
 ## How it works
 

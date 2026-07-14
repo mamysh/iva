@@ -334,6 +334,7 @@ async function cmdUpdate(args) {
     step("Refreshing systemd units and restarting…");
     restartServices();
     ok("Restarted: iva + telegram-poll");
+    restartUserbotIfActive(); // opt-in proxy runs vendored in-repo code → restart onto the new build
   } else {
     warn("systemd unavailable — restart the process manually");
   }
@@ -611,19 +612,48 @@ ${C.b}Commands:${C.x}
 
 // ── router ──────────────────────────────────────────────────────────────────
 // ── Telegram userbot (opt-in) ────────────────────────────────────────────
-function bootstrapUserbotVenv() {
-  step("Собираю venv для userbot-прокси (telethon, mcp)…");
+// Build the venv if missing and ALWAYS sync deps (idempotent), then verify the
+// critical imports actually resolve. Throws on any failure so the caller aborts
+// BEFORE enabling a service that would restart-loop on a partial install.
+function ensureUserbotVenv() {
   const hasUv = !!cap("sh", ["-c", "command -v uv"]).out;
   const opts = { cwd: USERBOT_DIR };
-  if (hasUv) {
-    run("uv", ["venv", "--python", "3.12", ".venv"], opts);
-    run("uv", ["pip", "install", "--python", VENV_PY, "-r", "requirements.txt"], opts);
-  } else {
-    run("python3", ["-m", "venv", ".venv"], opts);
-    run(VENV_PY, ["-m", "pip", "install", "-q", "-U", "pip"], opts);
-    run(VENV_PY, ["-m", "pip", "install", "-q", "-r", "requirements.txt"], opts);
+  const must = (r, what) => {
+    if ((r?.status ?? 1) !== 0) throw new Error(`userbot: ${what} не удалось`);
+  };
+  if (!existsSync(VENV_PY)) {
+    step("Создаю venv для userbot-прокси…");
+    must(
+      hasUv ? run("uv", ["venv", "--python", "3.12", ".venv"], opts) : run("python3", ["-m", "venv", ".venv"], opts),
+      "создание venv",
+    );
+    if (!existsSync(VENV_PY)) throw new Error("userbot: venv не создан — проверь python3/uv");
   }
-  if (!existsSync(VENV_PY)) throw new Error("не удалось собрать venv — проверь python3/uv");
+  step("Синхронизирую зависимости userbot-прокси…");
+  if (hasUv) {
+    must(run("uv", ["pip", "install", "--python", VENV_PY, "-r", "requirements.txt"], opts), "установка зависимостей");
+  } else {
+    must(run(VENV_PY, ["-m", "pip", "install", "-q", "-U", "pip"], opts), "обновление pip");
+    must(run(VENV_PY, ["-m", "pip", "install", "-q", "-r", "requirements.txt"], opts), "установка зависимостей");
+  }
+  // A partial install imports-fails at runtime → the service restart-loops silently.
+  const check = cap(VENV_PY, ["-c", "import telethon, telegram_mcp, qrcode, mcp"], opts);
+  if (check.code !== 0)
+    throw new Error(`userbot: зависимости не импортируются — ${check.err.split("\n").pop() || "проверь requirements"}`);
+}
+
+// Restart the opt-in proxy onto fresh code/deps, but ONLY if it's already active
+// (never auto-start it for users who didn't opt in). Called from `iva update`.
+function restartUserbotIfActive() {
+  if (scQ("is-active", SVC_USERBOT).out !== "active") return;
+  step("Обновляю userbot-прокси…");
+  try {
+    ensureUserbotVenv();
+  } catch (e) {
+    warn(e.message);
+  }
+  sc("restart", SVC_USERBOT); // writeUnits already ran in restartServices()
+  ok("userbot-прокси перезапущен на новом коде");
 }
 
 function cmdUserbot(args) {
@@ -640,11 +670,11 @@ function cmdUserbot(args) {
       appendFileSync(ENV_PATH, `\nTELEGRAM_MCP_TOKEN=${randomBytes(24).toString("hex")}\n`);
       ok("Сгенерировал TELEGRAM_MCP_TOKEN в .env.");
     }
-    if (!existsSync(VENV_PY)) bootstrapUserbotVenv();
-    else ok("venv уже собран.");
+    ensureUserbotVenv(); // throws → dispatch catches → exit 1, service NOT enabled
     writeUnits();
-    sc("enable", "--now", SVC_USERBOT);
-    // iva reads TELEGRAM_MCP_TOKEN at process start — restart so the new secret is live.
+    sc("enable", SVC_USERBOT);
+    sc("restart", SVC_USERBOT); // restart (not just enable --now) so a rewritten unit / new .env load
+    // iva reads TELEGRAM_MCP_TOKEN/PORT at process start — restart so the new secret+URL are live.
     if (scQ("is-active", "iva.service").out === "active") sc("restart", "iva.service");
     ok("Userbot-прокси включён. Подключи аккаунт по QR через бота: напиши боту «подключи мой телеграм».");
     ok("Статус: iva userbot status · выключить: iva userbot off");

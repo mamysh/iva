@@ -57,7 +57,7 @@ def _seed_session_env() -> Path:
     on QR login — no manual save. Single owner ⇒ no "database is locked".
     """
     path = _session_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
     # Telethon appends ".session" to the name; strip it so we don't get ".session.session".
     name = str(path)
     if name.endswith(".session"):
@@ -68,6 +68,11 @@ def _seed_session_env() -> Path:
 
 def main() -> None:
     import asyncio
+
+    # The SQLite session file holds the MTProto auth key (= full account access). Force
+    # private perms on everything we create (0600 files / 0700 dirs) so a co-tenant on
+    # the host can't read it — systemd's default umask is 022 (world-readable 0644).
+    os.umask(0o077)
 
     host = os.getenv("TELEGRAM_MCP_HOST", "127.0.0.1")
     port = int(os.getenv("TELEGRAM_MCP_PORT", "8724"))

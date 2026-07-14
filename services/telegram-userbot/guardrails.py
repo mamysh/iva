@@ -63,38 +63,49 @@ class AccountHealth:
 
 
 def install_guardrails(client, health=None, sleep=asyncio.sleep, rand=random.uniform):
-    """Monkeypatch the client's outbound methods in place. Returns the AccountHealth."""
+    """Monkeypatch the client's outbound methods in place. Returns the AccountHealth.
+
+    All wrapped methods share ONE lock so concurrent MCP tool calls serialize: sends
+    are spaced by the pacing delay instead of firing simultaneously (which would be
+    the exact burst the guardrail exists to prevent).
+    """
     health = health or AccountHealth()
+    lock = asyncio.Lock()
     for name in _WRAPPED:
         original = getattr(client, name, None)
         if original is None:
             continue
-        setattr(client, name, _wrap(original, health, sleep, rand))
+        setattr(client, name, _wrap(original, health, sleep, rand, lock))
     return health
 
 
-def _wrap(original, health, sleep, rand):
+def _wrap(original, health, sleep, rand, lock=None):
+    lock = lock or asyncio.Lock()
+
     @functools.wraps(original)
     async def wrapper(*args, **kwargs):
-        if health.should_stop():
-            mins = int(health.seconds_until_resume() // 60)
-            raise GuardrailTripped(
-                f"Отправка приостановлена анти-бан защитой: {_MAX_FLOODS_PER_DAY} FloodWait "
-                f"за сутки. Возобновление через ~{mins} мин. Пока — только чтение."
-            )
-        try:
-            result = await original(*args, **kwargs)
-        except FloodWaitError as exc:
-            health.record_flood()
+        # Hold the lock across the send AND the pacing delay so a burst of concurrent
+        # sends is spaced out, not just their return values.
+        async with lock:
             if health.should_stop():
+                mins = int(health.seconds_until_resume() // 60)
                 raise GuardrailTripped(
-                    f"FloodWait {exc.seconds}s — достигнут лимит {_MAX_FLOODS_PER_DAY}/сутки, "
-                    f"стоп отправок на 24ч."
-                ) from exc
-            await sleep(exc.seconds * _FLOOD_BUFFER)
-            result = await original(*args, **kwargs)  # one compliant retry
-        health.sends += 1
-        await sleep(rand(_MIN_DELAY, _MAX_DELAY))
-        return result
+                    f"Отправка приостановлена анти-бан защитой: {_MAX_FLOODS_PER_DAY} FloodWait "
+                    f"за сутки. Возобновление через ~{mins} мин. Пока — только чтение."
+                )
+            try:
+                result = await original(*args, **kwargs)
+            except FloodWaitError as exc:
+                health.record_flood()
+                if health.should_stop():
+                    raise GuardrailTripped(
+                        f"FloodWait {exc.seconds}s — достигнут лимит {_MAX_FLOODS_PER_DAY}/сутки, "
+                        f"стоп отправок на 24ч."
+                    ) from exc
+                await sleep(exc.seconds * _FLOOD_BUFFER)
+                result = await original(*args, **kwargs)  # one compliant retry
+            health.sends += 1
+            await sleep(rand(_MIN_DELAY, _MAX_DELAY))
+            return result
 
     return wrapper

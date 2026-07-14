@@ -1,8 +1,9 @@
 """Runnable self-check for the anti-ban guardrails. No framework: `python test_guardrails.py`.
 
-Covers the two load-bearing behaviors:
+Covers the load-bearing behaviors:
   1. FloodWaitError → wait seconds*1.3 then retry once (and the retry's result is returned).
   2. Three FloodWaits in 24h trip the circuit-breaker → further sends raise GuardrailTripped.
+  3. A shared lock serializes concurrent sends so a burst is spaced, not simultaneous.
 """
 import asyncio
 
@@ -60,6 +61,27 @@ async def _run():
         raise AssertionError("expected GuardrailTripped")
     except GuardrailTripped:
         pass
+
+    # 3) A shared lock serializes concurrent sends: events must not interleave.
+    events: list[tuple] = []
+
+    async def yield_sleep(_):
+        await asyncio.sleep(0)  # let any other ready task run
+
+    async def rec_send(tag):
+        events.append(("start", tag))
+        await asyncio.sleep(0)  # simulate mid-send yield — an unlocked wrapper would interleave here
+        events.append(("end", tag))
+        return tag
+
+    lock = asyncio.Lock()
+    h4 = AccountHealth()
+    w = _wrap(rec_send, h4, sleep=yield_sleep, rand=lambda a, b: 0.0, lock=lock)
+    await asyncio.gather(w("A"), w("B"))
+    assert events in (
+        [("start", "A"), ("end", "A"), ("start", "B"), ("end", "B")],
+        [("start", "B"), ("end", "B"), ("start", "A"), ("end", "A")],
+    ), f"sends interleaved despite the lock: {events}"
 
     print("test_guardrails: PASS")
 
