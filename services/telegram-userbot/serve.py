@@ -92,6 +92,12 @@ def main() -> None:
 
     client = get_client()
 
+    # Register onboarding tools AFTER pruning so QR login always works — you must be
+    # able to connect the account even under read-only exposure.
+    from onboarding import register_onboarding_tools
+
+    register_onboarding_tools(mcp, client)
+
     import uvicorn
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse
