@@ -22,7 +22,11 @@ assert.doesNotMatch(workflow, /secrets\.|\.env|TELEGRAM|ASSISTANT_VAULT/i);
 
 assert.match(baselineWorkflow, /^  workflow_dispatch:$/m);
 assert.match(baselineWorkflow, /node-version: 24/);
-assert.match(baselineWorkflow, /npm run baseline:resources -- --json > resource-baseline\.json/);
+assert.match(
+  baselineWorkflow,
+  /npm run baseline:resources -- --json > "\$RUNNER_TEMP\/resource-baseline\.json"/,
+);
+assert.match(baselineWorkflow, /path: \$\{\{ runner\.temp \}\}\/resource-baseline\.json/);
 assert.match(baselineWorkflow, /uses: actions\/upload-artifact@v7/);
 assert.doesNotMatch(baselineWorkflow, /secrets\.|\.env|TELEGRAM|ASSISTANT_VAULT/i);
 
