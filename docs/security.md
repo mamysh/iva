@@ -31,7 +31,7 @@ Matches become `[REDACTED]` and the reply still goes out, with the finding logge
 The allowlist is the perimeter, and it fails closed. This is the canonical rule:
 
 ```bash
-TELEGRAM_ALLOWED_USER_IDS=123456789   # comma-separated; EMPTY = Iva answers nobody
+TELEGRAM_ALLOWED_USER_IDS=<your_numeric_user_id>   # comma-separated; EMPTY = Iva answers nobody
 ```
 
 Not "everyone until configured" — nobody. A stranger who DMs the bot gets one line back with their own Telegram ID so they can ask you to add them (with an empty allowlist the reply just says the bot isn't configured yet); group messages from strangers — and everything else — are dropped before the model ever runs. To change the list, edit `.env` and restart; how the wizard fills it in and the variable itself: [configuration.md](configuration.md).

@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+Production hardening carried by this fork after upstream v0.2.5.
+
+- Durable optional PostgreSQL workflow state with restart/resume smoke checks.
+- A five-minute systemd reminder dispatcher and out-of-band `/reminders` command.
+- Fail-closed personal Telegram defaults: loopback-only proxy, read-only tool exposure, pinned upstream dependency and persistent anti-ban guardrails.
+- Deterministic memory safeguards: folded-frontmatter growth prevention, a 1,200-character CORE recovery guard and accurate vault-push diagnostics.
+
+## [0.2.5] - 2026-07-15
+
+- 🧾 **Telegram Rich Messages** — tables, task lists, collapsible blocks and formulas use Bot API 10.1 with a safe HTML fallback.
+- ⬆️ **Self-update from Telegram** — `/update` checks the reviewed deployment branch and installs only after explicit confirmation.
+- 🧪 **Personal Telegram MCP (beta)** — optional QR onboarding for a personal account, disabled by default in this fork and restricted to read-only exposure unless explicitly reviewed.
+
+[Unreleased]: https://github.com/mamysh/iva/compare/1e6e90a7d43544f33ef26bdfe0b145038ab879fb...main
+[0.2.5]: https://github.com/smixs/iva/releases/tag/v0.2.5
+
 ## [0.2.4] - 2026-07-09
 
 Feature: Iva now works with Google Workspace out of the box, and picking a model on OpenRouter tells you what actually went wrong.
@@ -46,7 +64,7 @@ Patch: usage reports in English.
 
 - 🌍 **English `/usage` output** — `/usage` and `iva usage` now report in English (`in` / `out` / `cached`, plus window and source labels), matching the project's English-first surface. The source label also normalizes the raw channel kind (e.g. `channel:telegram` → `chat`).
 
-[0.1.6]: https://github.com/smixs/iva/releases/tag/v0.1.6
+[0.1.6]: https://github.com/smixs/iva/commit/a9b8b1ebd791a681a54babafa617287171dcf94a
 
 ## [0.1.5] - 2026-06-24
 
@@ -57,7 +75,7 @@ Feature: local token-usage accounting (issue #7).
 - 🖥️ **`iva usage` in the terminal** — the same summaries over the same log (`iva usage today`, `iva usage by-model`, `iva usage tail` for raw lines), for watching a VPS from the shell.
 - Tokens only for now — Ollama/OpenCode are flat-rate subscriptions, so a fabricated dollar figure would mislead. Budget guardrails and a large-context heads-up are deferred to a later release.
 
-[0.1.5]: https://github.com/smixs/iva/releases/tag/v0.1.5
+[0.1.5]: https://github.com/smixs/iva/commit/26f8f89a79c5fde9d906f670587279fb398f2f69
 
 ## [0.1.4] - 2026-06-24
 
@@ -68,7 +86,7 @@ Patch: model switching no longer mutes the bot, and a real reset for stuck backg
 - 🧠 **Honest about reminders** — Iva no longer improvises background `nohup sleep`/`curl` timers (the thing that ballooned `.workflow-data` and pegged the CPU). It has no push/scheduler, says so plainly, and stores "remind me later" requests as tasks instead.
 - 📝 **Correct way to switch models** — the model is read from `.env` at process start, so a chat-time change applies only after `iva restart`; Iva now explains this instead of silently self-restarting mid-turn.
 
-[0.1.4]: https://github.com/smixs/iva/releases/tag/v0.1.4
+[0.1.4]: https://github.com/smixs/iva/commit/faf792cc6f746ea0d25531cae21706c60db46187
 
 ## [0.1.3] - 2026-06-22
 

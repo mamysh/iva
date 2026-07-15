@@ -1,26 +1,27 @@
-# Production architecture
+# Reference production architecture
 
-This is the architecture of the final `main` branch. It combines Iva v0.2.5 with the self-host
-hardening needed by the running single-user VPS; it is not a PR handoff or a list of unmerged ideas.
+This is the supported self-host architecture of the current `main` branch. It combines Iva v0.2.5
+with production hardening for a long-running single-user VPS. Portable defaults remain lightweight;
+PostgreSQL and the personal-account Telegram proxy are explicit opt-ins.
 
 ## Origin and upstream
 
-The original Iva project was created by [Shima (`smixs`)](https://github.com/smixs) as [smixs/iva](https://github.com/smixs/iva). This repository retains that upstream as the source project and carries the production-specific hardening and operations described below.
+The original Iva project was created by [Shima (`smixs`)](https://github.com/smixs) as [smixs/iva](https://github.com/smixs/iva). This fork retains that upstream as the source project and carries the self-host hardening and operations described below.
 
-`origin` is this deployment repository; the read-only `upstream` remote tracks only `smixs/iva`'s `main` branch. Do not develop directly on `upstream/main`.
+In the recommended remote layout, `origin` is your fork and the read-only `upstream` remote tracks
+`smixs/iva`'s `main` branch. Do not develop directly on `upstream/main`.
 
-To bring in an upstream release safely, create a short-lived integration branch from `main`, merge `upstream/main` there, resolve and test the result, deploy it for verification, then merge the verified integration branch into `main` and delete it. This keeps the steady-state layout to one production branch while preserving a clean, reviewable integration point.
+To bring in an upstream release safely, create a short-lived integration branch from `main`, merge
+`upstream/main` there, resolve conflicts, test, and review the diff in a pull request. Merge the reviewed
+PR, deploy the resulting exact `main` commit, verify it, then delete the integration branch. This keeps
+the steady-state layout to one production branch while preserving a reviewable integration point.
 
 ```bash
 git fetch upstream
 git switch -c update/upstream-YYYYMMDD main
 git merge --no-ff upstream/main
 npm ci && npm test && npm run typecheck && npm run build
-# verify the deployment, then:
-git switch main
-git merge --no-ff update/upstream-YYYYMMDD
-git push origin main
-git branch -d update/upstream-YYYYMMDD
+# push the branch, review and merge its PR, then deploy the resulting main SHA
 ```
 
 Git's recorded conflict resolutions (`rerere`) are enabled locally to make repeated upstream merges gentler. Before any integration, inspect `git log --oneline main..upstream/main` and keep local production changes where they intentionally differ.
@@ -42,14 +43,14 @@ Git's recorded conflict resolutions (`rerere`) are enabled locally to make repea
 
 - Providers: Ollama Cloud, OpenCode Zen, OpenRouter, or an OpenAI ChatGPT subscription through Codex OAuth. Codex requests use stateless inline history (`store:false`), not backend-persisted response references.
 - Voice: Deepgram transcription; vision uses the selected provider's compatible vision path.
-- Web search: the selected API provider with a graceful DuckDuckGo fallback.
+- Web search: the selected API provider; if its key is missing, the assistant reports that search is unavailable instead of guessing.
 - Google Workspace: the optional `gws` CLI skill, configured only when the owner explicitly connects it.
-- Telegram userbot/MCP code is present as a **beta, opt-in** integration, but it is disabled on the
-  production VPS and is not part of the supported production profile. Its systemd unit is never included
-  in the normal service set. Any future enablement requires a separate security review and starts in
-  `TELEGRAM_EXPOSED_TOOLS=read-only` mode on a test account.
+- Telegram userbot/MCP code is present as a **beta, opt-in** integration. It is disabled by default and
+  its systemd unit is never included in the normal service set. Any evaluation should start on a test
+  account in `TELEGRAM_EXPOSED_TOOLS=read-only` mode (49 upstream read-only tools plus four onboarding
+  tools). Exposing the full mutation surface requires a separate security review.
 
-## Portable defaults vs the running production profile
+## Portable defaults vs the PostgreSQL production profile
 
 Default installs remain file-backed and need no database. PostgreSQL is opt-in through:
 
@@ -58,8 +59,8 @@ WORKFLOW_TARGET_WORLD=@workflow/world-postgres
 WORKFLOW_POSTGRES_URL=postgresql:///iva_workflow?host=/var/run/postgresql
 ```
 
-The running production VPS uses this PostgreSQL profile. It keeps app workflow state in `iva_workflow`;
-the live vault remains at `ASSISTANT_VAULT_DIR` and is never migrated into the app database.
+With this profile, app workflow state lives in `iva_workflow`; the live vault remains at
+`ASSISTANT_VAULT_DIR` and is never migrated into the app database.
 
 The example environment and small-VPS PostgreSQL profile live in:
 
@@ -77,17 +78,16 @@ npm run typecheck
 npm run build
 ```
 
-### Verified VPS update runbook
+### VPS update runbook
 
-The running DigitalOcean installation is owned by the `iva` user and lives at
-`/home/iva/iva` (not `/srv/assistant`). Run operational commands as that user from this
-directory. Do not put credentials in Git: `.env` and `deploy/iva-workflow.environment` stay
+Run operational commands as the dedicated service user from the directory where `install.sh`
+cloned Iva. Do not put credentials in Git: `.env` and `deploy/iva-workflow.environment` stay
 local, mode `0600`, and are already ignored.
 
 Before an update, make local backups of those two files if present. The normal update is then:
 
 ```bash
-cd /home/iva/iva
+cd /path/to/iva
 iva update --force
 iva doctor
 iva status
@@ -130,11 +130,12 @@ iva reminders
 does **not** delete durable PostgreSQL workflow state. Clearing the database is a manual, deliberate
 recovery operation.
 
-## Current production follow-up
+## Existing vault upgrades
 
-When updating an existing vault, migrate the bundled Autograph template as well as the app. The production
-vault must contain `supersede.py`; without it, `iva-memory-doctor` completes backup work but reports a
-failed maintenance run. Verify the next doctor run after any vault-template migration.
+An app update does not overwrite a live vault because it is a separate private repository. When a release
+changes `vault-template/.claude`, review and migrate those maintenance scripts into an existing vault,
+then run `npm run doctor` and verify that the vault push succeeds. Keep a Git bundle backup before any
+history repair or bulk migration.
 
 For command-level operations see [deploy.md](deploy.md), [cli.md](cli.md), and
 [troubleshooting.md](troubleshooting.md).

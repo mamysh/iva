@@ -161,6 +161,5 @@ class AccountHealth:
 
 ## Источники
 
-- https://telega.to/blog/telegram-rate-limits-for-automation-2026
-- https://core.telegram.org/api/errors (официальная документация)
-- https://docs.telethon.dev/en/stable/concepts/errors.html
+- [Telegram API errors](https://core.telegram.org/api/errors) (официальная документация)
+- [Telethon: RPC errors](https://docs.telethon.dev/en/stable/concepts/errors.html)

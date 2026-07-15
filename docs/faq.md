@@ -8,15 +8,15 @@ Iva is a self-hosted Telegram AI assistant with layered memory that turns your m
 
 ## Can I run a Telegram AI bot with my own API key?
 
-Yes — Iva runs entirely on your own keys: one model-provider key (OpenCode Zen or Ollama Cloud), a Deepgram key for voice, and a bot token from @BotFather. The setup wizard validates every key live and lets you pick a model from the provider's fetched list. Keys stay in `.env` on your server — walkthrough in [install.md](install.md).
+Yes. Iva supports OpenCode Zen, Ollama Cloud and OpenRouter with your own API key, plus an OpenAI ChatGPT subscription through Codex OAuth. Voice needs a Deepgram key and Telegram needs a bot token from @BotFather. The setup wizard validates credentials and model access live. Secrets stay in `.env` or a chmod-600 auth file on your server — walkthrough in [install.md](install.md).
 
 ## Is my data private?
 
-Your memory is a plain-markdown vault in a private git repo you own; no third party stores it. An outbound gate redacts secrets before every Telegram send, and the user allowlist fails closed. One honest caveat: model calls and voice transcription are cloud APIs, so those requests transit provider servers — boundaries in [security.md](security.md).
+Your source of truth is a plain-markdown vault on your server. The nightly doctor can push it to a private Git remote you control for off-box backup; that provider then stores the repository under its own terms. An outbound gate redacts secrets before Telegram sends and the allowlist fails closed. Model calls and voice transcription are cloud APIs, so the content they process transits provider servers — boundaries in [security.md](security.md).
 
 ## How much does it cost to run?
 
-About $9/mo, no markup: one model subscription plus a small VPS, with voice on Deepgram's free tier. The line-item breakdown — and the low-memory VPS notes — live in [providers.md](providers.md).
+There is no universal monthly number: it is your VPS plus the model plan or API usage you choose, with optional voice and search usage. Iva adds no markup. Current provider guidance and VPS sizing live in [providers.md](providers.md).
 
 ## Does it work in Russian?
 
@@ -24,7 +24,7 @@ Yes — the setup wizard and the agent both run in Russian or English (`AGENT_LA
 
 ## What models does it support?
 
-Two OpenAI-compatible providers — OpenCode Zen and Ollama Cloud — with deepseek-v4-pro as the default on both. Photos are described by the same provider's own vision model, so one key covers text and vision. Full model lists and limits: [providers.md](providers.md).
+Four provider paths are supported: OpenCode Zen, Ollama Cloud, OpenRouter and an OpenAI ChatGPT subscription through Codex OAuth. Setup validates the chosen model and, where available, fetches the live model list. Photos use the selected provider's compatible vision path. Full details: [providers.md](providers.md).
 
 ## Do I need a domain or HTTPS?
 
@@ -42,7 +42,7 @@ Yes — that is the point. You talk, it files: daily transcripts, nightly rollup
 | Voice | Deepgram nova-3, auto ru/uz/en | Whisper transcription | Built-in STT/TTS | Yes |
 | Long-term memory | Layered vault + nightly rollups | Per-dialog history | Opt-in key/value store | Built-in, vendor-held |
 | Personal CRM | Contact/project/decision cards | No | No | No |
-| Price | ~$9/mo, no markup | VPS + API usage | VPS + API usage | ~$20/mo |
+| Price | VPS + chosen providers, no Iva markup | VPS + API usage | VPS + API usage | Provider subscription |
 | License | MIT | MIT | MIT | Proprietary |
 
 ## When NOT to use Iva

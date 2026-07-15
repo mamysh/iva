@@ -8,7 +8,7 @@ there is no universal monthly total: check the provider before paying and set a 
 | Provider | Price | Text models | Vision |
 |---|---|---|---|
 | **OpenCode Zen** | pay-as-you-go; initial balance and processing fee vary | the live Zen model list | provider-dependent |
-| **Ollama Cloud** | free tier; Pro is $20/mo | the live Ollama Cloud model list | provider-dependent |
+| **Ollama Cloud** | free and paid plans; check the current provider page | the live Ollama Cloud model list | provider-dependent |
 | **OpenRouter** | pay-as-you-go | 300+ models across vendors — pick any slug (`vendor/model`) | `google/gemini-2.5-flash` |
 | **OpenAI (ChatGPT subscription)** | your existing Plus/Pro/Team | the models your plan exposes (`gpt-5.x`, `-codex`), fetched live | same subscription (multimodal) |
 

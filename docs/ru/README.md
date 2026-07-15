@@ -15,5 +15,7 @@ Iva - self-hosted ассистент в Telegram со слоями памяти:
 - [cli.md](../cli.md) - слэш-команды в Telegram и CLI `iva`
 - [extending.md](../extending.md) - скиллы, MCP-подключения, свои инструменты
 - [troubleshooting.md](../troubleshooting.md) - бот молчит, таймеры падают, провайдер ошибается
+- [userbot.md](../userbot.md) - beta MCP-прокси личного Telegram, read-only режим и риски аккаунта
+- [PRODUCTION_ARCHITECTURE.md](../PRODUCTION_ARCHITECTURE.md) - эталонный production-профиль и эксплуатационный контракт
 
 Русская версия главного README - [README.ru.md](../../README.ru.md).

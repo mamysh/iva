@@ -74,6 +74,20 @@ systemctl --user start iva-memory-doctor.service   # backup now: creates the pri
 
 `iva doctor` only reports a missing vault origin — the repo creation and push happen in the nightly memory-doctor job; the second command runs it immediately instead of waiting for 05:00.
 
+### Vault push rejected for large files
+
+This is not an authentication problem. Inspect the memory-doctor journal for `GH001`, `Large files`
+or `exceeds GitHub's file size limit`:
+
+```bash
+journalctl --user -u iva-memory-doctor.service -n 120 --no-pager
+git -C "${ASSISTANT_VAULT_DIR:-vault}" status --short --branch
+```
+
+Do not force-push or delete memory blindly. Create a `git bundle create ... --all` backup first,
+identify which unpushed commits introduced the blobs, and rewrite only that unpublished tail. Current
+versions report oversized-history failures separately from credential failures.
+
 ### agent-browser fails on Ubuntu 24.04
 
 Cause: Ubuntu 23.10+ blocks unprivileged user namespaces (AppArmor), so Chromium dies with "No usable sandbox". The installer writes the workaround; if it's missing:

@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Known synthetic secret-detector fixtures and a historical placeholder"
+regexTarget = "secret"
+regexes = [
+  '''abcdef0123456789abcdef0123456789''',
+  '''sk-abc123def456ghi789jkl012mno''',
+  '''sk-ant-api03-abcdefghijklmnopqrstuvwxyz''',
+  '''sk-abcdefghijk12345678''',
+]
