@@ -47,11 +47,12 @@ The allowlist is **fail-closed: empty means Iva answers nobody.** The wizard aut
 
 ### Personal Telegram userbot (beta, opt-in)
 
-The personal-account MCP proxy is shipped but disabled in the production profile. It is separate from
+The personal-account MCP proxy is shipped but disabled by default. It is separate from
 the ordinary Telegram bot above and must never be required for normal startup, doctor, polling or
 reminders. If it is evaluated later, begin on a test account with `TELEGRAM_EXPOSED_TOOLS=read-only`;
-`all` exposes account mutations and requires a separate security review. The proxy is restricted to
-loopback and its upstream dependency is pinned to an exact audited commit. See [userbot.md](./userbot.md).
+`all` exposes account mutations and requires a separate security review. Read-only mode exposes 49
+upstream tools plus four onboarding tools. The proxy is restricted to loopback and its upstream
+dependency is pinned to an exact audited commit. See [userbot.md](./userbot.md).
 
 ## Voice
 

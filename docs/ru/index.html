@@ -47,10 +47,11 @@
   "operatingSystem": "Linux, macOS",
   "url": "https://mamysh.github.io/iva/ru/",
   "image": "https://mamysh.github.io/iva/iva-og.png",
-  "softwareVersion": "0.2.4",
+  "softwareVersion": "0.2.5",
   "license": "https://github.com/mamysh/iva/blob/main/LICENSE",
   "codeRepository": "https://github.com/mamysh/iva",
-  "author": { "@type": "Person", "name": "mamysh", "url": "https://github.com/mamysh" },
+  "creator": { "@type": "Person", "name": "Shima (smixs)", "url": "https://github.com/smixs" },
+  "maintainer": { "@type": "Person", "name": "mamysh", "url": "https://github.com/mamysh" },
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
 }
 </script>
@@ -95,11 +96,11 @@
   <header>
     <img src="../iva-header.webp" alt="Iva — личный AI-агент с долговременной памятью" width="1200" height="676">
     <h1>Iva — личный AI-агент с долговременной памятью</h1>
-    <p class="tagline">Личный AI-агент с долговременной памятью. Ставится одной командой на сервер за $4 и помнит про вас всё.</p>
+    <p class="tagline">Личный AI-агент с долговременной памятью. Ставится одной командой на ваш сервер и сохраняет контекст надолго.</p>
     <p class="sub">Живёт в Telegram. Собран на <a href="https://eve.dev/docs/introduction">eve</a>, работает на вашем сервере и с выбранным вами провайдером модели.</p>
     <p>
       <a class="cta" href="https://github.com/mamysh/iva">Открыть на GitHub</a>
-      <a class="cta alt" href="https://github.com/mamysh/iva/blob/main/README.ru.md#установка">Как установить</a>
+      <a class="cta alt" href="https://github.com/mamysh/iva/blob/main/README.ru.md#быстрый-старт">Как установить</a>
     </p>
   </header>
 
@@ -107,23 +108,24 @@
   <pre><code>curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash</code></pre>
 
   <h2>Почему Iva</h2>
-  <p>OpenClaw, Hermes, nanobot - хороших агентов хватает. Зачем ещё один? Затем, что каждый сваливает на
-  вас одну и ту же гору выбора: какую модель, какую память, какой поиск, как всё связать. Слишком много
-  выбора - вот настоящая проблема. Поэтому выбор я сделал сам: постоянно тестирую агентов, модели, связки
-  и харнесы, оставляю самое лучшее и собираю в Iva - лучшее из всех агентов в одном. Открытый код на
-  открытых моделях (DeepSeek, Kimi, GLM), модель выбираете вы по имени, ваш ключ, без наценки. Как Linux
-  Mint среди AI-агентов: одна команда - и всё работает. Агентов много, а этот - мой. Теперь и ваш.</p>
+  <p>Self-hosted ассистент обычно заставляет сначала выбрать модель, память, поиск и схему деплоя — и
+  только потом приносит пользу. Iva даёт продуманные и проверяемые defaults: открытый код, выбранный вами
+  провайдер, ваши ключи и Markdown-vault на вашем сервере. Этот форк продолжает
+  <a href="https://github.com/smixs/iva">оригинальную Iva Шимы</a>, регулярно интегрируя upstream с
+  обозримым production-hardening.</p>
 
   <h2>Что умеет</h2>
   <ul class="feat">
     <li>🎙️ <b>Голос и видео</b> - расшифровывает голосовые и кружки, понимает речь на любом языке.</li>
+    <li>🧾 <b>Богатые ответы</b> - таблицы, чек-листы, сворачиваемые блоки и формулы рендерятся нативно в Telegram, с безопасным фолбэком.</li>
     <li>🧠 <b>Долгая память</b> - Markdown-vault остаётся читаемым источником правды.</li>
     <li>🔎 <b>Ранжированный поиск</b> - BM25/FTS5 плюс граф связей; гибридные эмбеддинги включаются отдельно.</li>
     <li>⏰ <b>По расписанию</b> - дайджест дня или недели, регулярные задачи, сводка по почте, вовремя.</li>
     <li>🔔 <b>Напоминания</b> - скажете, о чём и когда, и Iva не даст забыть.</li>
+    <li>🧪 <b>Личный Telegram MCP (beta)</b> - опционален, выключен по умолчанию и работает read-only, пока вы явно не примете риск аккаунта.</li>
     <li>🤖 <b>Выбор модели</b> - DeepSeek, Kimi, GLM и другие открытые модели.</li>
     <li>🌐 <b>Умеет больше</b> - ищет в интернете, открывает сайты, водит браузер, подключается к MCP.</li>
-    <li>🔒 <b>Приватность</b> - код и память остаются на вашем сервере, не в чужом облаке.</li>
+    <li>🔒 <b>Честная граница приватности</b> - runtime и исходная память остаются на вашем сервере; обрабатываемый контент получают только настроенные вами облачные провайдеры.</li>
   </ul>
 
   <h2>Память - то, что копится</h2>
@@ -144,8 +146,8 @@
 
   <h2>Провайдеры и цена</h2>
   <p>Бесплатный и открытый. Платите только за маленький всегда включённый сервер (для production-профиля
-  с PostgreSQL рекомендуется минимум 1 ГБ RAM) и выбранный сервис моделей: OpenCode Zen оплачивается по факту использования, у Ollama Cloud
-  есть бесплатный уровень и Pro за $20/мес. Также поддерживаются OpenRouter и подписка ChatGPT. Голос
+  с PostgreSQL рекомендуется минимум 1 ГБ RAM) и выбранный сервис моделей: OpenCode Zen и OpenRouter оплачиваются по факту использования,
+  а планы Ollama Cloud задаёт сам провайдер. Также поддерживается подписка ChatGPT. Голос
   работает на <a href="https://console.deepgram.com">Deepgram</a> (бесплатный стартовый кредит).</p>
 
   <p style="text-align:center; margin-top:40px">
@@ -154,7 +156,7 @@
 
   <footer>
     Собран на <a href="https://eve.dev/docs/introduction">eve</a> · Open-source · MIT · <a href="https://github.com/mamysh/iva">github.com/mamysh/iva</a><br>
-    Вырос из проекта <a href="https://github.com/smixs/agent-second-brain">agent-second-brain</a>
+    Изначально создан <a href="https://github.com/smixs">Шимой (smixs)</a> · Вырос из проекта <a href="https://github.com/smixs/agent-second-brain">agent-second-brain</a>
   </footer>
 </div>
 </body>

@@ -39,6 +39,11 @@ Facts carry a `confidence:` tag — `EXTRACTED` (you said it) or `INFERRED` (Iva
 
 The same pass resolves conflicts flagged in `.graph/supersede-candidates.json` and rewrites CORE.md: durable facts, standing preferences, at most 3 active goals — plus dated behavioral lessons from exchanges you corrected, so a mistake made twice doesn't become a habit.
 
+The 1,200-character limit is enforced after the rollup, not trusted to the prompt alone. If CORE is
+too long, Iva gets one focused compaction turn; if it still misses the cap or damages the file, the
+pre-rollup CORE is restored. New facts are not lost by that fallback because their source of truth is
+the daily transcript, summary and cards — CORE is only the small always-on index.
+
 ## Search
 
 `memory_search` runs on Node 24's built-in `node:sqlite`: BM25 over an FTS5 full-text index. Zero external dependencies — no vector database, no search server, nothing extra on a $5 VPS. Hits are reranked by link distance in `.graph/vault-graph.json` — cards that reference each other surface together — and weighted by IDF coverage, so ranking stays language-agnostic: Russian, Uzbek and English all work.
@@ -55,7 +60,7 @@ At 05:00 `scripts/memory/doctor.ts` runs mechanical maintenance — no LLM, all 
 4. `moc.generate` — regenerates the MOC topic indexes
 5. `supersede`, `dedup`, `link_cleanup` — dry-run scans; findings queue for the next rollup, never auto-applied
 
-Then it commits and pushes the vault. No remote yet? It creates a private `iva-vault` GitHub repo through `gh`. It pings you on Telegram only when a human is needed: a failed maintenance step, a health-score drop, CORE.md past its 1200-char cap, or a failed push (including when there's no remote and `gh` isn't logged in).
+Then it commits and pushes the vault. No remote yet? It creates a private `iva-vault` GitHub repo through `gh`. It pings you on Telegram only when a human is needed: a failed maintenance step, a health-score drop, CORE.md past its 1200-char cap, or a failed push. Push alerts distinguish authentication errors, oversized Git history and unknown transport failures instead of assuming every failure is missing credentials.
 
 ## Vault layout
 
@@ -78,4 +83,4 @@ Everything is plain markdown. Cards, summaries and CORE.md are safe to edit by h
 
 ## Background & prior art
 
-Memory is the part I've worked on longest: first [agent-second-brain](https://github.com/smixs/agent-second-brain), a Telegram-to-Obsidian pipeline; then [autograph](https://github.com/smixs/autograph), the typed-graph schema engine now vendored inside the vault; Iva gathers both. The core idea — keep the verbatim record, compress upward, never lose the trail — follows the [LCM: Lossless Context Management](https://arxiv.org/abs/2605.04050) paper (Ehrlich & Blackman, 2026), with the card graph, SUPERSEDE semantics and doctor loop on top.
+Iva's memory lineage starts with Shima's [agent-second-brain](https://github.com/smixs/agent-second-brain), a Telegram-to-Obsidian pipeline, and [autograph](https://github.com/smixs/autograph), the typed-graph schema engine now vendored inside the vault. The core idea — keep the verbatim record, compress upward, never lose the trail — follows the [LCM: Lossless Context Management](https://arxiv.org/abs/2605.04050) paper (Ehrlich & Blackman, 2026), with the card graph, SUPERSEDE semantics and doctor loop on top.

@@ -6,7 +6,7 @@
 
 **Your assistant. Your server. Your memory.**
 
-[![Release](https://img.shields.io/github/v/release/mamysh/iva?color=brightgreen)](https://github.com/mamysh/iva/releases)
+[![Version](https://img.shields.io/github/v/tag/mamysh/iva?sort=semver&color=brightgreen)](https://github.com/mamysh/iva/tags)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/mamysh/iva?style=social)](https://github.com/mamysh/iva)
 [![built on eve](https://img.shields.io/badge/built%20on-eve-000000?logo=vercel&logoColor=white)](https://eve.dev/docs/introduction)
@@ -24,7 +24,7 @@ Iva is a self-hosted Telegram AI assistant with layered memory that turns your m
 curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash
 ```
 
-**Origin & authorship.** Iva was created by [Shima (`smixs`)](https://github.com/smixs) as [smixs/iva](https://github.com/smixs/iva). This repository is a production-hardened continuation of that upstream project for this deployment.
+**Origin & authorship.** Iva was created by [Shima (`smixs`)](https://github.com/smixs) as [smixs/iva](https://github.com/smixs/iva). This repository is a production-hardened continuation that regularly integrates the upstream project while keeping its self-hosting changes reviewable.
 
 ## Features
 
@@ -39,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash
 - 🌐 **Web search** — four pluggable providers: Tavily, Exa, Parallel or Brave.
 - 📮 **Google Workspace** — Gmail, Calendar, Drive, Sheets and Docs from chat via the `gws` CLI; installed for you, with a guided key setup right in the conversation.
 - 🧩 **Skills & MCP** — drop one file to add a procedure or connect an MCP server; keys stay in `.env`.
-- 🧪 **Personal Telegram — userbot (beta)** — optionally read from your *own* account, not just the bot; connect by chat (QR, no terminal). It is disabled in the production profile and defaults to read-only. Sending is a separate high-risk opt-in. Rough and buggy — **at your own risk**. [Details](docs/userbot.md).
+- 🧪 **Personal Telegram — userbot (beta)** — optionally read from your *own* account, not just the bot. It is disabled by default, binds only to loopback and exposes 49 upstream read-only tools plus four onboarding tools. Sending is a separate high-risk opt-in. Rough and buggy — **at your own risk**. [Details](docs/userbot.md).
 - 🛡️ **Safe to forward** — links, PDFs and other people's messages are screened before the model reads them.
 - 📊 **Token accounting** — every model step is logged; `/usage` reports it for free.
 
@@ -65,7 +65,7 @@ Headless installs take `--skip-setup` or `--non-interactive`. Wizard walkthrough
 
 <img src="assets/iva-flow.webp" alt="Dataflow: Telegram to long-poll bridge to security gate to agent to vault, with a nightly rollup and doctor loop" width="100%">
 
-The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed. The agent, the bridge and five memory timers run as systemd user units on your box — operations live in [docs/deploy.md](docs/deploy.md).
+The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed. The agent, bridge, five memory timers and reminder dispatcher run as systemd user units on your box — operations live in [docs/deploy.md](docs/deploy.md).
 
 ## Providers & cost
 
@@ -74,7 +74,7 @@ Four model providers. Pick one and fill its block in `.env`:
 | Provider | How you pay |
 |---|---|
 | OpenCode Zen | API key, pay-as-you-go with a monthly spend limit |
-| Ollama Cloud | API key, free tier or $20/mo Pro plan |
+| Ollama Cloud | API key; free and paid plans vary by region and date |
 | OpenRouter | API key, pay-as-you-go, 300+ models |
 | OpenAI (ChatGPT) | your Plus/Pro subscription, no API key |
 

@@ -48,10 +48,11 @@
   "operatingSystem": "Linux, macOS",
   "url": "https://mamysh.github.io/iva/",
   "image": "https://mamysh.github.io/iva/iva-og.png",
-  "softwareVersion": "0.2.4",
+  "softwareVersion": "0.2.5",
   "license": "https://github.com/mamysh/iva/blob/main/LICENSE",
   "codeRepository": "https://github.com/mamysh/iva",
-  "author": { "@type": "Person", "name": "mamysh", "url": "https://github.com/mamysh" },
+  "creator": { "@type": "Person", "name": "Shima (smixs)", "url": "https://github.com/smixs" },
+  "maintainer": { "@type": "Person", "name": "mamysh", "url": "https://github.com/mamysh" },
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
 }
 </script>
@@ -100,7 +101,7 @@
     <p class="sub">Lives in Telegram. Built on <a href="https://eve.dev/docs/introduction">eve</a>, with your own server and model provider.</p>
     <p>
       <a class="cta" href="https://github.com/mamysh/iva">Open on GitHub</a>
-      <a class="cta alt" href="https://github.com/mamysh/iva#install">How to install</a>
+      <a class="cta alt" href="https://github.com/mamysh/iva#quick-start">How to install</a>
     </p>
   </header>
 
@@ -108,15 +109,16 @@
   <pre><code>curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash</code></pre>
 
   <h2>Why Iva</h2>
-  <p>Every agent out there hands you the same pile of choices: which model, which memory, which search,
-  how to wire it together. Too much choice is the real problem. So I made the choices: I test agents,
-  models and stacks all the time, keep what actually works, and fold it into Iva with simple defaults —
-  open code on open models (DeepSeek, Kimi, GLM), your key, no markup. The Linux Mint of AI agents: one
-  command, and it just works. This one's mine — now it's yours too.</p>
+  <p>Self-hosting an assistant usually means choosing a model, memory system, search stack and deployment
+  shape before the first useful message. Iva makes opinionated, inspectable defaults: open code, your
+  provider, your keys and a Markdown vault on your server. This fork continues
+  <a href="https://github.com/smixs/iva">Shima's original Iva</a>, integrating upstream releases with
+  reviewable production hardening.</p>
 
   <h2>What it can do</h2>
   <ul class="feat">
     <li>🎙️ <b>Voice &amp; video</b> — transcribes voice notes and video circles, understands many languages.</li>
+    <li>🧾 <b>Rich Telegram replies</b> — tables, checklists, collapsible blocks and formulas render natively, with a safe fallback.</li>
     <li>🧠 <b>Layered memory</b> — day → week → month → year, plus fact cards on people, projects and decisions; rewrites facts that change instead of piling up contradictions.</li>
     <li>🔎 <b>Ranked local recall</b> — BM25/FTS5 plus graph links; optional hybrid mode adds semantic embeddings.</li>
     <li>🧭 <b>Decision memory</b> — what you decided, when and why, with the old version kept dated as it changes.</li>
@@ -124,8 +126,9 @@
     <li>🛡️ <b>Safe by default</b> — forwards, files and web pages are screened for prompt-injection; secrets are scrubbed from replies.</li>
     <li>⏰ <b>On a schedule</b> — day or week digests, recurring jobs, inbox summaries, on time.</li>
     <li>🔔 <b>Reminders</b> — tell it what and when, it won't let you forget.</li>
+    <li>🧪 <b>Personal Telegram MCP (beta)</b> — optional, disabled by default and read-only unless you explicitly accept the account risk.</li>
     <li>🤖 <b>Your choice of model</b> — DeepSeek, Kimi, GLM and other open models.</li>
-    <li>🔒 <b>Private</b> — the code and the memory stay on your server, not in someone's cloud.</li>
+    <li>🔒 <b>Clear privacy boundary</b> — runtime and source memory stay on your server; only the cloud providers you configure receive the content they process.</li>
   </ul>
 
   <h2>Memory — the part that compounds</h2>
@@ -161,8 +164,8 @@
 
   <h2>Providers &amp; cost</h2>
   <p>Free and open-source. You pay only for a small always-on server (the PostgreSQL production profile
-  recommends at least 1 GB RAM) and the model service you choose: OpenCode Zen is pay-as-you-go, while Ollama Cloud has a free tier and
-  a $20/mo Pro plan. OpenRouter and a ChatGPT subscription are also supported. Voice runs on
+  recommends at least 1 GB RAM) and the model service you choose: OpenCode Zen and OpenRouter are pay-as-you-go,
+  while Ollama Cloud offers provider-defined plans. A ChatGPT subscription is also supported. Voice runs on
   <a href="https://console.deepgram.com">Deepgram</a> (free starter credit).</p>
 
   <p style="text-align:center; margin-top:40px">
@@ -171,7 +174,7 @@
 
   <footer>
     Built on <a href="https://eve.dev/docs/introduction">eve</a> · Open-source · MIT · <a href="https://github.com/mamysh/iva">github.com/mamysh/iva</a><br>
-    Grew out of <a href="https://github.com/smixs/agent-second-brain">agent-second-brain</a>
+    Originally created by <a href="https://github.com/smixs">Shima (smixs)</a> · Grew out of <a href="https://github.com/smixs/agent-second-brain">agent-second-brain</a>
   </footer>
 </div>
 </body>

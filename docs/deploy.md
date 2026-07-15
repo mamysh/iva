@@ -1,6 +1,7 @@
 # Deploy
 
-Iva runs on one VPS as two systemd user services and six timers. `install.sh` sets all of it up ([install](./install.md)); this page is what's actually running and how to operate it.
+The default self-host profile runs on one VPS as two systemd user services and six timers. `install.sh`
+sets them up ([install](./install.md)); the optional userbot adds a third service only when explicitly enabled.
 
 ## Transport: long polling
 
