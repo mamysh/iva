@@ -1,6 +1,8 @@
 # Install
 
-Everything between `curl` and a working bot. One command on a fresh server: the installer asks your language, walks you through five keys, and ends by messaging you from your own bot.
+Everything between `curl` and a working bot. One command on a fresh server: the installer asks your
+language, walks you through five keys, and finishes only after Eve and the Telegram bridge pass the
+readiness gate.
 
 ## Requirements
 
@@ -37,7 +39,10 @@ Five steps. Each key comes with a direct link to where it lives, and each is val
 - 🗂️ **Vault init** — your memory is created from `vault-template/` as a separate git repo, so personal data never enters the code repo.
 - ⚙️ **systemd user units** — the agent, Telegram bridge, five memory timers and reminder dispatcher, with linger enabled so they survive logout. Details: [deploy.md](deploy.md).
 - 🧰 **The `iva` command** — installed into `~/.local/bin`: `iva status`, `iva doctor`, `iva update`. Full reference: [cli.md](cli.md).
-- ✅ **Telegram confirmation** — the last thing the installer does is message you from your own bot: "Iva is installed and online. Send me a message — I'll reply." That's the success signal.
+- ✅ **Readiness verification** — the installer checks Eve health twice, both services, restart counts
+  and fresh startup journals. A direct Telegram API request is not treated as proof that Iva works.
+- 🧾 **Install report** — a private `0600` JSONL report under `~/.local/state/iva/` records completed,
+  pending and failed stages plus the generic resume command; it contains no credentials or logs.
 
 Re-running the same command later is safe: it reuses the existing checkout, fast-forwards it, and keeps `.env` and the vault untouched.
 
@@ -68,10 +73,13 @@ Skipped setup, or no terminal at install time:
 cd ~/iva && npm run setup
 ```
 
-Then re-run the install command above — it finds the existing checkout and finishes the build, the systemd units and the confirmation.
+The first run reports `Runtime installed, configuration pending`; it does not claim the bot is ready.
+Then re-run the install command above — it finds the existing checkout and finishes the build, units
+and readiness verification.
 
 ## Next steps
 
 - Every `.env` variable, defaults and warnings — [configuration.md](configuration.md)
 - The `iva` server CLI and Telegram commands — [cli.md](cli.md)
 - Transport, timers, webhook mode and operations — [deploy.md](deploy.md)
+- Installer stages and false-success cases — [install-testing.md](install-testing.md)

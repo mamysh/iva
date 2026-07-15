@@ -18,6 +18,7 @@ assert.match(workflow, /node-version: 24/);
 assert.match(workflow, /run: npm ci/);
 assert.match(workflow, /run: npm run verify:pr/);
 assert.match(workflow, /run: npm run replica:local/);
+assert.match(workflow, /run: npm run replica:install/);
 assert.doesNotMatch(workflow, /secrets\.|\.env|TELEGRAM|ASSISTANT_VAULT/i);
 
 assert.match(baselineWorkflow, /^  workflow_dispatch:$/m);

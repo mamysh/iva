@@ -39,6 +39,8 @@ This gate currently proves:
 - synthetic memory write and lexical recall;
 - Telegram HTML formatting, delivery request, and plain-text fallback;
 - the structural capability baseline from `npm run manifest`.
+- install readiness rejects incomplete configuration, failed health, inactive/restarting services
+  and fresh terminal startup errors.
 
 It does not prove that a model produced a reply or selected a tool. Those paths belong to the replica
 gate because they require a running Eve server and a deterministic provider.
@@ -73,8 +75,10 @@ database or credentials.
 
 The automated local replica currently proves a production build, first text reply, model-driven task
 tool selection, task persistence, and workflow restart/resume against a loopback-only deterministic
-OpenAI-compatible mock. The broader replica gate owns clean install and reinstall, local and
-PostgreSQL workflow continuity, SIGKILL recovery, and update/rollback tests.
+OpenAI-compatible mock. `npm run replica:install` additionally runs first install and reinstall in a
+disposable home with mock provider, Telegram and systemd boundaries, checking readiness, private-file
+modes and vault preservation. The broader replica gate still owns PostgreSQL workflow continuity,
+SIGKILL recovery, and update/rollback tests.
 The fixture is destroyed after the run. A dedicated test Telegram bot may be used for a small live
 delivery canary, but it must not poll with the production bot token.
 

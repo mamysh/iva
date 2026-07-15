@@ -69,6 +69,8 @@ scripts/                     Install-time, polling, memory and maintenance progr
   daily-digest.ts            Digest entry point
   reminders-run.mjs          Short-lived reminder dispatcher
   workflow-smoke.mjs         Seed/resume workflow durability check
+  install-readiness.mjs      Post-install Eve/service readiness gate
+  clean-install-smoke.mjs    Disposable first-install and reinstall fixture
   init-vault.mjs             Safe live-vault initialization
   memory/                    Rollup, doctor and embedding-index jobs
   lib/                       Shared implementation modules used by CLI/scripts/agent
@@ -243,6 +245,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | `check-integration-invariants.mjs` | Cross-file service/security invariants. |
 | `check-capability-manifest.mjs` | Sanitized capability snapshot and required core surface. |
 | `check-core-canaries.mjs` | Isolated task, reminder, memory and mocked Telegram behavior. |
+| `check-install-readiness.mjs` | Installer false-success decision matrix and shell contract. |
 | `check-test-policy.mjs` | CI workflow, verification command and testing-policy contract. |
 | `check-public-docs.mjs` | Versions, public claims, local links and secret patterns. |
 
@@ -253,6 +256,8 @@ Additional tests:
 - `npm run verify:pr` is the standard pull-request gate: tests, typecheck and build.
 - `npm run replica:local` builds and starts a disposable Eve replica with a loopback mock provider;
   it checks first reply, a model-driven task call and local workflow restart/resume.
+- `npm run replica:install` runs the installer twice in a disposable home with mock provider,
+  Telegram and systemd boundaries; it checks readiness, `0600` files and vault preservation.
 - `npm run baseline:resources -- --json` runs 100 deterministic replica turns and reports sanitized
   build/start/first-response, idle CPU/RSS and workflow-state sizes.
 - `python3 -m unittest services/telegram-userbot/test_guardrails.py` checks userbot guardrails.
