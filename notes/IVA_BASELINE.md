@@ -18,10 +18,28 @@ The capability snapshot records 10 tools, 6 skills, 2 hooks, 2 channels, 1 conne
 
 ## Resource baseline
 
-Resource numbers must ultimately be gathered on a clean supported Linux fixture. The disposable
-collector has also produced the following developer reference; it is useful for validating the
-procedure but is not the immutable release baseline because the worktree was dirty and the Mac used
-Node 26 rather than the product's Node 24 contract.
+### Release baseline
+
+- Captured: `2026-07-15T17:37:44.623Z`
+- Source commit: `1ec153b1f34211000554ee480f89f74cabd3755b` (`main`, clean checkout)
+- Fixture: `linux-x64`, Node `v24.18.0`, local workflow, loopback mock provider
+- Workload: 10 batches of 10 independent turns with server restart between batches
+- GitHub Actions run: `29437151972`
+
+| Measurement | Observed value |
+|---|---:|
+| Build duration | 4,296 ms |
+| Startup to health | 1,530 ms |
+| First response | 392 ms |
+| Idle server CPU | 17.1% sample |
+| Idle server RSS | 275,820 KiB |
+| Workflow state after 1 turn | 148,792 bytes |
+| Workflow state after 10 turns | 1,889,907 bytes |
+| Workflow state after 100 turns | 19,178,248 bytes |
+
+The disposable collector also produced the following developer reference. It remains useful for
+comparing the procedure across machines, but it is not the release baseline because the worktree was
+dirty and the Mac used Node 26 rather than the product's Node 24 contract.
 
 ### Developer reference (not a release gate)
 
@@ -41,9 +59,6 @@ Node 26 rather than the product's Node 24 contract.
 | Workflow state after 10 turns | 1,878,218 bytes |
 | Workflow state after 100 turns | 19,205,780 bytes |
 
-The authoritative Ubuntu/Node 24 result remains pending until the tracked resource-baseline workflow
-runs on an immutable commit.
-
 ### Follow-up observation
 
 A preliminary long single-session run on the developer Mac exposed stale `session.waiting` stream
@@ -54,10 +69,10 @@ observability stages; it must be reproduced on Ubuntu/Node 24 before assigning s
 
 | Measurement | State | Fixture/procedure |
 |---|---|---|
-| Idle CPU and RSS | developer reference captured; Ubuntu pending | clean Ubuntu fixture, local profile; longer soak belongs to stage 8 |
-| `.workflow-data` after 1/10/100 turns | developer reference captured; Ubuntu pending | local profile with deterministic mock-provider turns |
-| Start and first-response time | developer reference captured; Ubuntu pending | mock provider for infrastructure timing; live-provider canary recorded separately |
-| Build duration | developer reference captured; Ubuntu pending | clean dependency cache on the Ubuntu fixture |
+| Idle CPU and RSS | release baseline captured | clean Ubuntu fixture, local profile; longer soak belongs to stage 8 |
+| `.workflow-data` after 1/10/100 turns | release baseline captured | local profile with deterministic mock-provider turns |
+| Start and first-response time | release baseline captured | mock provider for infrastructure timing; live-provider canary recorded separately |
+| Build duration | release baseline captured | clean dependency cache on the Ubuntu fixture |
 
 The fixture report must record immutable commit, OS/architecture, Node version, storage profile,
 provider mode, sample count, and measurement commands. Secrets, user identifiers, transcripts, vault
