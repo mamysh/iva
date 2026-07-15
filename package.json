@@ -23,8 +23,13 @@
     "memory": "node --env-file=.env scripts/memory/rollup.ts",
     "doctor": "node --env-file=.env scripts/memory/doctor.ts",
     "workflow:smoke": "node --env-file=.env scripts/workflow-smoke.mjs",
+    "manifest": "node scripts/capability-manifest.mjs",
+    "canary:core": "node scripts/check-core-canaries.mjs",
+    "replica:local": "node scripts/replica-smoke.mjs",
+    "baseline:resources": "node scripts/replica-smoke.mjs --baseline",
+    "verify:pr": "npm test && npm run typecheck && npm run build",
     "typecheck": "tsgo",
-    "test": "node scripts/check-reasoning-strip.mjs && node scripts/check-workflow-config.mjs && node scripts/check-reminders-store.mjs && node scripts/check-telegram-update.mjs && node scripts/check-memory-guards.mjs && node scripts/check-integration-invariants.mjs && node scripts/check-public-docs.mjs",
+    "test": "node scripts/check-reasoning-strip.mjs && node scripts/check-workflow-config.mjs && node scripts/check-reminders-store.mjs && node scripts/check-telegram-update.mjs && node scripts/check-memory-guards.mjs && node scripts/check-integration-invariants.mjs && node scripts/check-capability-manifest.mjs && node scripts/check-core-canaries.mjs && node scripts/check-test-policy.mjs && node scripts/check-public-docs.mjs",
     "postinstall": "patch-package"
   },
   "dependencies": {

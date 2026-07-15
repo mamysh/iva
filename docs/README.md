@@ -11,6 +11,7 @@ Iva is a self-hosted Telegram AI assistant with layered memory that turns your m
 - [userbot.md](userbot.md) — beta personal-account Telegram MCP proxy, tool surface and risks
 - [cli.md](cli.md) — Telegram slash commands and the `iva` CLI
 - [extending.md](extending.md) — skills, MCP connections, custom tools
+- [testing.md](testing.md) — pull-request canaries, disposable replica, production release gates
 - [faq.md](faq.md) — short answers on cost, models, privacy, Obsidian
 - [troubleshooting.md](troubleshooting.md) — a silent bot, failed timers, provider errors
 

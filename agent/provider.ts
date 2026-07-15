@@ -12,7 +12,9 @@ const PROVIDER = process.env.MODEL_PROVIDER ?? "ollama";
 
 const PROVIDERS = {
   ollama: {
-    baseURL: "https://ollama.com/v1",
+    // Override is useful for self-hosted OpenAI-compatible Ollama endpoints and the isolated
+    // replica harness. The default remains Ollama Cloud.
+    baseURL: process.env.OLLAMA_BASE_URL ?? "https://ollama.com/v1",
     apiKey: process.env.OLLAMA_API_KEY,
     textModel: process.env.OLLAMA_MODEL ?? "deepseek-v4-pro",
     contextWindow: Number(process.env.OLLAMA_CONTEXT_WINDOW ?? 131072),
