@@ -45,6 +45,14 @@ For `codex` there is no API key in `.env`: run `iva login` (device code, headles
 
 The allowlist is **fail-closed: empty means Iva answers nobody.** The wizard auto-discovers your ID the moment you message the bot; or ask [@userinfobot](https://t.me/userinfobot). Why fail-closed matters: [security.md](./security.md).
 
+### Personal Telegram userbot (beta, opt-in)
+
+The personal-account MCP proxy is shipped but disabled in the production profile. It is separate from
+the ordinary Telegram bot above and must never be required for normal startup, doctor, polling or
+reminders. If it is evaluated later, begin on a test account with `TELEGRAM_EXPOSED_TOOLS=read-only`;
+`all` exposes account mutations and requires a separate security review. The proxy is restricted to
+loopback and its upstream dependency is pinned to an exact audited commit. See [userbot.md](./userbot.md).
+
 ## Voice
 
 | Variable | Default | Notes |

@@ -1,6 +1,6 @@
 {
   "name": "iva",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "bin": {
     "iva": "bin/iva.mjs"
@@ -24,7 +24,7 @@
     "doctor": "node --env-file=.env scripts/memory/doctor.ts",
     "workflow:smoke": "node --env-file=.env scripts/workflow-smoke.mjs",
     "typecheck": "tsgo",
-    "test": "node scripts/check-reasoning-strip.mjs && node scripts/check-workflow-config.mjs && node scripts/check-reminders-store.mjs",
+    "test": "node scripts/check-reasoning-strip.mjs && node scripts/check-workflow-config.mjs && node scripts/check-reminders-store.mjs && node scripts/check-telegram-update.mjs && node scripts/check-integration-invariants.mjs",
     "postinstall": "patch-package"
   },
   "dependencies": {

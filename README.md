@@ -30,6 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash
 
 - 🎙️ **Voice** — voice, audio and video notes transcribed with Deepgram nova-3; auto-detects ru/uz/en.
 - 👁️ **Vision** — photos described by your provider's own vision model; no extra key, no extra bill.
+- 🧾 **Rich replies** — tables, checklists, collapsible blocks and formulas render natively in Telegram via Bot API 10.1 rich messages; plain formatting keeps its proven path, with a graceful fallback.
 - 🧠 **Layered memory** — remembers across months, not just the current chat window.
 - 📇 **Personal CRM** — who your people are, what you agreed, when to follow up.
 - 🔎 **Search by meaning** — BM25 plus link-graph rerank, any language; optional vector mode with one key.
@@ -38,6 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash
 - 🌐 **Web search** — four pluggable providers: Tavily, Exa, Parallel or Brave.
 - 📮 **Google Workspace** — Gmail, Calendar, Drive, Sheets and Docs from chat via the `gws` CLI; installed for you, with a guided key setup right in the conversation.
 - 🧩 **Skills & MCP** — drop one file to add a procedure or connect an MCP server; keys stay in `.env`.
+- 🧪 **Personal Telegram — userbot (beta)** — optionally read from your *own* account, not just the bot; connect by chat (QR, no terminal). It is disabled in the production profile and defaults to read-only. Sending is a separate high-risk opt-in. Rough and buggy — **at your own risk**. [Details](docs/userbot.md).
 - 🛡️ **Safe to forward** — links, PDFs and other people's messages are screened before the model reads them.
 - 📊 **Token accounting** — every model step is logged; `/usage` reports it for free.
 
@@ -90,7 +92,7 @@ Inbound content passes a prompt-injection sanitizer, every reply passes a secret
 
 | In Telegram | On the server |
 |---|---|
-| `/help` · `/task` · `/reminders` · `/digest` · `/new` · `/usage` | `iva status` · `iva update` · `iva reminders` · `iva doctor` · `iva logs` |
+| `/help` · `/task` · `/reminders` · `/digest` · `/new` · `/update` · `/usage` | `iva status` · `iva update` · `iva reminders` · `iva userbot` · `iva doctor` · `iva logs` |
 
 Full reference, including `/usage` breakdowns by model and by source: [docs/cli.md](docs/cli.md).
 
