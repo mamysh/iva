@@ -7,7 +7,10 @@
 // Requires: a running agent (eve start) and a vault with processing rules
 // (vault/.claude/rules/*-format.md + skills/dbrain-processor). Date is in ASSISTANT_TIMEZONE.
 import { Client } from "eve/client";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { sendTelegramHtml } from "../lib/telegram-send.mjs";
+import { CORE_CAP, coreRecoveryAction } from "../lib/memory-guards.mjs";
 
 type Period = "daily" | "weekly" | "monthly" | "yearly";
 
@@ -27,6 +30,8 @@ const BOT = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT = process.env.TELEGRAM_DIGEST_CHAT_ID;
 const VAULT = process.env.ASSISTANT_VAULT_DIR ?? "vault";
 const TZ = process.env.ASSISTANT_TIMEZONE ?? process.env.TZ ?? "UTC";
+const CORE_PATH = resolve(VAULT, "CORE.md");
+const coreBefore = period === "daily" && existsSync(CORE_PATH) ? readFileSync(CORE_PATH, "utf8") : null;
 
 // daily/weekly reports go to Telegram; monthly/yearly are silent (vault only).
 const POST_TO_TELEGRAM: Record<Period, boolean> = {
@@ -143,6 +148,37 @@ const result = await response.result();
 if (result.status === "failed" || !result.message) {
   console.error(`rollup ${period}: agent returned no report (status=${result.status})`);
   process.exit(1);
+}
+
+// The prompt asks the agent to keep CORE small, but a prompt is not an invariant.
+// Give it one focused correction turn; if that still overshoots, restore the last
+// known-good CORE. The day's facts remain in cards/daily-summary, so rollback loses
+// no source memory and prevents a bloated always-on prompt.
+if (period === "daily" && existsSync(CORE_PATH)) {
+  let coreAfter = readFileSync(CORE_PATH, "utf8");
+  if (coreAfter.length > CORE_CAP) {
+    try {
+      const correction = await session.send(
+        `CORE.md is ${coreAfter.length}/${CORE_CAP} characters. Rewrite ONLY ${VAULT}/CORE.md now ` +
+          `to at most ${CORE_CAP} characters per .claude/rules/core-format.md. Preserve durable facts, ` +
+          `keep no more than three goals, drop stale lessons and event/task details, and do not edit other files.`,
+      );
+      await correction.result();
+    } catch (err) {
+      console.warn("rollup daily: CORE correction turn failed; applying recovery guard", err);
+    }
+    coreAfter = existsSync(CORE_PATH) ? readFileSync(CORE_PATH, "utf8") : "";
+    const action = coreRecoveryAction(coreBefore, coreAfter);
+    if (action === "restore") {
+      writeFileSync(CORE_PATH, coreBefore!, "utf8");
+      console.warn(`rollup daily: CORE still exceeded ${CORE_CAP}; restored the pre-rollup version`);
+    } else if (action === "fail") {
+      console.error(`rollup daily: CORE remains oversized and no valid pre-rollup version exists`);
+      process.exit(1);
+    } else {
+      console.log(`rollup daily: CORE compacted to ${coreAfter.length}/${CORE_CAP} characters`);
+    }
+  }
 }
 
 console.log(`rollup ${period} (${today}):\n${result.message}`);
