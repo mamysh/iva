@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "product": {
+    "name": "iva",
+    "version": "0.2.5"
+  },
+  "agent": {
+    "source": "agent/agent.ts",
+    "providerRoute": {
+      "selector": "MODEL_PROVIDER",
+      "default": "ollama",
+      "providers": [
+        "codex",
+        "ollama",
+        "opencode",
+        "openrouter"
+      ],
+      "textModelSource": "agent/agent.ts",
+      "visionModelSource": "agent/vision.ts",
+      "configurationSource": "agent/provider.ts"
+    },
+    "capabilities": {
+      "tools": [
+        "bash",
+        "glob",
+        "grep",
+        "memory_search",
+        "read_file",
+        "reminders",
+        "tasks",
+        "web_search",
+        "write_card",
+        "write_file"
+      ],
+      "skills": [
+        "agent-browser",
+        "google-workspace",
+        "morning-digest",
+        "security-defense",
+        "telegram-userbot",
+        "web-research"
+      ],
+      "hooks": [
+        "transcript",
+        "usage"
+      ],
+      "channels": [
+        "eve",
+        "telegram"
+      ],
+      "connections": [
+        "telegram-userbot"
+      ],
+      "subagents": [
+        "planner"
+      ]
+    }
+  },
+  "systemd": {
+    "managedServices": [
+      "iva-telegram-poll.service",
+      "iva.service"
+    ],
+    "managedTimers": [
+      "iva-memory-daily.timer",
+      "iva-memory-doctor.timer",
+      "iva-memory-monthly.timer",
+      "iva-memory-weekly.timer",
+      "iva-memory-yearly.timer",
+      "iva-reminders.timer"
+    ],
+    "timerTriggeredServices": [
+      "iva-memory-daily.service",
+      "iva-memory-doctor.service",
+      "iva-memory-monthly.service",
+      "iva-memory-weekly.service",
+      "iva-memory-yearly.service",
+      "iva-reminders.service"
+    ],
+    "optionalServices": [
+      "iva-telegram-userbot.service"
+    ],
+    "templates": [
+      "iva-memory-daily.service",
+      "iva-memory-daily.timer",
+      "iva-memory-doctor.service",
+      "iva-memory-doctor.timer",
+      "iva-memory-monthly.service",
+      "iva-memory-monthly.timer",
+      "iva-memory-weekly.service",
+      "iva-memory-weekly.timer",
+      "iva-memory-yearly.service",
+      "iva-memory-yearly.timer",
+      "iva-reminders.service",
+      "iva-reminders.timer",
+      "iva-telegram-poll.service",
+      "iva-telegram-userbot.service"
+    ]
+  },
+  "storage": {
+    "selector": [
+      "WORKFLOW_TARGET_WORLD",
+      "IVA_WORKFLOW_WORLD"
+    ],
+    "defaultProfile": "local",
+    "profiles": [
+      {
+        "name": "local",
+        "world": "@workflow/world-local",
+        "bundled": true
+      },
+      {
+        "name": "postgres",
+        "world": "@workflow/world-postgres",
+        "bundled": false,
+        "optIn": true
+      }
+    ],
+    "configurationSource": "scripts/lib/workflow-config.mjs"
+  },
+  "runtime": {
+    "node": "24.x",
+    "eve": "0.11.10",
+    "workflow": [
+      {
+        "name": "@workflow/errors",
+        "version": "5.0.0-beta.10"
+      },
+      {
+        "name": "@workflow/serde",
+        "version": "4.1.0"
+      },
+      {
+        "name": "@workflow/utils",
+        "version": "5.0.0-beta.6"
+      },
+      {
+        "name": "@workflow/world",
+        "version": "5.0.0-beta.17"
+      },
+      {
+        "name": "@workflow/world-local",
+        "version": "5.0.0-beta.25"
+      },
+      {
+        "name": "@workflow/world-postgres",
+        "version": "5.0.0-beta.23"
+      }
+    ]
+  }
+}
