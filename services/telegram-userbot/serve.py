@@ -90,6 +90,8 @@ def main() -> None:
     os.umask(0o077)
 
     host = os.getenv("TELEGRAM_MCP_HOST", "127.0.0.1")
+    if host not in {"127.0.0.1", "::1", "localhost"}:
+        _fail("TELEGRAM_MCP_HOST must stay on loopback (127.0.0.1, ::1, or localhost)")
     port = int(os.getenv("TELEGRAM_MCP_PORT", "8724"))
     token = _resolve_token()
     if not token:
@@ -104,8 +106,10 @@ def main() -> None:
     from telegram_mcp.runtime import mcp, get_client, _apply_exposed_tools_mode
     import telegram_mcp.tools  # noqa: F401 — registers all tools with `mcp`
 
-    # Honor TELEGRAM_EXPOSED_TOOLS (e.g. "read-only"); upstream normally does this in
-    # its runner, which we bypass. Default "all".
+    # This deployment is fail-closed for account mutations. Upstream defaults to "all"
+    # for compatibility, but an absent setting here means read-only; write access must be
+    # opted into explicitly after a separate review.
+    os.environ.setdefault("TELEGRAM_EXPOSED_TOOLS", "read-only")
     removed = _apply_exposed_tools_mode(mcp)
     if removed:
         print(f"telegram-userbot: read-only mode, pruned {len(removed)} write tools", file=sys.stderr)
@@ -120,9 +124,10 @@ def main() -> None:
 
     # Enforce the anti-ban safety guide as server behavior (FloodWait compliance,
     # pacing, circuit-breaker) by wrapping the client's outbound methods in place.
-    from guardrails import install_guardrails
+    from guardrails import AccountHealth, install_guardrails
 
-    install_guardrails(client)
+    health_path = session_path.parent / "telegram-userbot-health.json"
+    install_guardrails(client, health=AccountHealth(state_path=health_path))
 
     import uvicorn
     from starlette.middleware.base import BaseHTTPMiddleware

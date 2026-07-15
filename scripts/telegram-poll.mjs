@@ -15,6 +15,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readEntries, summarize, formatUsageReport, parseWindow } from "./lib/usage.mjs";
 import { loadReminders, formatReminder } from "./lib/reminders-store.mjs";
+import { CONTROL_COMMANDS, checkDeploymentUpdate, parseUpdateAction } from "./lib/telegram-update.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW_DIR = join(ROOT, ".workflow-data");
@@ -161,31 +162,15 @@ async function restartAgent() {
 }
 
 // ── self-update (/update) ──────────────────────────────────────────────────
-// git in ROOT; resolves to trimmed stdout ("" on error) so callers can compare safely.
+// git in ROOT. Fail loudly: treating a failed fetch/rev-parse as empty output can falsely
+// report "latest version" and hide the only useful diagnostic from the owner.
 function git(...args) {
-  return new Promise((resolve) =>
-    execFile("git", ["-C", ROOT, ...args], { maxBuffer: 1 << 20 }, (_e, out) => resolve((out || "").trim())),
+  return new Promise((resolve, reject) =>
+    execFile("git", ["-C", ROOT, ...args], { maxBuffer: 1 << 20 }, (err, out, stderr) => {
+      if (err) return reject(new Error((stderr || err.message || "git failed").toString().trim()));
+      resolve((out || "").trim());
+    }),
   );
-}
-const pkgVersion = (jsonText) => {
-  try {
-    return JSON.parse(jsonText).version || null;
-  } catch {
-    return null;
-  }
-};
-
-// Compare local HEAD against the upstream branch. Fetches first (network). `hasUpdate`
-// is true only when upstream is strictly ahead — local-ahead / equal ⇒ nothing to do.
-async function checkUpstream() {
-  const branch = (await git("rev-parse", "--abbrev-ref", "HEAD")) || "main";
-  await git("fetch", "--prune", "origin", branch);
-  const local = await git("rev-parse", "HEAD");
-  const remote = await git("rev-parse", `origin/${branch}`);
-  const behind = Number(await git("rev-list", "--count", `HEAD..origin/${branch}`)) || 0;
-  const localVer = pkgVersion(await git("show", "HEAD:package.json"));
-  const remoteVer = pkgVersion(await git("show", `origin/${branch}:package.json`));
-  return { branch, local, remote, behind, localVer, remoteVer, hasUpdate: behind > 0 && local !== remote };
 }
 
 // Run `iva update` in its OWN transient systemd scope, so it survives the restart of
@@ -208,7 +193,7 @@ async function handleUpdateCheck(chatId) {
   await reply(chatId, "Checking for updates…");
   let info;
   try {
-    info = await checkUpstream();
+    info = await checkDeploymentUpdate(git);
   } catch (e) {
     await reply(chatId, "Couldn't check for updates: " + e.message);
     return;
@@ -240,7 +225,11 @@ async function handleUpdateCallback(cq) {
   const messageId = cq.message?.message_id;
   await tg("answerCallbackQuery", { callback_query_id: cq.id }); // clear the button spinner
   if (ALLOWED.size === 0 || !ALLOWED.has(from)) return true; // swallow untrusted taps
-  const action = cq.data.slice("iva_update:".length);
+  const action = parseUpdateAction(cq.data);
+  if (!action) {
+    await tg("editMessageText", { chat_id: chatId, message_id: messageId, text: "Update action is invalid or expired." });
+    return true;
+  }
   if (action === "skip") {
     await tg("editMessageText", { chat_id: chatId, message_id: messageId, text: "Update skipped." });
     return true;
@@ -268,7 +257,7 @@ async function handleControl(update) {
   const text = (msg?.text || "").trim();
   if (!text.startsWith("/")) return false;
   const cmd = text.split(/\s+/)[0].replace(/@\w+$/, "").toLowerCase();
-  if (!["/help", "/usage", "/reminders", "/restart", "/new", "/clear", "/compact", "/update"].includes(cmd)) return false;
+  if (!CONTROL_COMMANDS.includes(cmd)) return false;
   const from = String(msg?.from?.id ?? "");
   if (ALLOWED.size === 0 || !ALLOWED.has(from)) return false; // untrusted — let eve drop it
   const chatId = msg?.chat?.id;

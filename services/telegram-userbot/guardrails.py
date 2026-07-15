@@ -16,8 +16,10 @@ Reads are NOT wrapped (reading is safe).
 """
 import asyncio
 import functools
+import json
 import random
 import time
+from pathlib import Path
 
 from telethon.errors import FloodWaitError
 
@@ -38,10 +40,41 @@ class GuardrailTripped(RuntimeError):
 class AccountHealth:
     """Tracks FloodWaits in a rolling 24h window and opens a circuit-breaker."""
 
-    def __init__(self) -> None:
+    def __init__(self, state_path=None) -> None:
+        self._state_path = Path(state_path) if state_path else None
         self._floods: list[float] = []
         self.paused_until = 0.0
         self.sends = 0
+        self._load()
+
+    def _load(self) -> None:
+        if not self._state_path or not self._state_path.exists():
+            return
+        try:
+            data = json.loads(self._state_path.read_text())
+            self._floods = [float(t) for t in data.get("floods", [])]
+            self.paused_until = float(data.get("paused_until", 0.0))
+            self.sends = int(data.get("sends", 0))
+            self._prune(time.time())
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            # A corrupt metric file must not prevent read-only access or proxy startup.
+            self._floods = []
+            self.paused_until = 0.0
+            self.sends = 0
+
+    def _persist(self) -> None:
+        if not self._state_path:
+            return
+        self._state_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(
+                {"floods": self._floods, "paused_until": self.paused_until, "sends": self.sends},
+                separators=(",", ":"),
+            )
+        )
+        tmp.chmod(0o600)
+        tmp.replace(self._state_path)
 
     def _prune(self, now: float) -> None:
         self._floods = [t for t in self._floods if now - t < _DAY]
@@ -52,6 +85,7 @@ class AccountHealth:
         self._prune(now)
         if len(self._floods) >= _MAX_FLOODS_PER_DAY:
             self.paused_until = now + _DAY
+        self._persist()
 
     def should_stop(self, now: "float | None" = None) -> bool:
         now = time.time() if now is None else now
@@ -93,7 +127,9 @@ def _wrap(original, health, sleep, rand, lock=None):
                     f"Отправка приостановлена анти-бан защитой: {_MAX_FLOODS_PER_DAY} FloodWait "
                     f"за сутки. Возобновление через ~{mins} мин. Пока — только чтение."
                 )
+            attempted = False
             try:
+                attempted = True
                 result = await original(*args, **kwargs)
             except FloodWaitError as exc:
                 health.record_flood()
@@ -103,9 +139,22 @@ def _wrap(original, health, sleep, rand, lock=None):
                         f"стоп отправок на 24ч."
                     ) from exc
                 await sleep(exc.seconds * _FLOOD_BUFFER)
-                result = await original(*args, **kwargs)  # one compliant retry
+                try:
+                    result = await original(*args, **kwargs)  # one compliant retry
+                except FloodWaitError as retry_exc:
+                    health.record_flood()
+                    if health.should_stop():
+                        raise GuardrailTripped(
+                            f"Повторный FloodWait {retry_exc.seconds}s — достигнут лимит "
+                            f"{_MAX_FLOODS_PER_DAY}/сутки, стоп отправок на 24ч."
+                        ) from retry_exc
+                    raise
+            finally:
+                # Pace failures too: a caller retry-loop must not create a tight burst.
+                if attempted:
+                    await sleep(rand(_MIN_DELAY, _MAX_DELAY))
             health.sends += 1
-            await sleep(rand(_MIN_DELAY, _MAX_DELAY))
+            health._persist()
             return result
 
     return wrapper

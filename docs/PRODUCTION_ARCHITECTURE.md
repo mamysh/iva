@@ -1,6 +1,6 @@
 # Production architecture
 
-This is the architecture of the final `main` branch. It combines Iva v0.2.4 with the self-host
+This is the architecture of the final `main` branch. It combines Iva v0.2.5 with the self-host
 hardening needed by the running single-user VPS; it is not a PR handoff or a list of unmerged ideas.
 
 ## Origin and upstream
@@ -44,7 +44,10 @@ Git's recorded conflict resolutions (`rerere`) are enabled locally to make repea
 - Voice: Deepgram transcription; vision uses the selected provider's compatible vision path.
 - Web search: the selected API provider with a graceful DuckDuckGo fallback.
 - Google Workspace: the optional `gws` CLI skill, configured only when the owner explicitly connects it.
-- Telegram MCP is **not** part of this branch. Do not describe it as a supported product capability until it has a separate security-reviewed integration.
+- Telegram userbot/MCP code is present as a **beta, opt-in** integration, but it is disabled on the
+  production VPS and is not part of the supported production profile. Its systemd unit is never included
+  in the normal service set. Any future enablement requires a separate security review and starts in
+  `TELEGRAM_EXPOSED_TOOLS=read-only` mode on a test account.
 
 ## Portable defaults vs the running production profile
 

@@ -12,10 +12,12 @@ natively (`agent/connections/telegram-userbot.ts`).
 > ⚠️ **Account-ban risk.** Automating a personal account violates Telegram's ToS and can
 > get the account **banned** — especially for sending. Reading is far safer.
 >
-> A **built-in anti-ban guardrail is enforced server-side** (`guardrails.py`) — not just
+> A **built-in anti-ban guardrail is enforced server-side** (`guardrails.py`) for the
+> permitted send methods — not just
 > advice: FloodWait compliance (wait ×1.3, retry once), a randomized delay after every send
 > (fixed-interval bots get flagged), and a circuit-breaker that pauses sending after 3
-> FloodWaits in 24h. The agent physically cannot bypass it. Limits are still per-account, so
+> FloodWaits in 24h; its state survives proxy restarts. The default MCP surface is read-only.
+> Enabling the full upstream mutation surface requires a separate security review. Limits are still per-account, so
 > behave like a human. Full rules: `agent/skills/telegram-userbot/safety.md`.
 
 ## Connect — just chat with the bot
@@ -43,8 +45,9 @@ iva userbot off      # stop and disable the proxy
 
 ## Safety knobs
 
-- `TELEGRAM_EXPOSED_TOOLS=read-only` in `.env` — the agent can read/search but physically
-  cannot send or mutate (the proxy prunes all write tools). Onboarding still works.
+- `TELEGRAM_EXPOSED_TOOLS=read-only` is the default — the agent can read/search but cannot
+  send or mutate through MCP (the proxy prunes all write tools). Onboarding still works.
+  Setting `all` is an explicit high-risk opt-in and is not part of the production profile.
 - `TELEGRAM_MCP_PORT` (default `8724`), `TELEGRAM_USERBOT_QR_CHAT_ID` (defaults to the first
   of `TELEGRAM_ALLOWED_USER_IDS`). The default needs no config. If you set a custom port,
   run `iva userbot setup` (restarts the proxy) **and** `iva restart` (iva reads the port from
@@ -62,5 +65,6 @@ iva userbot off      # stop and disable the proxy
 - **Enforced anti-ban.** `guardrails.py` wraps the outbound methods (`send_message`,
   `send_file`, `forward_messages`) with FloodWait compliance, randomized pacing, and a
   circuit-breaker (3 FloodWaits in 24h → sending pauses).
-- Built on [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp) `v3.2.0`
-  (116 tools), pinned in `services/telegram-userbot/requirements.txt`.
+- Built on [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp) release `v3.2.0`
+  (116 tools), pinned to audited commit `f1a2d8e00a7f127bb7702655c58fdfcee7e73a5a`
+  in `services/telegram-userbot/requirements.txt`.

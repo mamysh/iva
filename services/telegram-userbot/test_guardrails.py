@@ -6,6 +6,8 @@ Covers the load-bearing behaviors:
   3. A shared lock serializes concurrent sends so a burst is spaced, not simultaneous.
 """
 import asyncio
+import tempfile
+from pathlib import Path
 
 from telethon.errors import FloodWaitError
 
@@ -46,6 +48,16 @@ async def _run():
         h2.record_flood(now=t0 + i)
     assert h2.should_stop(now=t0 + 100), "3 floods must open the breaker"
     assert not h2.should_stop(now=t0 + 24 * 3600 + 10), "breaker must lift after 24h"
+
+    # The rolling FloodWait window and open breaker survive a proxy restart.
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "health.json"
+        persisted = AccountHealth(state_path=state)
+        for _ in range(_MAX_FLOODS_PER_DAY):
+            persisted.record_flood()
+        reloaded = AccountHealth(state_path=state)
+        assert reloaded.should_stop(), "persisted breaker must remain open after restart"
+        assert state.stat().st_mode & 0o777 == 0o600, "health state must be private"
 
     async def never(*a, **k):
         raise AssertionError("original must not run while breaker is open")
