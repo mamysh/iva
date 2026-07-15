@@ -40,6 +40,8 @@ for (const mutation of [
 }
 
 const install = readFileSync(new URL("../install.sh", import.meta.url), "utf8");
+const setup = readFileSync(new URL("./setup.mjs", import.meta.url), "utf8");
+const oauth = readFileSync(new URL("./lib/codex-oauth.mjs", import.meta.url), "utf8");
 const stages = [...install.matchAll(/^\s*install_stage ([a-z]+)(?: .*)?$/gm)].map((match) => match[1]);
 assert.deepEqual(stages, [
   "preflight",
@@ -56,6 +58,11 @@ assert.deepEqual(stages, [
 assert.match(install, /scripts\/install-readiness\.mjs/);
 assert.match(install, /install-state\.jsonl/);
 assert.match(install, /chmod 600 "\$INSTALL_STATE_FILE"/);
+assert.match(install, /chmod 600 \.env/);
+assert.match(install, /chmod 600 deploy\/iva-workflow\.environment/);
+assert.match(setup, /chmod\(ENV_PATH, 0o600\)/);
+assert.match(oauth, /writeFileSync\(tmp, JSON\.stringify\(auth, null, 2\), \{ mode: 0o600 \}\)/);
+assert.match(oauth, /chmodSync\(tmp, 0o600\)/);
 assert.match(install, /install_stage build "npm run build && bash install\.sh"/);
 assert.match(install, /install_stage readiness "iva doctor && bash install\.sh"/);
 assert.doesNotMatch(install, /record_install_state[^\n]*(TOKEN|KEY|SECRET|PASSWORD)/i);
