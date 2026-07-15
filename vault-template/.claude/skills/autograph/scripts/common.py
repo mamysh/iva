@@ -236,6 +236,14 @@ def write_frontmatter(fields: dict, original_lines: list[str]) -> str:
 
     for line in original_lines:
         stripped = line.strip()
+        indented = line.startswith('  ') or line.startswith('\t')
+
+        # A folded/literal value may contain ':' in ordinary prose. Treat every
+        # indented line as continuation while rewriting the preceding key;
+        # otherwise such prose is mistaken for a new YAML key and duplicated on
+        # every maintenance pass.
+        if skip_continuation and indented:
+            continue
 
         if not stripped or stripped.startswith('#'):
             skip_continuation = False

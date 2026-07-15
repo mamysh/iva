@@ -441,6 +441,21 @@ def main():
         test("multiline double roundtrip: stable",
              fm_rt2.get('description') == fm_ml.get('description'),
              f"got: {fm_rt2.get('description')!r}")
+        # A colon inside continuation prose must not turn the line into a YAML
+        # key or make the description grow on repeated maintenance passes.
+        colon_fm = (
+            "---\ntype: note\ndescription: >-\n"
+            "  Route details: morning departure and evening arrival with enough text to remain folded\n"
+            "tags: [travel]\n---\n# Body\n"
+        )
+        fm_colon, _, orig_colon = parse_frontmatter(colon_fm)
+        rebuilt_colon = write_frontmatter(fm_colon, orig_colon)
+        fm_colon_rt, _, orig_colon_rt = parse_frontmatter(f"---\n{rebuilt_colon}\n---\n")
+        rebuilt_colon_twice = write_frontmatter(fm_colon_rt, orig_colon_rt)
+        fm_colon_rt2, _, _ = parse_frontmatter(f"---\n{rebuilt_colon_twice}\n---\n")
+        test("multiline colon roundtrip: stable",
+             fm_colon_rt2.get('description') == fm_colon.get('description'),
+             f"got: {fm_colon_rt2.get('description')!r}")
         # Literal block |- continuation lines skipped when key rewritten
         literal_fm = "---\ntype: note\ndescription: |-\n  Line one\n  Line two\ntags: [test]\n---\n"
         fm_lit, _, orig_lit = parse_frontmatter(literal_fm)
