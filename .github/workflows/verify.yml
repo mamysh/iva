@@ -34,3 +34,6 @@ jobs:
 
       - name: Run isolated local replica smoke
         run: npm run replica:local
+
+      - name: Run clean-install and reinstall smoke
+        run: npm run replica:install

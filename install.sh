@@ -32,6 +32,40 @@ ok()   { echo "${c_green}✓ $*${c_reset}"; }
 warn() { echo "${c_yellow}! $*${c_reset}"; }
 die()  { echo "${c_red}✗ $*${c_reset}" >&2; exit 1; }
 
+INSTALL_STATE_FILE=""
+INSTALL_RUN_ID=""
+CURRENT_INSTALL_STAGE=""
+CURRENT_RESUME_COMMAND=""
+
+begin_install_report() {
+  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/iva"
+  mkdir -p "$state_dir"
+  INSTALL_STATE_FILE="$state_dir/install-state.jsonl"
+  INSTALL_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  touch "$INSTALL_STATE_FILE"
+  chmod 600 "$INSTALL_STATE_FILE"
+}
+
+record_install_state() {
+  [ -n "$INSTALL_STATE_FILE" ] || return 0
+  local stage="$1" status="$2" resume="${3:-}" at
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"schemaVersion":1,"run":"%s","stage":"%s","status":"%s","at":"%s","resume":"%s"}\n' \
+    "$INSTALL_RUN_ID" "$stage" "$status" "$at" "$resume" >> "$INSTALL_STATE_FILE"
+}
+
+install_stage() {
+  CURRENT_INSTALL_STAGE="$1"
+  CURRENT_RESUME_COMMAND="${2:-bash install.sh}"
+  record_install_state "$1" started "$CURRENT_RESUME_COMMAND"
+}
+
+complete_stage() {
+  record_install_state "$1" completed ""
+  CURRENT_INSTALL_STAGE=""
+  CURRENT_RESUME_COMMAND=""
+}
+
 # Installer language and the agent's default reply language. Default is English (global audience);
 # asked as the FIRST question (pick_language below). t en ru — picks a string by language.
 IVA_LANG=en
@@ -76,9 +110,15 @@ IVA_TREE
 # (nvm normally does `return <non-zero>` internally — without removing the trap that's a false alarm).
 on_err() {
   local rc=$?
+  if [ -n "$CURRENT_INSTALL_STAGE" ]; then
+    record_install_state "$CURRENT_INSTALL_STAGE" failed "$CURRENT_RESUME_COMMAND"
+  fi
   echo >&2
   echo "${c_red}✗ $(t "Install aborted (code $rc). Failing command: ${BASH_COMMAND}" "Установка прервалась (код $rc). Упала команда: ${BASH_COMMAND}")${c_reset}" >&2
   echo "${c_yellow}  $(t "Copy the output above and send it over — we'll sort it out." "Скопируйте вывод выше и пришлите — разберёмся.")${c_reset}" >&2
+  if [ -n "$CURRENT_RESUME_COMMAND" ]; then
+    echo "${c_yellow}  $(t "Resume:" "Продолжить:") $CURRENT_RESUME_COMMAND${c_reset}" >&2
+  fi
 }
 trap on_err ERR
 
@@ -144,6 +184,7 @@ show_tree
 pick_language   # ← first question: language (default English), before any install
 echo "  ${c_green}Iva${c_reset} — $(t "your personal long-term-memory agent that just works" "личный агент с долговременной памятью, который просто работает")"
 echo "  ─────────────────────────────────────────────"
+begin_install_report
 
 # root runs directly; otherwise via sudo (cache the password once).
 run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
@@ -155,6 +196,7 @@ run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
 # active swap, just enable an existing /swapfile, and don't duplicate it in fstab.
 ensure_swap() {
   local ram_mb swap_mb free_mb total
+  [ "$(uname -s)" = Linux ] || return 0
   ram_mb=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
   swap_mb=$(awk '/SwapTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
   [ "${ram_mb:-0}" -ge 1500 ] && return 0          # enough memory
@@ -163,8 +205,7 @@ ensure_swap() {
   if [ ! -f /swapfile ]; then
     free_mb=$(df -Pm / 2>/dev/null | awk 'NR==2{print $4}')
     if [ "${free_mb:-0}" -lt 2600 ]; then
-      warn "$(t "Not enough free disk for a 2GB swapfile (${free_mb}MB free) — skipping. The build may OOM; free up space or use a bigger droplet." "Мало места под swapfile 2GB (свободно ${free_mb}МБ) — пропускаю. Сборка может упасть по OOM; освободите место или возьмите дроплет побольше.")"
-      return 0
+      die "$(t "Not enough free disk for required swap (${free_mb}MB free, need 2600MB). Free space and rerun install.sh." "Недостаточно места для обязательного swap (${free_mb}МБ свободно, нужно 2600МБ). Освободите место и повторите install.sh.")"
     fi
     run_root sh -c 'fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none' \
       || { warn "$(t "couldn't allocate /swapfile — skipping swap" "не смог создать /swapfile — пропускаю своп")"; return 0; }
@@ -177,13 +218,48 @@ ensure_swap() {
   total=$(awk '/SwapTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo "?")
   ok "$(t "Swap on (${total}MB total) — build will have headroom" "Своп включён (всего ${total}МБ) — сборке хватит памяти")"
 }
+
+preflight() {
+  local arch os free_mb
+  arch="$(uname -m)"
+  os="$(uname -s)"
+  case "$arch" in
+    x86_64|amd64|aarch64|arm64) ;;
+    *) die "$(t "Unsupported CPU architecture: $arch (supported: x86_64, arm64)." "Неподдерживаемая архитектура CPU: $arch (поддерживаются x86_64, arm64).")" ;;
+  esac
+  free_mb=$(df -Pm "$HOME" 2>/dev/null | awk 'NR==2{print $4}')
+  if [ "${free_mb:-0}" -lt 1800 ]; then
+    die "$(t "Not enough free disk (${free_mb}MB; need at least 1800MB before downloads)." "Недостаточно свободного места (${free_mb}МБ; до скачиваний нужно минимум 1800МБ).")"
+  fi
+  if [ "$os" = Linux ] && ! command -v systemctl >/dev/null 2>&1; then
+    die "$(t "systemd is required on a supported Linux VPS; systemctl was not found." "На поддерживаемом Linux VPS нужен systemd; systemctl не найден.")"
+  fi
+  ok "$(t "Preflight: $os $arch, ${free_mb}MB disk free" "Preflight: $os $arch, свободно ${free_mb}МБ")"
+}
+
+verify_memory_capacity() {
+  [ "$(uname -s)" = Linux ] || return 0
+  local ram_mb swap_mb total_mb
+  ram_mb=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
+  swap_mb=$(awk '/SwapTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
+  total_mb=$(( ${ram_mb:-0} + ${swap_mb:-0} ))
+  if [ "$total_mb" -lt 1500 ]; then
+    die "$(t "Not enough RAM+swap after preflight (${total_mb}MB; need at least 1500MB). Fix swap and rerun install.sh." "После preflight недостаточно RAM+swap (${total_mb}МБ; нужно минимум 1500МБ). Исправьте swap и повторите install.sh.")"
+  fi
+}
+
+install_stage preflight
+preflight
 ensure_swap
+verify_memory_capacity
+complete_stage preflight
 
 # ─────────────────────────────────────────────────────────────────────────
 # 1. System dependencies. Detect-then-install.
 #    ffmpeg is optional (nova-3 usually accepts video directly); pandoc/poppler are for
 #    extracting text from incoming docx/pdf files.
 # ─────────────────────────────────────────────────────────────────────────
+install_stage packages
 command -v curl >/dev/null || die "$(t "curl is required (install: apt/brew install curl)" "нужен curl (установи: apt/brew install curl)")"
 
 PM="none"
@@ -244,10 +320,12 @@ fi
 command -v git >/dev/null 2>&1 && ok "git $(git --version | awk '{print $3}')" || die "$(t "git still not installed" "git так и не установлен")"
 command -v gh  >/dev/null 2>&1 && ok "$(t "gh ready" "gh готов")" || warn "$(t "no gh — set up the vault git backup later" "gh нет — vault-бэкап в git настроишь позже")"
 command -v ffmpeg >/dev/null 2>&1 && ok "$(t "ffmpeg ready" "ffmpeg готов")" || warn "$(t "no ffmpeg (nova-3 usually accepts video directly)" "ffmpeg нет (nova-3 обычно принимает видео напрямую)")"
+complete_stage packages
 
 # ─────────────────────────────────────────────────────────────────────────
 # 2. uv (Python manager for the vault's autograph scripts)
 # ─────────────────────────────────────────────────────────────────────────
+install_stage runtime
 if command -v uv >/dev/null 2>&1 || [ -x "$HOME/.local/bin/uv" ]; then
   ok "$(t "uv already installed" "uv уже установлен")"
 else
@@ -290,10 +368,12 @@ if [ "$need_node" -eq 1 ]; then
 fi
 command -v node >/dev/null 2>&1 || die "$(t "Node $NODE_MAJOR_MIN+ failed to install. Install it manually (nvm install $NODE_MAJOR_MIN) and re-run." "Node $NODE_MAJOR_MIN+ не установился. Поставьте вручную (nvm install $NODE_MAJOR_MIN) и перезапустите.")"
 ok "Node $(node -v)"
+complete_stage runtime
 
 # ─────────────────────────────────────────────────────────────────────────
 # 4. Project code (current directory / update / clone)
 # ─────────────────────────────────────────────────────────────────────────
+install_stage checkout
 SOURCE="${BASH_SOURCE[0]:-}"
 SCRIPT_DIR=""
 if [ -n "$SOURCE" ] && [ -f "$SOURCE" ]; then
@@ -321,10 +401,12 @@ else
   PROJECT_DIR="$INSTALL_DIR"
 fi
 cd "$PROJECT_DIR"
+complete_stage checkout
 
 # ─────────────────────────────────────────────────────────────────────────
 # 5. npm dependencies
 # ─────────────────────────────────────────────────────────────────────────
+install_stage dependencies "npm ci && bash install.sh"
 step "$(t "Installing dependencies…" "Ставлю зависимости…")"
 if [ -f package-lock.json ]; then npm ci; else npm install; fi
 ok "$(t "Dependencies installed" "Зависимости установлены")"
@@ -332,6 +414,9 @@ ok "$(t "Dependencies installed" "Зависимости установлены"
 # ─────────────────────────────────────────────────────────────────────────
 # 5b. agent-browser (web automation: forms, logins, screenshots, scraping)
 # ─────────────────────────────────────────────────────────────────────────
+if [ "${IVA_INSTALL_SKIP_OPTIONAL:-false}" = true ]; then
+  warn "$(t "Skipping optional browser and Google Workspace CLIs for the install fixture" "Пропускаю необязательные browser и Google Workspace CLI для install-fixture")"
+else
 # The binary installs into npm-global; the path is needed here and in the service PATH (below).
 NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null)/bin"
 export PATH="$NPM_GLOBAL_BIN:$PATH"
@@ -377,32 +462,47 @@ if npm i -g @googleworkspace/cli@latest >/dev/null 2>&1 && command -v gws >/dev/
 else
   warn "$(t "couldn't install gws — Google-service tasks unavailable, everything else works (retry: npm i -g @googleworkspace/cli)" "не удалось поставить gws — задачи с Google-сервисами недоступны, остальное работает (повторить: npm i -g @googleworkspace/cli)")"
 fi
+fi
+complete_stage dependencies
 
 # ─────────────────────────────────────────────────────────────────────────
 # 6. Interactive setup (provider + model + Telegram + Deepgram + TZ + vault)
 #    Reads /dev/tty → works with `curl | bash` too. Without a terminal — defer it.
 # ─────────────────────────────────────────────────────────────────────────
-SETUP_DONE=false
+INSTALL_READY=false
+install_stage setup
 if [ "$RUN_SETUP" = false ]; then
   warn "$(t "Setup skipped (flag). Run it later: cd $PROJECT_DIR && npm run setup" "Настройка пропущена (флаг). Запустите потом: cd $PROJECT_DIR && npm run setup")"
 elif have_tty; then
   step "$(t "Setup…" "Настройка…")"
-  node scripts/setup.mjs < /dev/tty && SETUP_DONE=true
+  node scripts/setup.mjs < /dev/tty
 else
   warn "$(t "No terminal (/dev/tty) — skipping the wizard. Run it later: cd $PROJECT_DIR && npm run setup" "Нет терминала (/dev/tty) — пропускаю мастер. Запустите потом: cd $PROJECT_DIR && npm run setup")"
+fi
+if [ -f .env ]; then chmod 600 .env; fi
+if [ -f deploy/iva-workflow.environment ]; then chmod 600 deploy/iva-workflow.environment; fi
+if [ -f .env ]; then
+  complete_stage setup
+else
+  record_install_state setup pending "npm run setup, then rerun install.sh"
+  CURRENT_INSTALL_STAGE=""
+  CURRENT_RESUME_COMMAND=""
 fi
 
 # ─────────────────────────────────────────────────────────────────────────
 # 7. Build
 # ─────────────────────────────────────────────────────────────────────────
+install_stage build "npm run build && bash install.sh"
 step "$(t "Building the agent (eve build)…" "Собираю агента (eve build)…")"
 npm exec -- eve build
 ok "$(t "Build ready → .output" "Сборка готова → .output")"
+complete_stage build
 
 # ─────────────────────────────────────────────────────────────────────────
 # 8. Live vault: a SEPARATE private git repo (memory + backup + Obsidian)
 #    Created from vault-template/ (a skeleton in the code repo); personal data never enters the code repo.
 # ─────────────────────────────────────────────────────────────────────────
+install_stage vault "npm run init-vault && bash install.sh"
 VAULT_DIR_REL="$(grep -E '^ASSISTANT_VAULT_DIR=' .env 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' || true)"
 VAULT_DIR_REL="${VAULT_DIR_REL:-vault}"
 case "$VAULT_DIR_REL" in
@@ -410,7 +510,9 @@ case "$VAULT_DIR_REL" in
   *)  VAULT_PATH="$PROJECT_DIR/$VAULT_DIR_REL" ;;
 esac
 step "$(t "Preparing the live vault from the template…" "Готовлю live-vault из шаблона…")"
-ASSISTANT_VAULT_DIR="$VAULT_DIR_REL" node scripts/init-vault.mjs || warn "$(t "init-vault didn't run — check the vault manually" "init-vault не отработал — проверьте vault вручную")"
+ASSISTANT_VAULT_DIR="$VAULT_DIR_REL" node scripts/init-vault.mjs \
+  || die "$(t "Vault initialization failed. Fix the reported path and rerun install.sh." "Инициализация vault не прошла. Исправьте указанный путь и повторите install.sh.")"
+complete_stage vault
 
 # ─────────────────────────────────────────────────────────────────────────
 # 8.5. The `iva` command in ~/.local/bin (update/config/doctor/uninstall/...).
@@ -428,10 +530,16 @@ esac
 # ─────────────────────────────────────────────────────────────────────────
 # 9. systemd: the main service + timers (Linux). Requires a configured .env.
 # ─────────────────────────────────────────────────────────────────────────
+install_stage units "iva doctor && bash install.sh"
 if ! command -v systemctl >/dev/null 2>&1; then
-  : # not Linux/systemd — skip silently
+  record_install_state units pending "use a supported systemd host"
+  CURRENT_INSTALL_STAGE=""
+  CURRENT_RESUME_COMMAND=""
 elif [ ! -f .env ]; then
   warn "$(t "No .env — not setting up autostart. First: npm run setup, then re-run install.sh." "Нет .env — автозапуск не настраиваю. Сначала: npm run setup, потом перезапустите install.sh.")"
+  record_install_state units pending "npm run setup, then rerun install.sh"
+  CURRENT_INSTALL_STAGE=""
+  CURRENT_RESUME_COMMAND=""
 elif prompt_yes_no "$(t "Set up autostart via systemd (service + timers)?" "Завести автозапуск через systemd (сервис + таймеры)?")" yes; then
   # Delegate writing the units to the iva CLI — the single source of truth (see bin/iva.mjs writeUnits).
   step "$(t "Installing systemd units (via the iva CLI)…" "Ставлю systemd-юниты (через iva CLI)…")"
@@ -439,10 +547,12 @@ elif prompt_yes_no "$(t "Set up autostart via systemd (service + timers)?" "За
   poll_installed=1
   timers_installed=1
 
-  systemctl --user enable --now iva.service
+  systemctl --user enable iva.service
+  systemctl --user restart iva.service
   if [ "$poll_installed" -eq 1 ]; then
-    systemctl --user enable --now iva-telegram-poll.service \
-      && ok "$(t "Bot enabled and online" "Бот включён и на связи")" \
+    systemctl --user enable iva-telegram-poll.service
+    systemctl --user restart iva-telegram-poll.service \
+      && ok "$(t "Telegram bridge started" "Telegram-мост запущен")" \
       || warn "$(t "couldn't start iva-telegram-poll (manually: npm run poll)" "не удалось запустить iva-telegram-poll (вручную: npm run poll)")"
   fi
   if [ "$timers_installed" -eq 1 ]; then
@@ -454,34 +564,37 @@ elif prompt_yes_no "$(t "Set up autostart via systemd (service + timers)?" "За
     ok "$(t "Timers enabled: systemctl --user list-timers" "Таймеры включены: systemctl --user list-timers")"
   fi
   loginctl enable-linger "$USER" >/dev/null 2>&1 || warn "$(t "couldn't enable linger (the service won't start before login)" "не удалось включить linger (сервис не стартует до логина)")"
-  ok "$(t "Service started: systemctl --user status iva" "Сервис запущен: systemctl --user status iva")"
+  complete_stage units
 
-  # Instant confirmation in Telegram (direct Bot API — doesn't depend on the server).
-  _bot="$(grep -E '^TELEGRAM_BOT_TOKEN=' .env | head -n1 | cut -d= -f2- | tr -d '"' || true)"
-  _chat="$(grep -E '^TELEGRAM_DIGEST_CHAT_ID=' .env | head -n1 | cut -d= -f2- | tr -d '"' || true)"
-  if [ -z "$_chat" ]; then
-    _chat="$(grep -E '^TELEGRAM_ALLOWED_USER_IDS=' .env | head -n1 | cut -d= -f2- | tr -d '"' | cut -d, -f1 || true)"
+  install_stage readiness "iva doctor && bash install.sh"
+  step "$(t "Verifying Eve and service readiness…" "Проверяю готовность Eve и сервисов…")"
+  if node --env-file=.env scripts/install-readiness.mjs; then
+    INSTALL_READY=true
+    ok "$(t "Readiness verified" "Готовность подтверждена")"
+    complete_stage readiness
+  else
+    die "$(t "Readiness failed. Resume with: iva doctor && bash install.sh" "Проверка готовности не прошла. Продолжить: iva doctor && bash install.sh")"
   fi
-  if [ -n "$_bot" ] && [ -n "$_chat" ]; then
-    curl -s "https://api.telegram.org/bot$_bot/sendMessage" \
-      --data-urlencode "chat_id=$_chat" \
-      --data-urlencode "text=$(t "✅ Iva is installed and online. Send me a message — I'll reply." "✅ Iva установлена и на связи. Напишите мне сообщение — отвечу.")" >/dev/null 2>&1 \
-      && ok "$(t "Sent you a confirmation in Telegram — open the chat with the bot" "Отправил вам подтверждение в Telegram — откройте чат с ботом")" \
-      || warn "$(t "couldn't send the confirmation (the bot still works — just message it)" "не смог отправить подтверждение (бот всё равно работает — просто напишите ему)")"
-  fi
+else
+  record_install_state units pending "rerun install.sh and enable systemd units"
+  CURRENT_INSTALL_STAGE=""
+  CURRENT_RESUME_COMMAND=""
 fi
 
 # ─────────────────────────────────────────────────────────────────────────
 # 10. Final
 # ─────────────────────────────────────────────────────────────────────────
 echo
-echo "${c_green}${c_bold}┌──────────────────────────────────────────┐${c_reset}"
-echo "${c_green}${c_bold}│            $(t "✓ Installation complete   " "✓ Установка завершена      ")│${c_reset}"
-echo "${c_green}${c_bold}└──────────────────────────────────────────┘${c_reset}"
-echo
-if [ "$SETUP_DONE" != true ]; then
+if [ "$INSTALL_READY" = true ]; then
+  echo "  ${c_green}${c_bold}$(t "✅ Iva is ready" "✅ Iva готова")${c_reset} — $(t "Eve is healthy and the Telegram bridge is active." "Eve отвечает, Telegram-мост активен.")"
+elif [ ! -f .env ]; then
+  echo "  ${c_yellow}${c_bold}$(t "Runtime installed, configuration pending" "Runtime установлен, настройка не завершена")${c_reset}"
   echo "  ${c_yellow}${c_bold}$(t "Configure the keys first:" "Сначала настройте ключи:")${c_reset}  cd $PROJECT_DIR && npm run setup"
-  echo "  $(t "Then rebuild and start:" "Затем пересоберите и запустите:") npm run build && (systemctl --user restart iva)"
+  echo "  $(t "Then resume the installer:" "Затем продолжите установку:") cd $PROJECT_DIR && bash install.sh"
+  echo
+else
+  echo "  ${c_yellow}${c_bold}$(t "Runtime installed; readiness not verified" "Runtime установлен; готовность не подтверждена")${c_reset}"
+  echo "  $(t "Resume:" "Продолжить:") cd $PROJECT_DIR && iva doctor && bash install.sh"
   echo
 fi
 echo "  ${c_bold}$(t "Commands (${c_green}iva${c_reset}${c_bold} — from anywhere):" "Команды (${c_green}iva${c_reset}${c_bold} — из любого места):")${c_reset}"
@@ -495,7 +608,7 @@ echo "  ${c_yellow}${c_bold}$(t "Vault backup in git" "Vault-бэкап в git")
 echo "    gh auth login"
 echo "    gh repo create <user>/iva-vault --private --source=\"$VAULT_PATH\" --remote=origin --push"
 echo
-echo "  ${c_green}${c_bold}$(t "✅ The bot is ready" "✅ Бот готов")${c_reset} — $(t "just message it in Telegram." "просто напишите ему в Telegram.")"
 echo "    $(t "Bot status:" "Статус бота:")  systemctl --user status iva-telegram-poll"
 echo "    $(t "Bot logs:" "Логи бота:")    journalctl --user -u iva-telegram-poll -f"
+echo "    $(t "Install report:" "Отчёт установки:") $INSTALL_STATE_FILE"
 echo
