@@ -24,7 +24,7 @@
     "doctor": "node --env-file=.env scripts/memory/doctor.ts",
     "workflow:smoke": "node --env-file=.env scripts/workflow-smoke.mjs",
     "typecheck": "tsgo",
-    "test": "node scripts/check-reasoning-strip.mjs && node scripts/check-workflow-config.mjs && node scripts/check-reminders-store.mjs && node scripts/check-telegram-update.mjs && node scripts/check-integration-invariants.mjs",
+    "test": "node scripts/check-reasoning-strip.mjs && node scripts/check-workflow-config.mjs && node scripts/check-reminders-store.mjs && node scripts/check-telegram-update.mjs && node scripts/check-memory-guards.mjs && node scripts/check-integration-invariants.mjs",
     "postinstall": "patch-package"
   },
   "dependencies": {

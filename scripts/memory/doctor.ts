@@ -10,6 +10,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { CORE_CAP, gitPushFailureAlert } from "../lib/memory-guards.mjs";
 
 const VAULT = resolve(process.env.ASSISTANT_VAULT_DIR ?? "vault");
 const SCRIPTS = ".claude/skills/autograph/scripts"; // relative to vault
@@ -108,7 +109,6 @@ if (failures.length) {
 
 // ── 1b. CORE guard: the memory core must stay small (always-on floor stays flat) ──
 // 20-core.ts truncates on the fly, but a bloated CORE.md signals the nightly rollup did not shrink the core.
-const CORE_CAP = 1200;
 const corePath = resolve(VAULT, "CORE.md");
 if (existsSync(corePath)) {
   const coreLen = readFileSync(corePath, "utf8").length;
@@ -171,10 +171,7 @@ run("git", ["add", "-A"]);
 run("git", ["commit", "-m", `chore: memory ${today}`]);
 const push = run("git", ["push"]);
 if (push.status !== 0) {
-  await telegram(
-    "vault: git push failed (no credentials?). On the server run `gh auth login` " +
-      `and verify remote access (cd ${VAULT} && git push).`,
-  );
+  await telegram(gitPushFailureAlert(`${push.stdout}\n${push.stderr}`, VAULT));
   console.error("doctor: git push failed");
   process.exit(1);
 }
