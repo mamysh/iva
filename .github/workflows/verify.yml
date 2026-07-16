@@ -31,7 +31,7 @@ jobs:
         run: npm ci
 
       - name: Prepare profile twice with the runner service user
-        run: node scripts/postgres-profile.mjs prepare && node scripts/postgres-profile.mjs prepare
+        run: node scripts/postgres-profile.mjs prepare && node scripts/postgres-profile.mjs prepare && test "$(stat -c %a deploy/iva-workflow.environment)" = 600
 
   postgres-replica:
     name: PostgreSQL replica

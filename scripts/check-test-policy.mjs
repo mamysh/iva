@@ -24,6 +24,7 @@ assert.match(workflow, /image: postgres:17/);
 assert.match(workflow, /run: npm run replica:postgres/);
 assert.match(workflow, /name: PostgreSQL peer profile/);
 assert.match(workflow, /node scripts\/postgres-profile\.mjs prepare && node scripts\/postgres-profile\.mjs prepare/);
+assert.match(workflow, /stat -c %a deploy\/iva-workflow\.environment/);
 assert.match(workflow, /run: npm run replica:local/);
 assert.match(workflow, /run: npm run replica:install/);
 assert.doesNotMatch(workflow, /secrets\.|\.env|TELEGRAM|ASSISTANT_VAULT/i);

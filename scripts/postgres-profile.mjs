@@ -289,7 +289,8 @@ async function enable({ serviceAcceptance = true } = {}) {
   runPreflight({ requireSystemd: serviceAcceptance });
   installPostgresPackages();
   const cluster = discoverCluster();
-  installTuning(cluster);
+  const configFile = installTuning(cluster);
+  console.log(`PostgreSQL cluster: ${cluster.version}/${cluster.name}; config: ${configFile}`);
   const owner = serviceUser();
   ensureRoleAndDatabase(owner);
   const socketDirectory = selectPostgresSocketDirectory(postgresAdminQuery("SHOW unix_socket_directories"));
