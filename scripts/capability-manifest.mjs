@@ -112,13 +112,15 @@ export function createCapabilityManifest() {
     },
     systemd: systemdCapabilities(),
     storage: {
-      selector: ["WORKFLOW_TARGET_WORLD", "IVA_WORKFLOW_WORLD"],
+      contractVersion: 1,
+      selector: ["WORKFLOW_TARGET_WORLD"],
       defaultProfile: "local",
       profiles: [
         { name: "local", world: "@workflow/world-local", bundled: true },
         { name: "postgres", world: "@workflow/world-postgres", bundled: false, optIn: true },
       ],
       configurationSource: "scripts/lib/workflow-config.mjs",
+      buildDescriptor: ".output/iva-workflow-profile.json",
     },
     runtime: runtimeVersions(packageJson, lock),
   };

@@ -190,7 +190,7 @@ begin_install_report
 run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
 
 # ── Swap for weak VPSes ($4 DigitalOcean droplet = 512MB RAM) ──────────────
-# On low RAM without swap, npm install and especially `eve build` (rolldown+nitro+node)
+# On low RAM without swap, npm install and especially the Eve build (rolldown+nitro+node)
 # fail with OOM — the kernel kills the process (Killed, code 137). If RAM < ~1.5GB and
 # there's no swap — set up a 2GB swapfile BEFORE the heavy steps. Idempotent: don't touch
 # active swap, just enable an existing /swapfile, and don't duplicate it in fstab.
@@ -493,8 +493,8 @@ fi
 # 7. Build
 # ─────────────────────────────────────────────────────────────────────────
 install_stage build "npm run build && bash install.sh"
-step "$(t "Building the agent (eve build)…" "Собираю агента (eve build)…")"
-npm exec -- eve build
+step "$(t "Building the agent (profile-aware Eve build)…" "Собираю агента (profile-aware Eve build)…")"
+npm run build
 ok "$(t "Build ready → .output" "Сборка готова → .output")"
 complete_stage build
 

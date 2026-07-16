@@ -98,9 +98,9 @@
     ]
   },
   "storage": {
+    "contractVersion": 1,
     "selector": [
-      "WORKFLOW_TARGET_WORLD",
-      "IVA_WORKFLOW_WORLD"
+      "WORKFLOW_TARGET_WORLD"
     ],
     "defaultProfile": "local",
     "profiles": [
@@ -116,7 +116,8 @@
         "optIn": true
       }
     ],
-    "configurationSource": "scripts/lib/workflow-config.mjs"
+    "configurationSource": "scripts/lib/workflow-config.mjs",
+    "buildDescriptor": ".output/iva-workflow-profile.json"
   },
   "runtime": {
     "node": "24.x",

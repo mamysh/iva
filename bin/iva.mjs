@@ -11,7 +11,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
-import { isPostgresWorkflow } from "../scripts/lib/workflow-config.mjs";
+import { assertWorkflowProfileMatch } from "../scripts/lib/workflow-config.mjs";
+import { readWorkflowBuildDescriptor, resolveRuntimeWorkflowProfile } from "../scripts/lib/workflow-runtime.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = join(ROOT, ".env");
@@ -75,10 +76,6 @@ function readEnv() {
   return readEnvFile(ENV_PATH);
 }
 
-function readRuntimeEnv() {
-  return { ...readEnvFile(WORKFLOW_ENV_PATH), ...readEnv() };
-}
-
 // Абсолютный путь к каталогу data (тот же, что видит агент из cwd=ROOT). Абсолютный
 // ASSISTANT_DATA_DIR берём как есть, относительный — от ROOT (как vault-путь ниже).
 function dataDirAbs(env = readEnv()) {
@@ -133,7 +130,7 @@ function ivaServiceBody() {
     // index.mjs prewarm не делает → первое же вложение падает SandboxTemplateNotProvisionedError
     // (шаблона нет в .eve/sandbox-cache). Ключ шаблона — контент-хеш, после iva update он меняется,
     // поэтому provision обязан идти на каждом старте, а не разово. eve start остаётся foreground.
-    `ExecStart=${NODE} ${ROOT}/node_modules/eve/bin/eve.js start`,
+    `ExecStart=${NODE} ${ROOT}/scripts/start.mjs`,
     `Environment=PORT=${port}`,
     `Environment=PATH=${NODE_BIN_DIR}:%h/.local/bin:/usr/local/bin:/usr/bin:/bin`,
     "Environment=AGENT_BROWSER_MAX_OUTPUT=24000",
@@ -416,12 +413,21 @@ function cmdDoctor() {
     else (ok(`memory_search: ${mmode}`), okN++);
   }
 
-  // 3. Build
+  // 3. Build + the same Workflow profile contract used by build/start/systemd.
   if (existsSync(join(ROOT, ".output/server/index.mjs"))) (ok("Build in place (.output)"), okN++);
   else {
     warn(".output missing — building…");
     if (run(NPM, ["run", "build"]).status === 0) (ok("Built"), fixN++);
     else (bad("Build failed"), badN++);
+  }
+  try {
+    const { profile } = resolveRuntimeWorkflowProfile(ROOT);
+    assertWorkflowProfileMatch(readWorkflowBuildDescriptor(ROOT), profile);
+    ok(`Workflow: ${profile.label} (build/runtime match)`);
+    okN++;
+  } catch (error) {
+    bad(error.message);
+    badN++;
   }
 
   if (!hasSystemd()) {
@@ -506,6 +512,8 @@ function cmdDoctor() {
 }
 
 function cmdStatus() {
+  const { profile } = resolveRuntimeWorkflowProfile(ROOT);
+  console.log(`Workflow: ${profile.label}`);
   requireSystemd();
   run("systemctl", ["--user", "status", "--no-pager", "-n", "5", ...SERVICES]);
   run("systemctl", ["--user", "list-timers", "--no-pager", "iva-memory-*", "iva-reminders.timer"]);
@@ -521,7 +529,7 @@ function cmdRestart() {
 // is stopped (otherwise we'd delete files out from under a live process). Wipes ALL parked dialogs.
 function cmdReset() {
   requireSystemd();
-  if (isPostgresWorkflow(readRuntimeEnv())) {
+  if (resolveRuntimeWorkflowProfile(ROOT).profile.backend === "postgres") {
     step("Workflow reset: stopping services…");
     sc("stop", ...SERVICES);
     warn("PostgreSQL workflow state is durable and is not deleted by `iva reset`.");

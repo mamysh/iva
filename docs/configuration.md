@@ -103,11 +103,11 @@ Leave these unset for the default local `.workflow-data` backend. For long-runni
 
 | Variable | Default | Notes |
 |---|---|---|
-| `WORKFLOW_TARGET_WORLD` | *(empty)* | Set to `@workflow/world-postgres` to enable PostgreSQL workflow state. `postgres` is accepted as a shorthand in Iva's config helper. |
+| `WORKFLOW_TARGET_WORLD` | `local` | The only other accepted value is `@workflow/world-postgres`. This is a build and runtime profile; rebuild after changing it. |
 | `WORKFLOW_POSTGRES_URL` | — | PostgreSQL connection string. Local socket example: `postgresql:///iva_workflow?host=/var/run/postgresql`; with peer auth this expects a PostgreSQL role matching the service user. |
 | `WORKFLOW_QUEUE_NAMESPACE` | `eve` | Queue namespace expected by the generated eve workflow routes. |
 | `WORKFLOW_POSTGRES_JOB_PREFIX` | `iva_` | Prefix for graphile-worker job names. |
 | `WORKFLOW_POSTGRES_WORKER_CONCURRENCY` | `8` | Conservative default for a tiny single-user VPS. |
 | `WORKFLOW_POSTGRES_MAX_POOL_SIZE` | `10` | Keep below PostgreSQL `max_connections` after system overhead. |
 
-The repository includes `deploy/iva-workflow-postgres.environment.example` and a small PostgreSQL profile in `deploy/postgresql-iva.conf`. Full setup and smoke-test steps: [deploy.md](./deploy.md#workflow-backend).
+The repository includes `deploy/iva-workflow-postgres.environment.example` and a small PostgreSQL profile in `deploy/postgresql-iva.conf`. The optional workflow environment file is loaded before `.env`, so `.env` wins when both define the selector. `npm run build` records a sanitized descriptor in `.output`; startup and `iva doctor` reject a build/runtime mismatch before Iva accepts messages. Full setup and smoke-test steps: [deploy.md](./deploy.md#workflow-backend).

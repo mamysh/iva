@@ -75,10 +75,11 @@ sudo -u postgres createuser iva --no-createdb --no-createrole --no-superuser
 sudo -u postgres createdb iva_workflow --owner=iva
 
 cp deploy/iva-workflow-postgres.environment.example deploy/iva-workflow.environment
+npm run build
 iva restart
 ```
 
-The generated `iva.service` loads `deploy/iva-workflow.environment` if it exists, then `.env`. Keep secrets in `.env` if your database URL contains a password. The checked-in example uses a local Unix socket URL, so PostgreSQL peer auth expects a database role matching the systemd service user (`iva`). It also uses conservative pool settings for a 1 vCPU / 1 GiB VPS.
+The generated `iva.service` loads `deploy/iva-workflow.environment` if it exists, then `.env`; the later `.env` value wins. Keep secrets in `.env` if your database URL contains a password. The build wrapper resolves the selector with the same precedence and records a sanitized profile descriptor in `.output`. Startup fails before accepting messages when that descriptor differs from runtime. The checked-in example uses a local Unix socket URL, so PostgreSQL peer auth expects a database role matching the systemd service user (`iva`). It also uses conservative pool settings for a 1 vCPU / 1 GiB VPS.
 
 Run a restart/resume smoke test after enabling Postgres:
 
@@ -90,7 +91,7 @@ iva workflow-smoke resume
 
 `iva reset` has different semantics by backend. With the default local backend it clears `.workflow-data`. With Postgres enabled it restarts services but intentionally does not drop or truncate the workflow database.
 
-The variables match Workflow's official Postgres world naming: `WORKFLOW_TARGET_WORLD=@workflow/world-postgres` and `WORKFLOW_POSTGRES_URL`.
+The variables match Workflow's official Postgres world naming: `WORKFLOW_TARGET_WORLD=@workflow/world-postgres` and `WORKFLOW_POSTGRES_URL`. The old `IVA_WORKFLOW_WORLD` alias and the `postgres` shorthand are rejected so build, service, doctor, reset and update cannot interpret the same installation differently.
 
 ## nginx and TLS
 
