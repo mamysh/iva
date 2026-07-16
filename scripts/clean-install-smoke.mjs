@@ -206,6 +206,23 @@ async function stopFixtureProcesses() {
   await sleep(200);
 }
 
+async function controlService(action, unit) {
+  const child = spawn(process.execPath, [serviceControl, action, unit], {
+    cwd: app,
+    env: {
+      ...process.env,
+      IVA_FIXTURE_APP: app,
+      IVA_FIXTURE_NODE: process.execPath,
+      IVA_FIXTURE_PORT: process.env.IVA_FIXTURE_PORT,
+      IVA_FIXTURE_PRELOAD: preload,
+      IVA_FIXTURE_STATE: processState,
+    },
+    stdio: "ignore",
+  });
+  const code = await new Promise((resolve) => child.once("exit", resolve));
+  assert.equal(code, 0, `${action} ${unit} failed`);
+}
+
 try {
   await mkdir(home, { recursive: true });
   await copyFixture();
@@ -243,6 +260,14 @@ try {
   const firstReply = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();
   assert.match(JSON.stringify(firstReply), /INSTALL_OK/);
   assert.ok(telegram.requests() > 0, "Telegram polling bridge did not reach the mock Bot API");
+  await controlService("stop", "iva-telegram-poll.service");
+  const whileBridgeStopped = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();
+  assert.match(JSON.stringify(whileBridgeStopped), /INSTALL_OK/, "Eve failed when only the Telegram bridge was stopped");
+  const telegramBeforeRestart = telegram.requests();
+  await controlService("restart", "iva-telegram-poll.service");
+  const bridgeDeadline = Date.now() + 5_000;
+  while (telegram.requests() <= telegramBeforeRestart && Date.now() < bridgeDeadline) await sleep(50);
+  assert.ok(telegram.requests() > telegramBeforeRestart, "Telegram bridge did not recover independently");
 
   const sentinel = join(sandbox, "vault", "sentinel.txt");
   await writeFile(sentinel, "preserve me\n");
@@ -264,7 +289,7 @@ try {
     assert.equal((await stat(path)).mode & 0o777, 0o600, `${basename(path)} must be 0600`);
   }
 
-  console.log("clean install smoke passed: ready, mock provider/Telegram, 0600 secrets, idempotent rerun");
+  console.log("clean install smoke passed: ready, independent bridge recovery, 0600 secrets, idempotent rerun");
 } finally {
   await stopFixtureProcesses();
   await telegramServer?.close();

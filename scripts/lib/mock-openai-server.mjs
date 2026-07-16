@@ -6,7 +6,7 @@ function messageText(message) {
   return message.content.map((part) => part?.text ?? part?.content ?? "").join(" ");
 }
 
-function chooseResponse(body) {
+function chooseResponse(body, requestIndex) {
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const transcript = messages.map(messageText).join("\n");
   const latestUser = [...messages].reverse().find((message) => message?.role === "user");
@@ -16,7 +16,7 @@ function chooseResponse(body) {
   if (/Use the tasks tool/i.test(prompt) && !hasToolResult) {
     return {
       kind: "tool",
-      id: "call_replica_tasks",
+      id: `call_replica_tasks_${requestIndex}`,
       name: "tasks",
       arguments: JSON.stringify({ action: "add", text: "replica canary task", priority: "high" }),
     };
@@ -96,6 +96,7 @@ function jsonCompletion(response, selected) {
 
 export async function startMockOpenAiServer() {
   const requests = [];
+  const faults = [];
   const server = createServer(async (request, response) => {
     if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
       response.writeHead(404).end("not found");
@@ -111,7 +112,14 @@ export async function startMockOpenAiServer() {
       return;
     }
     requests.push(body);
-    const selected = chooseResponse(body);
+    const fault = faults.shift();
+    if (fault?.delayMs) await new Promise((resolve) => setTimeout(resolve, fault.delayMs));
+    if (fault?.status) {
+      response.writeHead(fault.status, { "Content-Type": "application/json", "Retry-After": "0" });
+      response.end(JSON.stringify({ error: { message: `synthetic HTTP ${fault.status}`, type: fault.status === 429 ? "rate_limit_exceeded" : "server_error" } }));
+      return;
+    }
+    const selected = chooseResponse(body, requests.length);
     if (body.stream) streamCompletion(response, selected);
     else jsonCompletion(response, selected);
   });
@@ -123,6 +131,11 @@ export async function startMockOpenAiServer() {
   return {
     baseUrl: `http://127.0.0.1:${address.port}/v1`,
     requests,
+    failNext(status, count = 1) {
+      for (let index = 0; index < count; index++) faults.push({ status });
+    },
+    passNext() { faults.push({}); },
+    delayNext(delayMs) { faults.push({ delayMs }); },
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
 }

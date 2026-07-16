@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { sendTelegramHtml } from "../lib/telegram-send.mjs";
 import { CORE_CAP, coreRecoveryAction } from "../lib/memory-guards.mjs";
+import { loadBackgroundSession, saveBackgroundSession } from "../lib/background-session.mjs";
 
 type Period = "daily" | "weekly" | "monthly" | "yearly";
 
@@ -139,7 +140,8 @@ const client = new Client({
 });
 
 const today = localDate();
-const session = client.session();
+const backgroundSessionKey = `memory-rollup-${period}`;
+const session = await loadBackgroundSession(client, backgroundSessionKey);
 const response = await session.send(buildPrompt(period, today));
 const result = await response.result();
 
@@ -149,6 +151,7 @@ if (result.status === "failed" || !result.message) {
   console.error(`rollup ${period}: agent returned no report (status=${result.status})`);
   process.exit(1);
 }
+await saveBackgroundSession(session, backgroundSessionKey);
 
 // The prompt asks the agent to keep CORE small, but a prompt is not an invariant.
 // Give it one focused correction turn; if that still overshoots, restore the last
@@ -207,5 +210,7 @@ if (POST_TO_TELEGRAM[period]) {
   }
   console.log(`rollup ${period}: report sent to Telegram.`);
 }
+
+await saveBackgroundSession(session, backgroundSessionKey);
 
 process.exit(0);

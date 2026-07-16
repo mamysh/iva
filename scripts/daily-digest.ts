@@ -6,6 +6,7 @@
 // Requires: a running agent (eve start) and the TELEGRAM_BOT_TOKEN, TELEGRAM_DIGEST_CHAT_ID variables.
 import { Client } from "eve/client";
 import { sendTelegramHtml } from "./lib/telegram-send.mjs";
+import { loadBackgroundSession, saveBackgroundSession } from "./lib/background-session.mjs";
 
 const PORT = process.env.IVA_PORT ?? "8723";
 const HOST = process.env.ASSISTANT_HOST ?? `http://127.0.0.1:${PORT}`;
@@ -23,7 +24,7 @@ const client = new Client({
   ...(BEARER ? { auth: { bearer: async () => BEARER } } : {}),
 });
 
-const session = client.session();
+const session = await loadBackgroundSession(client, "daily-digest");
 const response = await session.send(
   "Load the morning-digest skill and build the morning digest for my tasks. " +
     "Return only the finished digest text, no preamble.",
@@ -36,6 +37,7 @@ if (result.status === "failed" || !result.message) {
   console.error("Agent did not return a digest:", result.status);
   process.exit(1);
 }
+await saveBackgroundSession(session, "daily-digest");
 
 // The markdown → Telegram-HTML conversion + self-heal live in a shared helper.
 const r = await sendTelegramHtml(BOT, CHAT, result.message);
@@ -49,4 +51,5 @@ if (!r.ok) {
   console.error("digest: Telegram send failed:", r.error);
   process.exit(1);
 }
+await saveBackgroundSession(session, "daily-digest");
 console.log("Digest sent to Telegram.");

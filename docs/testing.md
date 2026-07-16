@@ -82,13 +82,17 @@ PostgreSQL variant must use a separate temporary database and role; it must neve
 database or credentials.
 
 The automated local replica currently proves a production build, first text reply, model-driven task
-tool selection, task persistence, and workflow restart/resume against a loopback-only deterministic
-OpenAI-compatible mock. `npm run replica:install` additionally runs first install and reinstall in a
+tool selection, task persistence, workflow restart/resume, transient provider 429/500 recovery,
+terminal provider failure without retry, SIGTERM during a model step, and SIGKILL between durable
+steps without repeating the task side effect. The PostgreSQL variant additionally blocks connections
+temporarily and proves automatic return after database availability is restored. `npm run replica:install` additionally runs first install and reinstall in a
 disposable home with mock provider, Telegram and systemd boundaries, checking readiness, private-file
-modes and vault preservation. The PostgreSQL variant runs the official pinned-package bootstrap on a
+modes, vault preservation, and independent Telegram-bridge stop/restart while Eve stays available. The PostgreSQL variant runs the official pinned-package bootstrap on a
 fresh real database, verifies the Workflow/Drizzle/Graphile schemas, persists a first turn, repeats
 bootstrap without losing runs, resumes after restart, and proves that no local workflow state was
-created. The broader replica gate still owns SIGKILL recovery and update/rollback tests.
+created. Fast recovery contracts additionally inject `ENOSPC`, read-only storage and connection errors
+to prove their observable classifications; a true filesystem-capacity fixture remains a release-matrix
+scenario. The broader replica gate still owns update/rollback tests.
 CI also runs the profile preparer twice on the native Ubuntu runner PostgreSQL cluster. That separate
 gate proves dynamic cluster/config discovery, a role matching the actual Unix runner user, peer auth,
 idempotent database creation, bootstrap/schema verification and the profile-aware build.

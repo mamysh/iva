@@ -7,14 +7,16 @@
 Description=Iva Telegram polling bridge (getUpdates → local webhook)
 After=network-online.target iva.service
 Wants=iva.service
+StartLimitIntervalSec=5min
+StartLimitBurst=5
 
 [Service]
 WorkingDirectory=__PROJECT_DIR__
 EnvironmentFile=__PROJECT_DIR__/.env
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=__NODE_BIN__ --env-file=.env scripts/telegram-poll.mjs
-Restart=always
-RestartSec=3
+Restart=on-failure
+RestartSec=10
 
 [Install]
 WantedBy=default.target

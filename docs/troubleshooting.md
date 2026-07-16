@@ -26,15 +26,22 @@ iva restart
 
 ### Turn stuck / no reply
 
-Cause: on the default local workflow backend, a wedged turn lives in `.workflow-data`, and eve re-enqueues it on every start — plain `iva restart` brings it right back.
+First inspect the runtime. `iva status` reports active, waiting, retrying, failed and wedged runs, plus queue and storage health.
 
 ```bash
-iva reset   # local backend: stop services, clear .workflow-data, restart
+iva status
+iva recover   # safe repair and re-enqueue; no workflow data is deleted
 ```
 
-If you enabled the optional PostgreSQL workflow backend, `iva reset` restarts services but does not drop the database. Back up and purge the workflow DB manually only if you deliberately want to erase durable sessions.
+If workflow storage is unavailable, recovery stops without changing state: restore disk/database access and run `iva recover` again. If a run remains wedged and you deliberately accept losing active conversations, run `iva reset`; it asks for confirmation, cancels active sessions through the Workflow API and preserves terminal history, the vault, tasks and reminders on both local and PostgreSQL backends.
 
-From Telegram, `/restart` does the same. The poll bridge handles it out-of-band, so it works even while the agent is busy.
+From Telegram, `/restart` restarts only the agent process. `/new`, `/clear` and `/compact` perform the explicit active-session reset. The poll bridge handles these out-of-band, so they work even while the agent is busy.
+
+Both services use a bounded systemd restart policy: five starts in five minutes, then cooldown instead of an endless restart loop.
+
+### Reminder shows delivery_unknown
+
+The dispatcher durably claimed the reminder, but could not prove whether Telegram accepted it before the process or network failed. Iva does not resend it automatically because that could create a duplicate. Check the chat and service log, then cancel and recreate the reminder if it was not delivered.
 
 ### Model changed in .env but nothing happened
 
