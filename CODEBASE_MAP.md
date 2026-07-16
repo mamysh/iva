@@ -229,6 +229,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | Setup wizard/config | `scripts/setup.mjs` | `.env.example`, config docs | setup migration test, public docs test |
 | Installer | `install.sh` | setup, init-vault, CLI unit writer | shell check, clean-install test |
 | CLI/systemd lifecycle | `bin/iva.mjs` | `deploy/`, CLI/deploy docs | integration invariants, Linux smoke |
+| Workflow health/recovery | `scripts/workflow-health.mjs` + `scripts/lib/runtime-recovery.mjs` | CLI, workflow backends, background jobs | runtime recovery check, both disposable replicas |
 | Workflow backend | `scripts/lib/workflow-config.mjs` | agent, package versions, smoke script | config test, both builds, restart/resume |
 | PostgreSQL profile | `scripts/postgres-profile.mjs` + `scripts/lib/postgres-profile.mjs` | deploy examples, upstream package migrations | config test, real PostgreSQL bootstrap + smoke |
 | Update behavior | `bin/iva.mjs` | `scripts/lib/telegram-update.mjs` | update test, rollback scenario |
@@ -243,6 +244,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 |---|---|
 | `check-reasoning-strip.mjs` | Provider reasoning compatibility for generate/stream. |
 | `check-workflow-config.mjs` | Workflow resolver, precedence, descriptor and mismatch contract. |
+| `check-runtime-recovery.mjs` | Run-state classification, recovery/reset contract, restart guard and bounded background sessions. |
 | `check-reminders-store.mjs` | Reminder persistence and scheduling behavior. |
 | `check-telegram-update.mjs` | Out-of-band Telegram update flow. |
 | `check-memory-guards.mjs` | CORE and vault failure guards. |

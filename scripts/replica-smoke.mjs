@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -235,6 +235,96 @@ async function stopEve(child) {
   signalGroup("SIGKILL");
 }
 
+async function killEve(child, signal) {
+  if (!child) return;
+  const groupAlive = () => {
+    try { process.kill(-child.pid, 0); return true; } catch (error) {
+      if (error?.code === "ESRCH" || error?.code === "EPERM") return false;
+      throw error;
+    }
+  };
+  try { process.kill(-child.pid, signal); } catch (error) {
+    if (error?.code !== "ESRCH" && error?.code !== "EPERM") throw error;
+  }
+  const gracefulDeadline = Date.now() + 8_000;
+  while (Date.now() < gracefulDeadline && groupAlive()) await sleep(50);
+  if (!groupAlive()) return;
+  try { process.kill(-child.pid, "SIGKILL"); } catch (error) {
+    if (error?.code !== "ESRCH" && error?.code !== "EPERM") throw error;
+  }
+  const killDeadline = Date.now() + 2_000;
+  while (Date.now() < killDeadline && groupAlive()) await sleep(50);
+  if (groupAlive()) throw new Error(`${signal} did not stop the replica process group`);
+}
+
+async function waitForRequests(count, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (mock.requests.length >= count) return;
+    await sleep(25);
+  }
+  throw new Error(`mock provider received ${mock.requests.length}/${count} expected requests`);
+}
+
+function workflowReport(port) {
+  const result = spawnSync(process.execPath, [join(replica, "scripts/workflow-health.mjs"), "status", "--json"], {
+    cwd: replica,
+    env: replicaEnv(port),
+    encoding: "utf8",
+  });
+  if (![0, 2].includes(result.status)) throw new Error(result.stderr || result.stdout || "workflow health failed");
+  return JSON.parse(result.stdout.trim());
+}
+
+function repairWorkflow(port) {
+  const result = spawnSync(process.execPath, [join(replica, "scripts/workflow-health.mjs"), "repair", "--json"], {
+    cwd: replica,
+    env: replicaEnv(port),
+    encoding: "utf8",
+  });
+  if (result.status !== 0) throw new Error(result.stderr || result.stdout || "workflow repair failed");
+  return JSON.parse(result.stdout.trim());
+}
+
+function reenqueueWorkflow(port) {
+  const result = spawnSync(process.execPath, [join(replica, "scripts/workflow-health.mjs"), "reenqueue", "--json"], {
+    cwd: replica,
+    env: replicaEnv(port),
+    encoding: "utf8",
+    timeout: 45_000,
+  });
+  if (result.status !== 0) throw new Error(result.stderr || result.stdout || "workflow re-enqueue failed");
+}
+
+async function waitForSettled(port, { failedBefore, timeoutMs = 45_000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let report;
+  while (Date.now() < deadline) {
+    report = workflowReport(port);
+    const active = report.states.active + report.states.retrying + report.states.wedged;
+    if (active === 0) {
+      if (failedBefore !== undefined) assert.equal(report.states.terminal, failedBefore, "fault recovery created a failed run");
+      return report;
+    }
+    await sleep(250);
+  }
+  throw new Error(`workflow did not settle after fault: ${JSON.stringify(report)}`);
+}
+
+async function setPostgresConnections(allowed) {
+  const target = new URL(postgresUrl);
+  const database = decodeURIComponent(target.pathname.slice(1));
+  assert.match(database, /^[A-Za-z0-9_]+$/);
+  target.pathname = "/postgres";
+  const pool = new Pool({ connectionString: target.toString(), max: 1 });
+  try {
+    await pool.query(`ALTER DATABASE "${database}" WITH ALLOW_CONNECTIONS ${allowed ? "true" : "false"}`);
+    if (!allowed) {
+      await pool.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()", [database]);
+    }
+  } finally { await pool.end(); }
+}
+
 function assertSuccessfulTurn(result) {
   assert.notEqual(result.status, "failed");
   assert.ok(result.message, `turn returned no message (status=${result.status})`);
@@ -305,6 +395,20 @@ try {
   assertSuccessfulTurn(textResult);
   assert.equal(textResult.message.trim(), "REPLICA_OK");
 
+  for (const status of [429, 500]) {
+    const before = mock.requests.length;
+    mock.failNext(status);
+    const transient = await (await client.session().send(`Transient ${status}: reply with exactly REPLICA_OK`)).result();
+    assertSuccessfulTurn(transient);
+    assert.equal(transient.message.trim(), "REPLICA_OK");
+    assert.ok(mock.requests.length >= before + 2, `provider HTTP ${status} was not retried`);
+  }
+  const terminalRequests = mock.requests.length;
+  mock.failNext(400);
+  const terminal = await (await client.session().send("Terminal provider error canary")).result();
+  assert.equal(terminal.status, "failed", "provider HTTP 400 did not terminate the run");
+  assert.equal(mock.requests.length, terminalRequests + 1, "provider HTTP 400 was retried instead of terminating");
+
   const toolResult = await (
     await client.session().send("Use the tasks tool to add the replica canary task, then confirm completion.")
   ).result();
@@ -322,7 +426,58 @@ try {
   assert.equal(seed.message.trim(), "REMEMBERED");
   const savedState = remembered.state;
 
+  // Graceful termination during a model call: the durable run must replay and finish after restart.
+  let report = workflowReport(port);
+  const failedBeforeTerm = report.states.terminal;
+  const termRequests = mock.requests.length;
+  mock.delayNext(5_000);
+  const interruptedTerm = client.session().send("SIGTERM canary: reply with exactly REPLICA_OK")
+    .then((response) => response.result()).catch(() => null);
+  await waitForRequests(termRequests + 1);
+  await killEve(eve, "SIGTERM");
+  await Promise.race([interruptedTerm, sleep(2_000)]);
+  const termRepair = repairWorkflow(port);
+  assert.ok(Number.isInteger(termRepair.repaired) && termRepair.repaired >= 0, "SIGTERM repair count is invalid");
+  if (!postgresMode) assert.ok(termRepair.repaired >= 1, "SIGTERM left no interrupted local step for recovery");
+  assert.ok(Number.isInteger(termRepair.abandoned) && termRepair.abandoned >= 0, "SIGTERM abandon count is invalid");
+  if (!postgresMode) assert.ok(termRepair.abandoned >= 1, "SIGTERM interrupted local turn was not preserved as cancelled");
+  eve = await startEve(port);
+  client = new Client({ host: `http://127.0.0.1:${port}` });
+  await waitForHealth(client, eve);
+  reenqueueWorkflow(port);
+  await waitForSettled(port, { failedBefore: failedBeforeTerm });
+
+  // Hard kill after a durable task step: replay must not execute the external task write twice.
+  const taskCountBeforeKill = JSON.parse(await readFile(join(replica, "data", "tasks.json"), "utf8")).length;
+  const killRequests = mock.requests.length;
+  mock.passNext();
+  mock.delayNext(5_000);
+  const interruptedKill = client.session().send("Use the tasks tool to add the replica canary task, then confirm completion.")
+    .then((response) => response.result()).catch(() => null);
+  await waitForRequests(killRequests + 2);
+  await killEve(eve, "SIGKILL");
+  await Promise.race([interruptedKill, sleep(2_000)]);
+  const killRepair = repairWorkflow(port);
+  assert.ok(Number.isInteger(killRepair.repaired) && killRepair.repaired >= 0, "SIGKILL repair count is invalid");
+  if (!postgresMode) assert.ok(killRepair.repaired >= 1, "SIGKILL left no interrupted local step for recovery");
+  assert.ok(Number.isInteger(killRepair.abandoned) && killRepair.abandoned >= 0, "SIGKILL abandon count is invalid");
+  if (!postgresMode) assert.ok(killRepair.abandoned >= 1, "SIGKILL interrupted local turn was not preserved as cancelled");
+  eve = await startEve(port);
+  client = new Client({ host: `http://127.0.0.1:${port}` });
+  await waitForHealth(client, eve);
+  reenqueueWorkflow(port);
+  await waitForSettled(port, { failedBefore: failedBeforeTerm });
+  const tasksAfterKill = JSON.parse(await readFile(join(replica, "data", "tasks.json"), "utf8"));
+  assert.equal(tasksAfterKill.length, taskCountBeforeKill + 1, "SIGKILL replay duplicated or lost the durable task side effect");
+
   await stopEve(eve);
+  if (postgresMode) {
+    await setPostgresConnections(false);
+    const unavailable = await startEve(port);
+    await assert.rejects(() => waitForHealth(new Client({ host: `http://127.0.0.1:${port}` }), unavailable, 12_000));
+    await stopEve(unavailable);
+    await setPostgresConnections(true);
+  }
   if (postgresMode) {
     const runsBeforeRepeat = await inspectPostgresFixture();
     assert.ok(runsBeforeRepeat > 0, "first PostgreSQL turns did not persist workflow runs");
@@ -344,12 +499,12 @@ try {
   if (jsonMode) {
     console.log(JSON.stringify({
       ok: true,
-      canaries: ["text-reply", "model-task-call", "task-persistence", "workflow-restart-resume"],
+      canaries: ["text-reply", "provider-429-500", "sigterm-replay", "sigkill-side-effect-once", "model-task-call", "task-persistence", "workflow-restart-resume"],
       resources: resourceReport ?? null,
     }, null, 2));
   } else {
     console.log(
-      `replica smoke passed (${postgresMode ? "PostgreSQL" : "local"}): text reply, model tool call, task persistence, workflow restart/resume`,
+      `replica smoke passed (${postgresMode ? "PostgreSQL" : "local"}): transient provider faults, SIGTERM/SIGKILL recovery, side effect once, restart/resume`,
     );
     if (resourceReport) console.log(JSON.stringify(resourceReport, null, 2));
   }

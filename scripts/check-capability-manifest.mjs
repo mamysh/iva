@@ -31,6 +31,8 @@ assert.deepEqual(manifest.systemd.managedServices, ["iva-telegram-poll.service",
 assert.ok(manifest.systemd.managedTimers.includes("iva-reminders.timer"));
 assert.equal(manifest.storage.defaultProfile, "local");
 assert.ok(manifest.storage.profiles.some(({ name, world }) => name === "postgres" && world === "@workflow/world-postgres"));
+assert.equal(manifest.storage.lifecycle.recoverCommand, "iva recover");
+assert.equal(manifest.storage.lifecycle.purgeCommand, null);
 assert.match(manifest.runtime.node, /^24/);
 assert.equal(manifest.runtime.eve, "0.11.10");
 

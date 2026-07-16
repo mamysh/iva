@@ -101,7 +101,7 @@ iva restart
 iva workflow-smoke resume
 ```
 
-`iva reset` has different semantics by backend. With the default local backend it clears `.workflow-data`. With Postgres enabled it restarts services but intentionally does not drop or truncate the workflow database.
+Lifecycle commands have identical semantics on both workflow backends. `iva restart` changes only processes. `iva recover` repairs and re-enqueues interrupted work without deleting durable state. `iva reset`, after confirmation, cancels active sessions but preserves terminal history and storage. There is no automatic workflow purge.
 
 The generated variables match Workflow's official Postgres world naming: `WORKFLOW_TARGET_WORLD=@workflow/world-postgres` and `WORKFLOW_POSTGRES_URL`. The old `IVA_WORKFLOW_WORLD` alias and the `postgres` shorthand are rejected so build, service, doctor, reset and update cannot interpret the same installation differently. `deploy/iva-workflow-postgres.environment.example` remains a reference for externally managed PostgreSQL; the supported self-host path is the command above.
 

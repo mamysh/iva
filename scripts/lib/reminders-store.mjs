@@ -5,7 +5,7 @@ export const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
 export const REMINDERS_FILE = join(DATA_DIR, "reminders.json");
 export const DEFAULT_TIMEZONE = process.env.ASSISTANT_TIMEZONE || "Europe/Minsk";
 
-const STATUSES = new Set(["pending", "sent", "cancelled", "failed"]);
+const STATUSES = new Set(["pending", "sending", "delivery_unknown", "sent", "cancelled", "failed"]);
 const REPEATS = new Set(["none", "daily", "weekly", "monthly"]);
 
 export async function loadReminders(file = REMINDERS_FILE) {
@@ -71,6 +71,8 @@ export function createReminder(input, existing = []) {
     sentCount: 0,
     attempts: 0,
     lastError: null,
+    deliveryId: null,
+    deliveryClaimedAt: null,
   };
   if (!reminder.text) throw new Error("text must not be empty");
   if (reminder.repeatUntil && Number.isNaN(new Date(reminder.repeatUntil).getTime())) {
@@ -97,6 +99,7 @@ export function markDelivered(reminder, sentAt = new Date()) {
   reminder.sentCount = Number(reminder.sentCount || 0) + 1;
   reminder.attempts = 0;
   reminder.lastError = null;
+  reminder.deliveryClaimedAt = null;
   reminder.updatedAt = stamp;
 
   if (reminder.repeat && reminder.repeat !== "none") {
@@ -113,11 +116,38 @@ export function markDelivered(reminder, sentAt = new Date()) {
   }
 }
 
+export function claimDelivery(reminder, claimedAt = new Date()) {
+  if (reminder.status !== "pending") throw new Error(`Cannot claim reminder in status ${reminder.status}`);
+  const stamp = claimedAt.toISOString();
+  reminder.status = "sending";
+  reminder.deliveryId = `${reminder.id}:${Number(reminder.sentCount || 0) + 1}:${reminder.dueAt}`;
+  reminder.deliveryClaimedAt = stamp;
+  reminder.updatedAt = stamp;
+  return reminder.deliveryId;
+}
+
+export function markDeliveryUnknown(reminder, error, at = new Date()) {
+  reminder.status = "delivery_unknown";
+  reminder.lastError = String(error || "delivery result unknown").slice(0, 500);
+  reminder.updatedAt = at.toISOString();
+}
+
+export function recoverInterruptedDeliveries(reminders, at = new Date()) {
+  let recovered = 0;
+  for (const reminder of reminders) {
+    if (reminder.status !== "sending") continue;
+    markDeliveryUnknown(reminder, "dispatcher stopped after claiming delivery; not retried to avoid a duplicate", at);
+    recovered++;
+  }
+  return recovered;
+}
+
 export function markFailedAttempt(reminder, error, maxAttempts = 20) {
   reminder.attempts = Number(reminder.attempts || 0) + 1;
   reminder.lastError = String(error || "unknown").slice(0, 500);
   reminder.updatedAt = new Date().toISOString();
-  if (reminder.attempts >= maxAttempts) reminder.status = "failed";
+  reminder.deliveryClaimedAt = null;
+  reminder.status = reminder.attempts >= maxAttempts ? "failed" : "pending";
 }
 
 function normalizeReminder(item) {
@@ -145,6 +175,8 @@ function normalizeReminder(item) {
     sentCount: Number(item.sentCount || 0),
     attempts: Number(item.attempts || 0),
     lastError: item.lastError || null,
+    deliveryId: item.deliveryId || null,
+    deliveryClaimedAt: item.deliveryClaimedAt || null,
   };
 }
 

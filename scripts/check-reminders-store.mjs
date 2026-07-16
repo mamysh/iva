@@ -4,10 +4,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createReminder,
+  claimDelivery,
   duePending,
   loadReminders,
   markDelivered,
   markFailedAttempt,
+  markDeliveryUnknown,
+  recoverInterruptedDeliveries,
   resolveDueAt,
   saveReminders,
 } from "./lib/reminders-store.mjs";
@@ -39,6 +42,14 @@ try {
 
   assert.equal(duePending(loaded, new Date("2026-01-02T03:04:06.000Z")).length, 1);
 
+  const deliveryId = claimDelivery(loaded[0], new Date("2026-01-02T03:04:07.000Z"));
+  assert.match(deliveryId, /^1:1:/);
+  assert.equal(duePending(loaded, new Date("2026-01-02T03:04:08.000Z")).length, 0);
+  assert.equal(recoverInterruptedDeliveries(loaded, new Date("2026-01-02T03:04:09.000Z")), 1);
+  assert.equal(loaded[0].status, "delivery_unknown");
+  assert.equal(duePending(loaded, new Date("2026-01-02T03:04:10.000Z")).length, 0);
+  loaded[0].status = "sending";
+
   markDelivered(loaded[0], new Date("2026-01-02T03:05:00.000Z"));
   assert.equal(loaded[0].status, "pending");
   assert.equal(loaded[0].sentAt, null);
@@ -48,6 +59,11 @@ try {
   markFailedAttempt(loaded[1], new Error("telegram down"), 1);
   assert.equal(loaded[1].status, "failed");
   assert.match(loaded[1].lastError, /telegram down/);
+
+  const ambiguous = createReminder({ text: "network", dueAt: "2026-01-01T00:00:00.000Z" }, loaded);
+  claimDelivery(ambiguous);
+  markDeliveryUnknown(ambiguous, new Error("socket closed"));
+  assert.equal(ambiguous.status, "delivery_unknown");
 
   assert.deepEqual(await loadReminders(join(dir, "missing.json")), []);
 } finally {

@@ -6,10 +6,13 @@ import {
   DATA_DIR,
   DEFAULT_TIMEZONE,
   duePending,
+  claimDelivery,
   formatReminder,
   loadReminders,
   markDelivered,
   markFailedAttempt,
+  markDeliveryUnknown,
+  recoverInterruptedDeliveries,
   saveReminders,
 } from "./lib/reminders-store.mjs";
 
@@ -31,24 +34,28 @@ async function main() {
 
 async function list() {
   const reminders = await loadReminders();
-  const items = reminders.filter((r) => r.status === "pending");
+  const items = reminders.filter((r) => ["pending", "sending", "delivery_unknown"].includes(r.status));
   if (!items.length) return console.log("No active reminders.");
   for (const item of items) console.log(formatReminder(item));
 }
 
 async function dispatchDue() {
   const reminders = await loadReminders();
+  if (recoverInterruptedDeliveries(reminders) > 0) await saveReminders(reminders);
   const due = duePending(reminders);
   if (!due.length) return;
 
   for (const reminder of due) {
+    claimDelivery(reminder);
+    await saveReminders(reminders);
     try {
       await sendReminder(reminder);
       markDelivered(reminder);
       await appendReminderToDaily(reminder);
       console.log(`sent reminder #${reminder.id}`);
     } catch (error) {
-      markFailedAttempt(reminder, error, MAX_ATTEMPTS);
+      if (error?.code === "DELIVERY_REJECTED") markFailedAttempt(reminder, error, MAX_ATTEMPTS);
+      else markDeliveryUnknown(reminder, error);
       console.error(`reminder #${reminder.id} failed: ${String(error).slice(0, 300)}`);
     }
     await saveReminders(reminders);
@@ -63,6 +70,7 @@ async function sendReminder(reminder) {
   if (!chat) throw new Error("No chat id: set TELEGRAM_DIGEST_CHAT_ID or TELEGRAM_ALLOWED_USER_IDS");
 
   const text = `Reminder: ${reminder.text}`;
+  let acceptedChunks = 0;
   for (const chunk of chunks(text, TELEGRAM_LIMIT)) {
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
@@ -70,7 +78,12 @@ async function sendReminder(reminder) {
       body: JSON.stringify({ chat_id: chat, text: chunk }),
       signal: AbortSignal.timeout(20_000),
     });
-    if (!res.ok) throw new Error(`Telegram sendMessage HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) {
+      const error = new Error(`Telegram sendMessage HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      if (acceptedChunks === 0) error.code = "DELIVERY_REJECTED";
+      throw error;
+    }
+    acceptedChunks++;
   }
 }
 

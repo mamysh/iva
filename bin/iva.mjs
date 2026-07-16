@@ -114,12 +114,14 @@ async function notifyTelegram(text) {
 
 // ── systemd units: single source of truth ─────────────────────────────────
 function ivaServiceBody() {
-  // PATH with the node directory (= npm global bin under nvm), Restart=always.
+  // PATH with the node directory (= npm global bin under nvm); bounded retries avoid restart storms.
   const port = (readEnv().IVA_PORT || DEFAULT_PORT).trim();
   return [
     "[Unit]",
     "Description=Iva",
     "After=network-online.target",
+    "StartLimitIntervalSec=5min",
+    "StartLimitBurst=5",
     "",
     "[Service]",
     `WorkingDirectory=${ROOT}`,
@@ -134,8 +136,8 @@ function ivaServiceBody() {
     `Environment=PORT=${port}`,
     `Environment=PATH=${NODE_BIN_DIR}:%h/.local/bin:/usr/local/bin:/usr/bin:/bin`,
     "Environment=AGENT_BROWSER_MAX_OUTPUT=24000",
-    "Restart=always",
-    "RestartSec=2s",
+    "Restart=on-failure",
+    "RestartSec=10s",
     "TimeoutStopSec=15s",
     "SendSIGKILL=yes",
     "",
@@ -527,6 +529,8 @@ function cmdDoctor() {
 function cmdStatus() {
   const { profile } = resolveRuntimeWorkflowProfile(ROOT);
   console.log(`Workflow: ${profile.label}`);
+  const health = run(NODE, ["scripts/workflow-health.mjs", "status"]);
+  if (health.status !== 0 && health.status !== 2) warn("Workflow diagnostics reported a storage error");
   requireSystemd();
   run("systemctl", ["--user", "status", "--no-pager", "-n", "5", ...SERVICES]);
   run("systemctl", ["--user", "list-timers", "--no-pager", "iva-memory-*", "iva-reminders.timer"]);
@@ -536,36 +540,54 @@ function cmdRestart() {
   restartServices(); // regenerate the unit before restart → PORT stays in sync with IVA_PORT in .env
   ok("Restarted: iva + telegram-poll");
 }
-// Full reset: stop services, wipe .workflow-data, bring it back up. A plain restart
-// does NOT cure a stuck/bloated run — on startup eve re-enqueues all pending/running
-// runs from .workflow-data ("Re-enqueued N active run(s) on startup"). We clean while the server
-// is stopped (otherwise we'd delete files out from under a live process). Wipes ALL parked dialogs.
-function cmdReset() {
+function cmdRecover() {
   requireSystemd();
-  if (resolveRuntimeWorkflowProfile(ROOT).profile.backend === "postgres") {
-    step("Workflow reset: stopping services…");
-    sc("stop", ...SERVICES);
-    warn("PostgreSQL workflow state is durable and is not deleted by `iva reset`.");
-    warn("To purge sessions, back up and drop/truncate the workflow database intentionally.");
-    const wf = join(ROOT, ".workflow-data");
-    if (existsSync(wf)) warn(".workflow-data exists but Postgres is active; leaving it untouched.");
-    restartServices();
-    ok("Restarted: iva + telegram-poll");
+  const health = cap(NODE, ["scripts/workflow-health.mjs", "status", "--json"]);
+  let report;
+  try { report = JSON.parse(health.out); } catch {}
+  if (!report?.available) {
+    bad(`Recovery paused: ${report?.error || health.err || "workflow storage is unavailable"}`);
+    warn("No state was changed. Restore storage access, then run: iva recover");
+    process.exit(1);
+  }
+  if ((report.states?.wedged || 0) > 0) {
+    warn(`${report.states.wedged} wedged workflow run(s) detected; they will be repaired, not deleted`);
+  }
+  sc("stop", "iva.service");
+  const repair = run(NODE, ["scripts/workflow-health.mjs", "repair"]);
+  if (repair.status !== 0) {
+    sc("start", "iva.service");
+    bad("Recovery repair failed; the agent was brought back with state preserved");
+    process.exit(1);
+  }
+  scQ("reset-failed", ...SERVICES);
+  restartServices();
+  const reenqueue = run(NODE, ["scripts/workflow-health.mjs", "reenqueue"]);
+  if (reenqueue.status !== 0) {
+    bad("Services restarted, but durable runs could not be re-enqueued; state remains preserved");
+    process.exit(1);
+  }
+  ok("Recovery completed: storage was ready; services restarted without deleting workflow state");
+}
+
+// Explicitly cancel active runs through the Workflow event API on either backend. Terminal history,
+// streams, the vault and application data remain intact. This is intentionally not a purge.
+async function cmdReset(args) {
+  requireSystemd();
+  if (!args.includes("--yes") && !(await confirm("Cancel every active workflow session and restart Iva?", false))) {
+    warn("Reset cancelled; no state changed");
     return;
   }
-  step("Full reset: stopping services…");
-  sc("stop", ...SERVICES);
-  const wf = join(ROOT, ".workflow-data");
-  if (existsSync(wf)) {
-    try {
-      rmSync(wf, { recursive: true, force: true });
-      ok(".workflow-data cleared — stuck/accumulated workflow runs reset");
-    } catch (e) {
-      warn(`failed to delete .workflow-data: ${e.message}`);
-    }
-  } else ok(".workflow-data already empty");
-  restartServices();
-  ok("Restarted: iva + telegram-poll");
+  step("Stopping the agent before workflow cancellation…");
+  sc("stop", "iva.service");
+  const reset = run(NODE, ["scripts/workflow-health.mjs", "reset"]);
+  if (reset.status !== 0) {
+    sc("start", "iva.service");
+    bad("Workflow reset failed; the agent was brought back without deleting state");
+    process.exit(1);
+  }
+  sc("start", "iva.service");
+  ok("Reset complete: active runs cancelled; durable history and user data preserved");
 }
 function cmdStart() {
   requireSystemd();
@@ -701,7 +723,8 @@ ${C.b}Commands:${C.x}
   ${C.c}iva doctor${C.x}         diagnose and safely auto-repair the install
   ${C.c}iva status${C.x}         status of services and memory timers
   ${C.c}iva restart${C.x}        restart the agent and Telegram bridge
-  ${C.c}iva reset${C.x}          full reset: clear stuck workflows and restart
+  ${C.c}iva recover${C.x}        diagnose and safely restart without deleting workflow state
+  ${C.c}iva reset${C.x}          cancel all active workflow sessions (confirmation required)
   ${C.c}iva workflow-smoke${C.x} seed|resume  verify workflow session survives restart
   ${C.c}iva workflow-postgres${C.x} enable  install and verify the durable PostgreSQL profile (advanced)
   ${C.c}iva start${C.x} / ${C.c}stop${C.x}    start / stop
@@ -849,6 +872,7 @@ const cmds = {
   doctor: cmdDoctor,
   status: cmdStatus,
   restart: cmdRestart,
+  recover: cmdRecover,
   reset: cmdReset,
   "workflow-smoke": cmdWorkflowSmoke,
   "workflow-postgres": cmdWorkflowPostgres,

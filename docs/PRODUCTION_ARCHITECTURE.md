@@ -138,9 +138,10 @@ iva workflow-smoke resume
 iva reminders
 ```
 
-`iva reset` has deliberately different behavior by backend: it can clear local `.workflow-data`, but it
-does **not** delete durable PostgreSQL workflow state. Clearing the database is a manual, deliberate
-recovery operation.
+`iva restart`, `iva recover` and `iva reset` have the same contract on both backends. Restart changes
+only process lifecycle; recover repairs and re-enqueues without deleting durable state; reset explicitly
+cancels active sessions while preserving terminal history and storage. Iva has no automatic workflow
+purge command.
 
 ## Existing vault upgrades
 
