@@ -167,18 +167,25 @@ async function runPostgresBootstrap(port) {
 async function inspectPostgresFixture() {
   const pool = new Pool({ connectionString: postgresUrl, max: 1 });
   try {
+    const journal = JSON.parse(
+      await readFile(join(replica, "node_modules/@workflow/world-postgres/src/drizzle/migrations/meta/_journal.json"), "utf8"),
+    );
     const schema = await pool.query(`
       SELECT
         to_regclass('workflow_drizzle.workflow_migrations') IS NOT NULL AS migrations,
         to_regclass('workflow.workflow_runs') IS NOT NULL AS workflow_runs,
         to_regclass('workflow.workflow_steps') IS NOT NULL AS workflow_steps,
-        to_regclass('graphile_worker.jobs') IS NOT NULL AS graphile_jobs
+        to_regclass('graphile_worker.jobs') IS NOT NULL AS graphile_jobs,
+        to_regclass('graphile_worker.migrations') IS NOT NULL AS graphile_migrations,
+        (SELECT count(*)::integer FROM workflow_drizzle.workflow_migrations) AS migration_count
     `);
     assert.deepEqual(schema.rows[0], {
       migrations: true,
       workflow_runs: true,
       workflow_steps: true,
       graphile_jobs: true,
+      graphile_migrations: true,
+      migration_count: journal.entries.length,
     });
     const runs = await pool.query("SELECT count(*)::integer AS count FROM workflow.workflow_runs");
     return runs.rows[0].count;

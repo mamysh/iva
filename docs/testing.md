@@ -89,6 +89,9 @@ modes and vault preservation. The PostgreSQL variant runs the official pinned-pa
 fresh real database, verifies the Workflow/Drizzle/Graphile schemas, persists a first turn, repeats
 bootstrap without losing runs, resumes after restart, and proves that no local workflow state was
 created. The broader replica gate still owns SIGKILL recovery and update/rollback tests.
+CI also runs the profile preparer twice on the native Ubuntu runner PostgreSQL cluster. That separate
+gate proves dynamic cluster/config discovery, a role matching the actual Unix runner user, peer auth,
+idempotent database creation, bootstrap/schema verification and the profile-aware build.
 The fixture is destroyed after the run. A dedicated test Telegram bot may be used for a small live
 delivery canary, but it must not poll with the production bot token.
 

@@ -144,9 +144,11 @@ agent/agent.ts
 ```
 
 - `scripts/workflow-smoke.mjs` verifies seed/restart/resume continuity.
+- `scripts/postgres-profile.mjs` owns the explicit Ubuntu/Debian enable operation; pure parsing,
+  SQL, environment and preflight contracts live in `scripts/lib/postgres-profile.mjs`.
 - `deploy/iva-workflow-postgres.environment.example` documents the optional runtime variables.
-- `deploy/postgresql-iva.conf` is an example small-server profile, not a universal OS installer.
-- `bin/iva.mjs` owns backend-aware reset and service environment loading.
+- `deploy/postgresql-iva.conf` is installed beside the dynamically discovered active config.
+- `bin/iva.mjs` owns the CLI route, doctor integration, backend-aware reset and service environment.
 
 Workflow state is not long-term personal memory. Changing the Workflow World must not rewrite the
 vault.
@@ -228,7 +230,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | Installer | `install.sh` | setup, init-vault, CLI unit writer | shell check, clean-install test |
 | CLI/systemd lifecycle | `bin/iva.mjs` | `deploy/`, CLI/deploy docs | integration invariants, Linux smoke |
 | Workflow backend | `scripts/lib/workflow-config.mjs` | agent, package versions, smoke script | config test, both builds, restart/resume |
-| PostgreSQL profile | workflow files above | deploy examples, upstream package migrations | real PostgreSQL bootstrap + smoke |
+| PostgreSQL profile | `scripts/postgres-profile.mjs` + `scripts/lib/postgres-profile.mjs` | deploy examples, upstream package migrations | config test, real PostgreSQL bootstrap + smoke |
 | Update behavior | `bin/iva.mjs` | `scripts/lib/telegram-update.mjs` | update test, rollback scenario |
 | Public documentation | `docs/README.md` | README files and docs checks | `npm test` |
 | Telegram userbot beta | `services/telegram-userbot/` | connection + skill + userbot docs | Python tests, typecheck, opt-in smoke |

@@ -54,9 +54,8 @@ Git's recorded conflict resolutions (`rerere`) are enabled locally to make repea
 
 Default installs remain file-backed and need no database. PostgreSQL is opt-in through:
 
-```dotenv
-WORKFLOW_TARGET_WORLD=@workflow/world-postgres
-WORKFLOW_POSTGRES_URL=postgresql:///iva_workflow?host=/var/run/postgresql
+```bash
+iva workflow-postgres enable
 ```
 
 With this profile, app workflow state lives in `iva_workflow`; the live vault remains at
@@ -67,6 +66,13 @@ optional workflow environment file and then `.env`, embeds the selected World, a
 sanitized `.output/iva-workflow-profile.json`. The service starts through the profile guard and
 exits before accepting messages if its runtime profile differs. `iva status` reports only `local`
 or `PostgreSQL`; it never prints connection details.
+
+The advanced enable operation discovers the actual Debian/Ubuntu PostgreSQL cluster, active config,
+socket and Unix service user; it does not assume PostgreSQL 16 or a user named `iva`. It creates a
+matching peer-auth role/database, runs the pinned upstream bootstrap, verifies all three schema
+surfaces, builds, starts and proves seed/restart/resume. A repeat is idempotent. Failed setup never
+deletes the database, and automatic return to local is allowed only while the PostgreSQL run table is
+still empty.
 
 The example environment and small-VPS PostgreSQL profile live in:
 
