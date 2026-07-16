@@ -276,6 +276,25 @@ function workflowReport(port) {
   return JSON.parse(result.stdout.trim());
 }
 
+function doctorReport(port) {
+  const result = spawnSync(process.execPath, [join(replica, "scripts/doctor.mjs"), "--json"], {
+    cwd: replica,
+    env: replicaEnv(port),
+    encoding: "utf8",
+    timeout: 45_000,
+  });
+  assert.equal(result.status, 1, "replica without systemd must produce a blocking doctor result");
+  const report = JSON.parse(result.stdout.trim());
+  for (const id of ["workflow.available", "workflow.schema", "workflow.write_read"]) {
+    assert.equal(report.checks.find((check) => check.id === id)?.status, "pass", `${id} did not pass`);
+  }
+  const serialized = JSON.stringify(report);
+  assert.doesNotMatch(serialized, /synthetic-replica-key/);
+  assert.doesNotMatch(serialized, /iva-replica-/);
+  if (postgresUrl) assert.ok(!serialized.includes(postgresUrl), "doctor JSON exposed the PostgreSQL URL");
+  return report;
+}
+
 function repairWorkflow(port) {
   const result = spawnSync(process.execPath, [join(replica, "scripts/workflow-health.mjs"), "repair", "--json"], {
     cwd: replica,
@@ -394,6 +413,7 @@ try {
   const textResult = await (await client.session().send("Reply with exactly: REPLICA_OK")).result();
   assertSuccessfulTurn(textResult);
   assert.equal(textResult.message.trim(), "REPLICA_OK");
+  doctorReport(port);
 
   for (const status of [429, 500]) {
     const before = mock.requests.length;
@@ -499,12 +519,12 @@ try {
   if (jsonMode) {
     console.log(JSON.stringify({
       ok: true,
-      canaries: ["text-reply", "provider-429-500", "sigterm-replay", "sigkill-side-effect-once", "model-task-call", "task-persistence", "workflow-restart-resume"],
+      canaries: ["text-reply", "doctor-storage-probe", "provider-429-500", "sigterm-replay", "sigkill-side-effect-once", "model-task-call", "task-persistence", "workflow-restart-resume"],
       resources: resourceReport ?? null,
     }, null, 2));
   } else {
     console.log(
-      `replica smoke passed (${postgresMode ? "PostgreSQL" : "local"}): transient provider faults, SIGTERM/SIGKILL recovery, side effect once, restart/resume`,
+      `replica smoke passed (${postgresMode ? "PostgreSQL" : "local"}): doctor storage probe, transient provider faults, SIGTERM/SIGKILL recovery, side effect once, restart/resume`,
     );
     if (resourceReport) console.log(JSON.stringify(resourceReport, null, 2));
   }

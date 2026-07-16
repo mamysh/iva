@@ -14,6 +14,7 @@ const PROFILE_ENV_PATH = join(ROOT, "deploy/iva-workflow.environment");
 const ENV_PATH = join(ROOT, ".env");
 const command = process.argv[2] || "status";
 const json = process.argv.includes("--json");
+const persistSample = !process.argv.includes("--no-sample");
 
 function readEnvFile(path) {
   const env = {};
@@ -217,15 +218,17 @@ async function reenqueueActive(env, profile) {
   } finally { await world.close(); }
 }
 
-function attachGrowth(report, env) {
+function attachGrowth(report, env, persist = true) {
   const dataDir = resolve(ROOT, env.ASSISTANT_DATA_DIR || "data");
   const path = join(dataDir, "workflow-health.json");
   let previous;
   try { previous = JSON.parse(readFileSync(path, "utf8")); } catch {}
   const sample = { at: Date.now(), bytes: report.storageBytes };
   report.storageGrowth = storageGrowth(previous, sample);
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(path, `${JSON.stringify(sample)}\n`, { mode: 0o600 });
+  if (persist) {
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(path, `${JSON.stringify(sample)}\n`, { mode: 0o600 });
+  }
   return report;
 }
 
@@ -263,7 +266,11 @@ async function main() {
   }
   if (command !== "status") throw new Error("Usage: workflow-health.mjs <status|repair|reenqueue|reset|contract> [--json]");
   try {
-    const report = attachGrowth(profile.backend === "postgres" ? await postgresReport(env) : await localReport(env), env);
+    const report = attachGrowth(
+      profile.backend === "postgres" ? await postgresReport(env) : await localReport(env),
+      env,
+      persistSample,
+    );
     print(report);
     if (report.states.wedged > 0) process.exitCode = 2;
   } catch (error) {

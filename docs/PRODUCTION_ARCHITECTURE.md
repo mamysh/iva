@@ -105,8 +105,10 @@ iva doctor
 iva status
 ```
 
-`iva doctor` must report both `iva.service` and `iva-telegram-poll.service` active, six enabled
-timers, the vault Git remote, and no failed checks. The polling bridge requires
+`iva doctor` must report `healthy` or only understood non-blocking `degraded` checks. Its layered
+contract includes both services, HTTP readiness, six timers, Workflow schema/write-read access,
+Telegram/provider readiness, memory jobs, backups and disk capacity. Exit `1` means a failure blocks
+replies; `iva doctor --json` emits the same schema without auto-repair or private support data. The polling bridge requires
 `TELEGRAM_WEBHOOK_SECRET_TOKEN`; if it is absent from a legacy `.env`, create a new random secret
 locally on the VPS before restarting the bridge. Never paste the value into a terminal transcript,
 issue, or commit.
