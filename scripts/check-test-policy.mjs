@@ -11,6 +11,7 @@ assert.equal(packageJson.scripts["verify:pr"], "npm test && npm run typecheck &&
 assert.match(packageJson.scripts.test, /node scripts\/check-core-canaries\.mjs/);
 assert.match(packageJson.scripts.test, /node scripts\/check-capability-manifest\.mjs/);
 assert.match(packageJson.scripts.test, /node scripts\/check-doctor-contract\.mjs/);
+assert.match(packageJson.scripts.test, /node scripts\/check-update-transaction\.mjs/);
 
 assert.match(workflow, /^permissions:\n  contents: read$/m);
 assert.match(workflow, /uses: actions\/checkout@v6/);
@@ -22,6 +23,10 @@ assert.match(workflow, /name: Build \(\$\{\{ matrix\.profile\.name \}\}\)/);
 assert.match(workflow, /selector: "@workflow\/world-postgres"/);
 assert.match(workflow, /node scripts\/start\.mjs --check-profile/);
 assert.match(workflow, /image: postgres:17/);
+assert.match(workflow, /name: Install PostgreSQL 17 client/);
+assert.match(workflow, /postgresql-client-17/);
+assert.match(workflow, /pg_dump --version \| grep -E ' 17\\\.'/);
+assert.match(workflow, /postgres-replica:[\s\S]*name: Install PostgreSQL 17 client[\s\S]*run: npm run replica:postgres/);
 assert.match(workflow, /run: npm run replica:postgres/);
 assert.match(workflow, /name: PostgreSQL peer profile/);
 assert.match(workflow, /node scripts\/postgres-profile\.mjs prepare && node scripts\/postgres-profile\.mjs prepare/);

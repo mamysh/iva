@@ -33,10 +33,13 @@ export async function checkDeploymentUpdate(runGit) {
   const local = await runGit("rev-parse", "HEAD");
   const remote = await runGit("rev-parse", `origin/${branch}`);
   const behindText = await runGit("rev-list", "--count", `HEAD..origin/${branch}`);
+  const aheadText = await runGit("rev-list", "--count", `origin/${branch}..HEAD`);
   if (!/^\d+$/.test(behindText)) throw new Error(`invalid git behind count: ${behindText || "empty"}`);
+  if (!/^\d+$/.test(aheadText)) throw new Error(`invalid git ahead count: ${aheadText || "empty"}`);
 
   const behind = Number(behindText);
+  const ahead = Number(aheadText);
   const localVer = packageVersion(await runGit("show", "HEAD:package.json"));
   const remoteVer = packageVersion(await runGit("show", `origin/${branch}:package.json`));
-  return { branch, local, remote, behind, localVer, remoteVer, hasUpdate: behind > 0 && local !== remote };
+  return { branch, local, remote, behind, ahead, rewritten: ahead > 0, localVer, remoteVer, hasUpdate: local !== remote };
 }

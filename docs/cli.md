@@ -40,7 +40,7 @@ The installer puts `iva` in `~/.local/bin`. Commands that touch systemd need a L
 
 | Command | What it does |
 |---|---|
-| `iva update [--force]` | git fetch + fast-forward (hard-reset if upstream was force-pushed), `npm ci` when package files changed, profile-aware Eve build, restart. `--force` rebuilds with no new commits. A failed build never restarts the service — the old build keeps running |
+| `iva update [--force]` | Transactional update: preflight, detached dependency install/tests/typecheck/build/profile canary, required migration backup, atomic activation, restart and doctor readiness. A failed build leaves the active version untouched; failed readiness automatically restores the previous commit/output/dependencies. `--force` repeats the transaction at the current commit |
 | `iva config` | The 5-step setup wizard, then offers a restart to apply |
 | `iva login [--browser]` | Sign in to an OpenAI (ChatGPT) subscription for `MODEL_PROVIDER=codex`. Default is device code (a link + one-time code, works on a headless VPS); `--browser` runs the local PKCE flow. Token → `data/codex-auth.json` (chmod 600) |
 | `iva doctor [--json]` | Layered health check for configuration, build/profile, services, Workflow storage, Telegram, provider, memory, backups and capacity. The human command applies only safe service/build repairs; `--json` returns a sanitized support/CI report without auto-repair |
@@ -67,6 +67,8 @@ iva reminders       # active reminders
 `iva reset --yes` skips the interactive confirmation for an already authorized automation. There is intentionally no workflow `purge` command: destructive deletion requires a verified backup/restore design first.
 
 `iva doctor` reports `healthy`, `degraded`, or `blocked`. Exit code `1` means at least one failure blocks replies; warnings and non-blocking failures produce `degraded` with exit code `0`. Each failing check includes one action to take. `iva doctor --json` uses schema version `1` and excludes credentials, database URLs, user/chat IDs, private paths and memory contents, so its output can be attached to a support request. The nightly `npm run doctor` command is a separate memory-maintenance job; it is not the installation/runtime diagnostic.
+
+Update prints one final state: `UPDATED` or `ROLLED BACK`. Migration manifests support only the current migration version or one sequential N−1 → N hop. A migration command cannot run unless its failure strategy and verified Workflow backup are declared. Optional global CLIs are outside this critical transaction and may be refreshed separately.
 
 Reminder delivery is claimed durably before Telegram is called. A definite Telegram rejection may retry. If the process or network fails after the call begins, the reminder becomes `delivery_unknown` and is not automatically resent, because Telegram's Bot API provides no idempotency key and a blind retry could deliver a duplicate.
 

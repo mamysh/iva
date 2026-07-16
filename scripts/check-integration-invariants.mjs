@@ -24,6 +24,14 @@ assert.match(doctorContract, /schemaVersion: DOCTOR_SCHEMA_VERSION/);
 assert.match(doctorContract, /blocksReplies/);
 assert.match(doctorContract, /sanitizeSupportBundle/);
 
+const updateRuntime = read("scripts/update-runtime.mjs");
+assert.match(updateRuntime, /worktree", "add", "--detach"/);
+assert.match(updateRuntime, /npm\(\["test"\]/);
+assert.match(updateRuntime, /rollbackActivation/);
+assert.match(updateRuntime, /doctor", "--json"/);
+assert.match(updateRuntime, /profile\.backend === "local" \? "local" : profile\.world/);
+assert.doesNotMatch(updateRuntime, /@googleworkspace\/cli@latest/);
+
 const proxy = read("services/telegram-userbot/serve.py");
 assert.match(proxy, /setdefault\("TELEGRAM_EXPOSED_TOOLS", "read-only"\)/);
 assert.match(proxy, /host not in \{"127\.0\.0\.1", "::1", "localhost"\}/);

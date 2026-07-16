@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "migrationVersion": 1,
+  "migrations": [
+    {
+      "version": 1,
+      "id": "transactional-update-baseline",
+      "profiles": ["local", "postgres"],
+      "command": null,
+      "backup": "none",
+      "failureStrategy": "forward-compatible"
+    }
+  ]
+}

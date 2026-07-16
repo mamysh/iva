@@ -204,7 +204,9 @@ async function handleUpdateCheck(chatId) {
       : `${info.local.slice(0, 7)} → ${info.remote.slice(0, 7)}`;
   await tg("sendMessage", {
     chat_id: chatId,
-    text: `🆕 Update available: ${bump} (${info.behind} new commit${info.behind === 1 ? "" : "s"}).\nUpdate now?`,
+    text: info.rewritten
+      ? `🆕 Deployment history changed: ${bump}. The transactional updater will verify and replace the old commit.\nUpdate now?`
+      : `🆕 Update available: ${bump} (${info.behind} new commit${info.behind === 1 ? "" : "s"}).\nUpdate now?`,
     reply_markup: {
       inline_keyboard: [[
         { text: "⬆️ Update", callback_data: "iva_update:do" },

@@ -9,6 +9,7 @@ node_modules
 deploy/iva-workflow.environment
 .next
 .output
+.iva-update
 .nitro
 dist
 .DS_Store

@@ -301,64 +301,20 @@ async function cmdUpdate(args) {
   const force = args.includes("--force");
   await showTree();
   step("Updating Iva…");
-  const before = gitHead();
-  const branch = cap("git", ["rev-parse", "--abbrev-ref", "HEAD"]).out || "main";
-  const fetchRes = cap("git", ["fetch", "--prune", "origin", branch]);
-  console.log([fetchRes.out, fetchRes.err].filter(Boolean).join("\n"));
-  if (fetchRes.code !== 0) {
-    bad("git fetch failed — check the network/remote, then retry");
-    await notifyTelegram("❌ Iva update failed: couldn't reach the repo (git fetch). Old version still running.");
-    process.exit(1);
-  }
-  // Fast-forward when possible; on a rewritten upstream (force-push) the branches
-  // diverge and ff is impossible — hard-reset to the remote instead of failing.
-  // Untracked files (.env, vault, …) are preserved by reset --hard.
-  let upd = cap("git", ["merge", "--ff-only", `origin/${branch}`]);
-  if (upd.code !== 0) {
-    warn("Upstream history was rewritten — resetting to origin/" + branch);
-    upd = cap("git", ["reset", "--hard", `origin/${branch}`]);
-  }
-  console.log([upd.out, upd.err].filter(Boolean).join("\n"));
-  if (upd.code !== 0) {
-    bad("git update failed — resolve manually (git status), then retry");
-    await notifyTelegram("❌ Iva update failed: git update conflict — resolve on the server. Old version still running.");
-    process.exit(1);
-  }
-  const after = gitHead();
-  const changed = before !== after;
-  if (!changed && !force) {
-    ok(`Already up to date (${after}). Nothing to rebuild (--force to force it).`);
+  const { performUpdate } = await import("../scripts/update-runtime.mjs");
+  const result = await performUpdate({ force, log: (message) => console.log(message) });
+  if (result.outcome === "current") {
+    ok(`Already up to date (${result.currentCommit.slice(0, 7)}). Nothing to rebuild (--force to force it).`);
     return;
   }
-  if (changed) {
-    const files = cap("git", ["diff", "--name-only", `${before}..${after}`]).out.split("\n");
-    if (files.includes("package-lock.json") || files.includes("package.json")) {
-      const hasLock = existsSync(join(ROOT, "package-lock.json"));
-      step(`Dependencies changed — npm ${hasLock ? "ci" : "install"}…`);
-      run(NPM, [hasLock ? "ci" : "install"]);
-    }
+  if (result.outcome === "updated") {
+    ok(`UPDATED: ${result.currentCommit.slice(0, 7)} → ${result.targetCommit.slice(0, 7)}`);
+    await notifyTelegram(`✅ Iva updated: ${result.currentCommit.slice(0, 7)} → ${result.targetCommit.slice(0, 7)}`);
+    return;
   }
-  migrateEnv(); // old .env: add IVA_PORT and move off the taken :3000 (before build/restart)
-  step("Building (eve build)…");
-  if (run(NPM, ["run", "build"]).status !== 0) {
-    bad("Build failed — NOT restarting the service (the old build stays working)");
-    await notifyTelegram("❌ Iva update failed: build error. Old version still running.");
-    process.exit(1);
-  }
-  // Keep the Google Workspace CLI current alongside Iva (best-effort; Google tasks are optional).
-  step("Refreshing the Google Workspace CLI (gws)…");
-  if (cap(NPM, ["i", "-g", "@googleworkspace/cli@latest"]).code === 0) ok("gws up to date");
-  else warn("couldn't refresh gws (retry: npm i -g @googleworkspace/cli)");
-  if (hasSystemd()) {
-    step("Refreshing systemd units and restarting…");
-    restartServices();
-    ok("Restarted: iva + telegram-poll");
-    restartUserbotIfActive(); // opt-in proxy runs vendored in-repo code → restart onto the new build
-  } else {
-    warn("systemd unavailable — restart the process manually");
-  }
-  ok(`Done: ${before} → ${after}`);
-  await notifyTelegram(`✅ Iva updated: ${before} → ${after}`);
+  bad(`ROLLED BACK: ${result.reason}. Previous version is active.`);
+  await notifyTelegram(`↩️ Iva update rolled back: ${result.reason}. Previous version is active.`);
+  process.exit(1);
 }
 
 async function cmdConfig() {

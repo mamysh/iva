@@ -82,6 +82,16 @@ iva update   # from here on, update handles divergence itself
 
 `.env` and the vault are untracked — `reset --hard` doesn't touch them.
 
+Current versions detect rewritten deployment history before activation and run the same transactional
+update. `ROLLED BACK` means either staging checks rejected the target while the old service kept
+running, or post-start readiness failed and Iva restored the previous commit, `.output`, dependencies
+and generated units. Run `iva doctor`; the retained previous transaction metadata is under the ignored
+`.iva-update/previous/` directory. Do not delete it while investigating a rollback.
+
+If preflight reports `sequential update required`, the target contains more than one migration hop.
+Deploy the intermediate release first. If it reports backup blocked, install/fix the required
+PostgreSQL dump tools or restore access to local Workflow storage; update will not stop the service.
+
 ### gh not available warnings
 
 Cause: the nightly doctor backs your vault up to a private `iva-vault` GitHub repo through `gh`; unauthenticated `gh` means no off-box backup.
