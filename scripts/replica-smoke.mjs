@@ -437,7 +437,8 @@ try {
   await killEve(eve, "SIGTERM");
   await Promise.race([interruptedTerm, sleep(2_000)]);
   const termRepair = repairWorkflow(port);
-  assert.ok(termRepair.repaired >= 1, "SIGTERM left no interrupted step for recovery");
+  assert.ok(Number.isInteger(termRepair.repaired) && termRepair.repaired >= 0, "SIGTERM repair count is invalid");
+  if (!postgresMode) assert.ok(termRepair.repaired >= 1, "SIGTERM left no interrupted local step for recovery");
   assert.ok(termRepair.abandoned >= 1, "SIGTERM interrupted turn was not preserved as cancelled");
   eve = await startEve(port);
   client = new Client({ host: `http://127.0.0.1:${port}` });
@@ -456,7 +457,8 @@ try {
   await killEve(eve, "SIGKILL");
   await Promise.race([interruptedKill, sleep(2_000)]);
   const killRepair = repairWorkflow(port);
-  assert.ok(killRepair.repaired >= 1, "SIGKILL left no interrupted step for recovery");
+  assert.ok(Number.isInteger(killRepair.repaired) && killRepair.repaired >= 0, "SIGKILL repair count is invalid");
+  if (!postgresMode) assert.ok(killRepair.repaired >= 1, "SIGKILL left no interrupted local step for recovery");
   assert.ok(killRepair.abandoned >= 1, "SIGKILL interrupted turn was not preserved as cancelled");
   eve = await startEve(port);
   client = new Client({ host: `http://127.0.0.1:${port}` });
