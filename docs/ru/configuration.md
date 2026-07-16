@@ -103,4 +103,9 @@ iva restart
 | `WORKFLOW_POSTGRES_WORKER_CONCURRENCY` | `8` | Осторожный дефолт для маленького single-user VPS. |
 | `WORKFLOW_POSTGRES_MAX_POOL_SIZE` | `10` | Держите ниже PostgreSQL `max_connections` с запасом под системные подключения. |
 
-В репозитории есть пример `deploy/iva-workflow-postgres.environment.example` и небольшой PostgreSQL profile `deploy/postgresql-iva.conf`. Файл workflow environment загружается раньше `.env`, поэтому `.env` имеет приоритет. Сборка сохраняет безопасный descriptor профиля; старт и `iva doctor` блокируют несовпадение до приёма сообщений. Шаги включения и smoke test описаны в английской канонической странице [deploy.md](../deploy.md#workflow-backend).
+Поддерживаемый self-host путь — `iva workflow-postgres enable`: команда сама находит версию,
+config/socket PostgreSQL и фактического service user, выполняет bootstrap/schema-check, собирает
+профиль и проверяет restart/resume. Это advanced opt-in, обычный setup wizard не меняется. Файл
+workflow environment загружается раньше `.env`, поэтому `.env` имеет приоритет. Сборка сохраняет
+безопасный descriptor профиля; старт и `iva doctor` блокируют несовпадение до приёма сообщений.
+Preflight и поведение при ошибке описаны в [deploy.md](../deploy.md#workflow-backend).

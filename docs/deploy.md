@@ -68,20 +68,32 @@ One thing that trips people up: eve has a `defineSchedule` API, but on self-host
 Default installs use eve's local file-backed workflow state in `.workflow-data`. That is the lightest setup and needs no database. Long-running self-host installs can opt into the official PostgreSQL Workflow World instead:
 
 ```bash
-sudo install -m 0644 deploy/postgresql-iva.conf /etc/postgresql/16/main/conf.d/iva.conf
-sudo systemctl restart postgresql
-
-sudo -u postgres createuser iva --no-createdb --no-createrole --no-superuser
-sudo -u postgres createdb iva_workflow --owner=iva
-
-cp deploy/iva-workflow-postgres.environment.example deploy/iva-workflow.environment
-npm run build
-iva restart
+iva workflow-postgres enable
 ```
 
-The generated `iva.service` loads `deploy/iva-workflow.environment` if it exists, then `.env`; the later `.env` value wins. Keep secrets in `.env` if your database URL contains a password. The build wrapper resolves the selector with the same precedence and records a sanitized profile descriptor in `.output`. Startup fails before accepting messages when that descriptor differs from runtime. The checked-in example uses a local Unix socket URL, so PostgreSQL peer auth expects a database role matching the systemd service user (`iva`). It also uses conservative pool settings for a 1 vCPU / 1 GiB VPS.
+This is an explicit advanced operation; PostgreSQL is not another question in the normal setup wizard.
+It supports Ubuntu 22.04+ and Debian 12+, requires at least 1 GiB combined RAM/swap and 1 GiB free
+disk, and asks for sudo only for OS/PostgreSQL administration. The command:
 
-Run a restart/resume smoke test after enabling Postgres:
+1. installs PostgreSQL packages when absent and discovers the actual cluster, version and active
+   config path;
+2. installs the conservative small-server tuning beside that active config without assuming a
+   versioned `/etc` path;
+3. creates a peer-auth role matching the Unix user that owns `iva.service`, plus the `iva_workflow`
+   database, idempotently;
+4. writes the ignored profile environment with mode `0600`, runs the official pinned-package
+   bootstrap and verifies the Workflow, Drizzle migration and Graphile Worker schemas;
+5. builds the PostgreSQL profile, starts Iva, and runs a two-message seed/restart/resume smoke test.
+
+The smoke uses the configured model provider, so it consumes two small model turns. It does not write
+facts to the vault or create tasks/reminders. Re-running the command preserves the schema and all
+existing runs. On failure the database is never deleted. The previous local profile is restored only
+when the PostgreSQL run table is still empty; once a PostgreSQL session exists, the command fails
+closed and leaves the durable state intact for diagnosis.
+
+The generated `iva.service` loads `deploy/iva-workflow.environment` if it exists, then `.env`; the later `.env` value wins. Keep secrets in `.env` if your database URL contains a password. The build wrapper resolves the selector with the same precedence and records a sanitized profile descriptor in `.output`. Startup fails before accepting messages when that descriptor differs from runtime.
+
+The enable operation already runs this restart/resume acceptance check. To repeat only that check:
 
 ```bash
 iva workflow-smoke seed
@@ -91,7 +103,7 @@ iva workflow-smoke resume
 
 `iva reset` has different semantics by backend. With the default local backend it clears `.workflow-data`. With Postgres enabled it restarts services but intentionally does not drop or truncate the workflow database.
 
-The variables match Workflow's official Postgres world naming: `WORKFLOW_TARGET_WORLD=@workflow/world-postgres` and `WORKFLOW_POSTGRES_URL`. The old `IVA_WORKFLOW_WORLD` alias and the `postgres` shorthand are rejected so build, service, doctor, reset and update cannot interpret the same installation differently.
+The generated variables match Workflow's official Postgres world naming: `WORKFLOW_TARGET_WORLD=@workflow/world-postgres` and `WORKFLOW_POSTGRES_URL`. The old `IVA_WORKFLOW_WORLD` alias and the `postgres` shorthand are rejected so build, service, doctor, reset and update cannot interpret the same installation differently. `deploy/iva-workflow-postgres.environment.example` remains a reference for externally managed PostgreSQL; the supported self-host path is the command above.
 
 ## nginx and TLS
 

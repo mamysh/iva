@@ -22,6 +22,7 @@ for (const path of ["README.md", "README.ru.md"]) {
   assert.match(text, /`\/update`/);
 }
 assert.match(read("docs/deploy.md"), /two systemd user services and six timers/i);
+assert.match(read("docs/deploy.md"), /iva workflow-postgres enable/);
 assert.match(read("docs/userbot.md"), /49 upstream read-only tools/);
 assert.match(read("docs/userbot.md"), /four local onboarding tools/);
 

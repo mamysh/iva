@@ -420,14 +420,27 @@ function cmdDoctor() {
     if (run(NPM, ["run", "build"]).status === 0) (ok("Built"), fixN++);
     else (bad("Build failed"), badN++);
   }
+  let workflowProfile;
   try {
     const { profile } = resolveRuntimeWorkflowProfile(ROOT);
+    workflowProfile = profile;
     assertWorkflowProfileMatch(readWorkflowBuildDescriptor(ROOT), profile);
     ok(`Workflow: ${profile.label} (build/runtime match)`);
     okN++;
   } catch (error) {
     bad(error.message);
     badN++;
+  }
+  if (workflowProfile?.backend === "postgres") {
+    const postgres = cap(NODE, ["scripts/postgres-profile.mjs", "check"]);
+    if (postgres.code === 0) {
+      ok("PostgreSQL workflow schema ready");
+      okN++;
+    } else {
+      const detail = postgres.err.split("\n").filter(Boolean).pop() || "schema check failed";
+      bad(`PostgreSQL workflow unavailable — ${detail}; run: iva workflow-postgres enable`);
+      badN++;
+    }
   }
 
   if (!hasSystemd()) {
@@ -646,6 +659,16 @@ function cmdWorkflowSmoke(args) {
   process.exit(r.status ?? 1);
 }
 
+function cmdWorkflowPostgres(args) {
+  const subcommand = args[0] || "enable";
+  if (subcommand !== "enable") {
+    console.log("Usage: iva workflow-postgres enable");
+    return;
+  }
+  const result = run(NODE, ["scripts/postgres-profile.mjs", "enable"]);
+  process.exit(result.status ?? 1);
+}
+
 // OpenAI subscription (ChatGPT) login — device code by default, --browser for the PKCE flow.
 // Writes an OAuth token to data/codex-auth.json (0600); used when MODEL_PROVIDER=codex.
 async function cmdLogin(args) {
@@ -680,6 +703,7 @@ ${C.b}Commands:${C.x}
   ${C.c}iva restart${C.x}        restart the agent and Telegram bridge
   ${C.c}iva reset${C.x}          full reset: clear stuck workflows and restart
   ${C.c}iva workflow-smoke${C.x} seed|resume  verify workflow session survives restart
+  ${C.c}iva workflow-postgres${C.x} enable  install and verify the durable PostgreSQL profile (advanced)
   ${C.c}iva start${C.x} / ${C.c}stop${C.x}    start / stop
   ${C.c}iva reminders${C.x}    show active reminders
   ${C.c}iva usage${C.x} [win]      token usage (last|today|week|month|by-model|by-source|tail)
@@ -827,6 +851,7 @@ const cmds = {
   restart: cmdRestart,
   reset: cmdReset,
   "workflow-smoke": cmdWorkflowSmoke,
+  "workflow-postgres": cmdWorkflowPostgres,
   reminders: cmdReminders,
   usage: cmdUsage,
   start: cmdStart,

@@ -121,6 +121,8 @@ export function createCapabilityManifest() {
       ],
       configurationSource: "scripts/lib/workflow-config.mjs",
       buildDescriptor: ".output/iva-workflow-profile.json",
+      postgresEnableCommand: "iva workflow-postgres enable",
+      postgresIntegrationGate: "npm run replica:postgres",
     },
     runtime: runtimeVersions(packageJson, lock),
   };

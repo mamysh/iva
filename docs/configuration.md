@@ -110,4 +110,10 @@ Leave these unset for the default local `.workflow-data` backend. For long-runni
 | `WORKFLOW_POSTGRES_WORKER_CONCURRENCY` | `8` | Conservative default for a tiny single-user VPS. |
 | `WORKFLOW_POSTGRES_MAX_POOL_SIZE` | `10` | Keep below PostgreSQL `max_connections` after system overhead. |
 
-The repository includes `deploy/iva-workflow-postgres.environment.example` and a small PostgreSQL profile in `deploy/postgresql-iva.conf`. The optional workflow environment file is loaded before `.env`, so `.env` wins when both define the selector. `npm run build` records a sanitized descriptor in `.output`; startup and `iva doctor` reject a build/runtime mismatch before Iva accepts messages. Full setup and smoke-test steps: [deploy.md](./deploy.md#workflow-backend).
+For a supported self-host setup, run `iva workflow-postgres enable`; it discovers the installed
+PostgreSQL version/config/socket and the actual service user, bootstraps and validates the schema,
+builds the matching profile, and proves restart/resume. It remains an advanced opt-in and does not
+change the normal setup wizard. The optional workflow environment file is loaded before `.env`, so
+`.env` wins when both define the selector. `npm run build` records a sanitized descriptor in
+`.output`; startup and `iva doctor` reject a build/runtime mismatch before Iva accepts messages.
+Full preflight and failure semantics: [deploy.md](./deploy.md#workflow-backend).

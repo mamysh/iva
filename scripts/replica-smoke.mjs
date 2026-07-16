@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,11 +10,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Client } from "eve/client";
+import { Pool } from "pg";
 import { startMockOpenAiServer } from "./lib/mock-openai-server.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const baselineMode = process.argv.includes("--baseline");
 const jsonMode = process.argv.includes("--json");
+const postgresMode = process.argv.includes("--postgres");
+const postgresUrl = process.env.POSTGRES_FIXTURE_URL;
 const sandbox = await mkdtemp(join(tmpdir(), "iva-replica-"));
 const replica = join(sandbox, "app");
 const logs = [];
@@ -84,7 +88,7 @@ async function prepareReplica() {
 }
 
 function replicaEnv(port) {
-  return {
+  const env = {
     PATH: process.env.PATH ?? "",
     HOME: sandbox,
     NODE_ENV: "development",
@@ -99,12 +103,21 @@ function replicaEnv(port) {
     ASSISTANT_TIMEZONE: "UTC",
     MEMORY_SEARCH_MODE: "bm25",
   };
+  if (postgresMode) {
+    env.WORKFLOW_TARGET_WORLD = "@workflow/world-postgres";
+    env.WORKFLOW_POSTGRES_URL = postgresUrl;
+    env.WORKFLOW_QUEUE_NAMESPACE = "eve";
+    env.WORKFLOW_POSTGRES_JOB_PREFIX = "iva_fixture_";
+    env.WORKFLOW_POSTGRES_WORKER_CONCURRENCY = "8";
+    env.WORKFLOW_POSTGRES_MAX_POOL_SIZE = "10";
+  }
+  return env;
 }
 
 async function startEve(port) {
   const child = spawn(
     process.execPath,
-    [join(replica, "node_modules/eve/bin/eve.js"), "start", "--host", "127.0.0.1", "--port", String(port)],
+    [join(replica, "scripts/start.mjs"), "--host", "127.0.0.1", "--port", String(port)],
     { cwd: replica, env: replicaEnv(port), stdio: ["ignore", "pipe", "pipe"], detached: true },
   );
   for (const stream of [child.stdout, child.stderr]) {
@@ -120,7 +133,7 @@ async function startEve(port) {
 async function buildReplica(port) {
   const child = spawn(
     process.execPath,
-    [join(replica, "node_modules/eve/bin/eve.js"), "build"],
+    [join(replica, "scripts/build.mjs")],
     { cwd: replica, env: replicaEnv(port), stdio: ["ignore", "pipe", "pipe"] },
   );
   for (const stream of [child.stdout, child.stderr]) {
@@ -132,6 +145,53 @@ async function buildReplica(port) {
   }
   const code = await new Promise((resolve) => child.once("exit", resolve));
   if (code !== 0) throw new Error(`Replica build exited with ${code}\n${logs.join("").slice(-8000)}`);
+}
+
+async function runPostgresBootstrap(port) {
+  const child = spawn(process.execPath, [join(replica, "node_modules/@workflow/world-postgres/bin/setup.js")], {
+    cwd: replica,
+    env: replicaEnv(port),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  for (const stream of [child.stdout, child.stderr]) {
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk) => {
+      logs.push(chunk);
+      if (logs.length > 80) logs.shift();
+    });
+  }
+  const code = await new Promise((resolve) => child.once("exit", resolve));
+  if (code !== 0) throw new Error(`PostgreSQL bootstrap exited with ${code}\n${logs.join("").slice(-8000)}`);
+}
+
+async function inspectPostgresFixture() {
+  const pool = new Pool({ connectionString: postgresUrl, max: 1 });
+  try {
+    const journal = JSON.parse(
+      await readFile(join(replica, "node_modules/@workflow/world-postgres/src/drizzle/migrations/meta/_journal.json"), "utf8"),
+    );
+    const schema = await pool.query(`
+      SELECT
+        to_regclass('workflow_drizzle.workflow_migrations') IS NOT NULL AS migrations,
+        to_regclass('workflow.workflow_runs') IS NOT NULL AS workflow_runs,
+        to_regclass('workflow.workflow_steps') IS NOT NULL AS workflow_steps,
+        to_regclass('graphile_worker.jobs') IS NOT NULL AS graphile_jobs,
+        to_regclass('graphile_worker.migrations') IS NOT NULL AS graphile_migrations,
+        (SELECT count(*)::integer FROM workflow_drizzle.workflow_migrations) AS migration_count
+    `);
+    assert.deepEqual(schema.rows[0], {
+      migrations: true,
+      workflow_runs: true,
+      workflow_steps: true,
+      graphile_jobs: true,
+      graphile_migrations: true,
+      migration_count: journal.entries.length,
+    });
+    const runs = await pool.query("SELECT count(*)::integer AS count FROM workflow.workflow_runs");
+    return runs.rows[0].count;
+  } finally {
+    await pool.end();
+  }
 }
 
 async function waitForHealth(client, child, timeoutMs = 90_000) {
@@ -181,9 +241,15 @@ function assertSuccessfulTurn(result) {
 }
 
 try {
+  if (postgresMode && !postgresUrl) throw new Error("POSTGRES_FIXTURE_URL is required with --postgres");
+  if (postgresMode && baselineMode) throw new Error("--baseline supports only the local profile");
   await prepareReplica();
   mock = await startMockOpenAiServer();
   const port = await freePort();
+  if (postgresMode) {
+    await runPostgresBootstrap(port);
+    assert.equal(await inspectPostgresFixture(), 0, "fresh PostgreSQL fixture must start without workflow runs");
+  }
   const buildStarted = performance.now();
   await buildReplica(port);
   const buildDurationMs = Math.round(performance.now() - buildStarted);
@@ -257,6 +323,12 @@ try {
   const savedState = remembered.state;
 
   await stopEve(eve);
+  if (postgresMode) {
+    const runsBeforeRepeat = await inspectPostgresFixture();
+    assert.ok(runsBeforeRepeat > 0, "first PostgreSQL turns did not persist workflow runs");
+    await runPostgresBootstrap(port);
+    assert.equal(await inspectPostgresFixture(), runsBeforeRepeat, "repeat bootstrap changed persisted workflow runs");
+  }
   eve = await startEve(port);
   client = new Client({ host: `http://127.0.0.1:${port}` });
   await waitForHealth(client, eve);
@@ -268,6 +340,7 @@ try {
   assert.equal(resume.message.trim(), marker);
 
   assert.ok(mock.requests.length >= 5);
+  if (postgresMode) assert.equal(existsSync(join(replica, ".workflow-data")), false, "PostgreSQL profile wrote local workflow state");
   if (jsonMode) {
     console.log(JSON.stringify({
       ok: true,
@@ -275,7 +348,9 @@ try {
       resources: resourceReport ?? null,
     }, null, 2));
   } else {
-    console.log("replica smoke passed: text reply, model tool call, task persistence, workflow restart/resume");
+    console.log(
+      `replica smoke passed (${postgresMode ? "PostgreSQL" : "local"}): text reply, model tool call, task persistence, workflow restart/resume`,
+    );
     if (resourceReport) console.log(JSON.stringify(resourceReport, null, 2));
   }
 } catch (error) {
