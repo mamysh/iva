@@ -68,13 +68,20 @@ function lastSuccessfulUnitRun(name) {
 
 async function healthOk() {
   const host = env.ASSISTANT_HOST || `http://127.0.0.1:${env.IVA_PORT || "8723"}`;
-  try {
-    await Promise.race([
-      new EveClient({ host }).health(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3_000)),
-    ]);
-    return true;
-  } catch { return false; }
+  const client = new EveClient({ host });
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    try {
+      await Promise.race([
+        client.health(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3_000)),
+      ]);
+      return true;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+  return false;
 }
 
 function configurationSnapshot() {
