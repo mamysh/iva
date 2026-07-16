@@ -64,6 +64,7 @@ assert.match(setup, /chmod\(ENV_PATH, 0o600\)/);
 assert.match(oauth, /writeFileSync\(tmp, JSON\.stringify\(auth, null, 2\), \{ mode: 0o600 \}\)/);
 assert.match(oauth, /chmodSync\(tmp, 0o600\)/);
 assert.match(install, /install_stage build "npm run build && bash install\.sh"/);
+assert.match(install, /exec "\$IVA_WRAPPER" update --force/);
 assert.match(install, /step .*profile-aware Eve build/);
 assert.match(install, /^npm run build$/m);
 assert.doesNotMatch(install, /npm exec -- eve build/);

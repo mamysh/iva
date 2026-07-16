@@ -124,6 +124,9 @@ export function createCapabilityManifest() {
       postgresEnableCommand: "iva workflow-postgres enable",
       postgresIntegrationGate: "npm run replica:postgres",
       lifecycle: {
+        updateCommand: "iva update",
+        updateTransactionSource: "scripts/update-runtime.mjs",
+        updateMigrationManifest: "scripts/update-manifest.json",
         doctorCommand: "iva doctor",
         doctorJsonCommand: "iva doctor --json",
         doctorSchemaVersion: 1,

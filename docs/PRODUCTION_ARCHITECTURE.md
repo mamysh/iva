@@ -105,6 +105,13 @@ iva doctor
 iva status
 ```
 
+`iva update` builds and validates the target in an ignored detached worktree while the active service
+continues using its current `.output` and dependencies. Preflight records commits/versions, storage
+profile, migration hop, disk capacity and backup readiness. Activation swaps the staged output and
+dependencies only after tests, typecheck, build and profile canary pass. Doctor readiness then commits
+the transaction; failure restores the previous commit/output/dependencies and restarts it. Schema
+migrations are sequential and require a declared, verified Workflow backup and failure strategy.
+
 `iva doctor` must report `healthy` or only understood non-blocking `degraded` checks. Its layered
 contract includes both services, HTTP readiness, six timers, Workflow schema/write-read access,
 Telegram/provider readiness, memory jobs, backups and disk capacity. Exit `1` means a failure blocks

@@ -201,9 +201,11 @@ install.sh
 
 iva update
   -> bin/iva.mjs
-  -> Git update + dependency install when needed
-  -> build
-  -> regenerated units + restart
+  -> scripts/update-runtime.mjs preflight + detached Git worktree
+  -> npm ci + tests + typecheck + build + profile canary in staging
+  -> scripts/update-manifest.json migration/backup contract
+  -> atomic output/dependency activation + regenerated units + restart
+  -> iva doctor readiness OR automatic previous-version rollback
 ```
 
 `bin/iva.mjs` is the single source of truth for the installed `iva.service`. Templates for the other
@@ -235,7 +237,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | Workflow health/recovery | `scripts/workflow-health.mjs` + `scripts/lib/runtime-recovery.mjs` | CLI, workflow backends, background jobs | runtime recovery check, both disposable replicas |
 | Workflow backend | `scripts/lib/workflow-config.mjs` | agent, package versions, smoke script | config test, both builds, restart/resume |
 | PostgreSQL profile | `scripts/postgres-profile.mjs` + `scripts/lib/postgres-profile.mjs` | deploy examples, upstream package migrations | config test, real PostgreSQL bootstrap + smoke |
-| Update behavior | `bin/iva.mjs` | `scripts/lib/telegram-update.mjs` | update test, rollback scenario |
+| Update behavior | `scripts/update-runtime.mjs` + `scripts/lib/update-contract.mjs` | CLI, Telegram update, migration manifest | update contract, clean-install build/readiness rollback fixture |
 | Public documentation | `docs/README.md` | README files and docs checks | `npm test` |
 | Telegram userbot beta | `services/telegram-userbot/` | connection + skill + userbot docs | Python tests, typecheck, opt-in smoke |
 
@@ -249,6 +251,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | `check-workflow-config.mjs` | Workflow resolver, precedence, descriptor and mismatch contract. |
 | `check-runtime-recovery.mjs` | Run-state classification, recovery/reset contract, restart guard and bounded background sessions. |
 | `check-doctor-contract.mjs` | Layered schema, severity/exit codes, fault matrix, redaction and one-screen human output. |
+| `check-update-transaction.mjs` | Preflight, sequential migration, backup/restore and activation rollback ordering for both profiles. |
 | `check-reminders-store.mjs` | Reminder persistence and scheduling behavior. |
 | `check-telegram-update.mjs` | Out-of-band Telegram update flow. |
 | `check-memory-guards.mjs` | CORE and vault failure guards. |

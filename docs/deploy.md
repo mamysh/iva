@@ -62,6 +62,12 @@ iva logs                  # agent; `iva logs poll` for the bridge
 
 Full CLI reference: [cli](./cli.md). What the rollups actually write: [memory](./memory.md).
 
+Updates are transactional. `iva update` stages a detached checkout under ignored `.iva-update/`, runs
+the locked dependency install and all pre-activation gates there, then switches the build and
+dependencies only for the restart. A broken target build never touches the active output. Failed
+doctor readiness automatically restores the previous commit/output/dependencies. Optional global
+tools such as `gws` are deliberately outside this critical transaction.
+
 One thing that trips people up: eve has a `defineSchedule` API, but on self-host it never fires — it only becomes a cron job on Vercel. That is the whole reason memory runs on systemd timers.
 
 ## Workflow backend

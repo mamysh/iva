@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { mkdtemp, mkdir, cp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
@@ -45,12 +47,55 @@ async function executable(path, body) {
 
 async function copyFixture() {
   await mkdir(app, { recursive: true });
-  for (const name of ["agent", "bin", "deploy", "patches", "scripts", "services", "vault-template"]) {
+  const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" }).split("\0").filter(Boolean);
+  for (const path of tracked) {
+    await mkdir(dirname(join(app, path)), { recursive: true });
+    await cp(join(ROOT, path), join(app, path));
+  }
+  // Overlay the current working tree, including new Stage files that are not committed yet.
+  for (const name of ["agent", "bin", "deploy", "docs", "patches", "scripts", "services", "vault-template", ".github"]) {
     await cp(join(ROOT, name), join(app, name), { recursive: true });
   }
-  for (const name of ["install.sh", "package.json", "package-lock.json", "tsconfig.json"]) {
+  for (const name of [".env.example", ".gitignore", "CHANGELOG.md", "CODEBASE_MAP.md", "README.md", "README.ru.md", "install.sh", "package.json", "package-lock.json", "tsconfig.json"]) {
     await cp(join(ROOT, name), join(app, name));
   }
+}
+
+function git(cwd, args) {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+async function initializeUpdateRepository() {
+  const remote = join(sandbox, "remote.git");
+  git(sandbox, ["init", "--bare", remote]);
+  git(app, ["init", "-b", "main"]);
+  git(app, ["config", "user.name", "Iva fixture"]);
+  git(app, ["config", "user.email", "iva-fixture@example.invalid"]);
+  git(app, ["add", "."]);
+  git(app, ["commit", "-m", "fixture baseline"]);
+  const baseline = git(app, ["rev-parse", "HEAD"]);
+  git(app, ["remote", "add", "origin", remote]);
+  git(app, ["push", "-u", "origin", "main"]);
+  const author = join(sandbox, "author");
+  git(sandbox, ["clone", remote, author]);
+  git(author, ["config", "user.name", "Iva fixture"]);
+  git(author, ["config", "user.email", "iva-fixture@example.invalid"]);
+  return { author, baseline };
+}
+
+function pushTarget(author, baseline, mutate, message) {
+  git(author, ["reset", "--hard", baseline]);
+  git(author, ["clean", "-fd"]);
+  mutate();
+  git(author, ["add", "."]);
+  git(author, ["commit", "-m", message]);
+  const target = git(author, ["rev-parse", "HEAD"]);
+  git(author, ["push", "--force", "origin", "HEAD:main"]);
+  return target;
+}
+
+async function fileHash(path) {
+  return createHash("sha256").update(await readFile(path)).digest("hex");
 }
 
 async function startTelegramMock() {
@@ -102,6 +147,7 @@ const stop = () => {
 };
 const start = () => {
   if (running()) return;
+  if (unit === "iva.service" && existsSync(join(app, "scripts/fixture-readiness-fail"))) return;
   const common = ["--env-file=.env"];
   const args = unit === "iva.service"
     ? [...common, "scripts/start.mjs", "--host", "127.0.0.1", "--port", process.env.IVA_FIXTURE_PORT]
@@ -146,6 +192,7 @@ case "$action" in
   show-environment|daemon-reload|reset-failed) exit 0 ;;
   enable) exit 0 ;;
   restart) for unit in "$@"; do "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" restart "$unit"; done ;;
+  stop) for unit in "$@"; do "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" stop "$unit"; done ;;
   is-active)
     [ "\${1:-}" = --quiet ] && shift
     "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" status "\${1:-}"
@@ -283,6 +330,43 @@ try {
   await runInstaller();
   const firstReply = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();
   assert.match(JSON.stringify(firstReply), /INSTALL_OK/);
+
+  const { author, baseline } = await initializeUpdateRepository();
+  const activeOutput = join(app, ".output/server/index.mjs");
+  const baselineOutputHash = await fileHash(activeOutput);
+  const brokenBuildTarget = pushTarget(author, baseline, () => {
+    appendFileSync(join(author, "agent/agent.ts"), "\nthis is not valid TypeScript\n");
+  }, "broken target build");
+  const brokenBuild = await runFixtureCli(["update"]);
+  assert.equal(brokenBuild.code, 1, brokenBuild.output);
+  assert.match(brokenBuild.output, /ROLLED BACK:.*failed/i);
+  assert.equal(git(app, ["rev-parse", "HEAD"]), baseline);
+  assert.equal(await fileHash(activeOutput), baselineOutputHash, "broken target build changed active output");
+  await controlService("status", "iva.service");
+
+  const readinessTarget = pushTarget(author, baseline, () => {
+    writeFileSync(join(author, "scripts/fixture-readiness-fail"), "fixture\n");
+  }, "broken target readiness");
+  const brokenReadiness = await runFixtureCli(["update"]);
+  assert.equal(brokenReadiness.code, 1, brokenReadiness.output);
+  assert.match(brokenReadiness.output, /ROLLED BACK: target readiness failed/i);
+  assert.equal(git(app, ["rev-parse", "HEAD"]), baseline);
+  assert.equal(await fileHash(activeOutput), baselineOutputHash, "readiness rollback did not restore active output");
+  await controlService("status", "iva.service");
+
+  const successfulTarget = pushTarget(author, baseline, () => {
+    writeFileSync(join(author, "scripts/fixture-update-success"), "fixture\n");
+  }, "successful target update");
+  const successfulUpdate = await runFixtureCli(["update"]);
+  assert.equal(successfulUpdate.code, 0, successfulUpdate.output);
+  assert.match(successfulUpdate.output, /UPDATED:/);
+  assert.equal(git(app, ["rev-parse", "HEAD"]), successfulTarget);
+  assert.notEqual(successfulTarget, brokenBuildTarget);
+  assert.notEqual(successfulTarget, readinessTarget);
+  await controlService("status", "iva.service");
+  const afterUpdateReply = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();
+  assert.match(JSON.stringify(afterUpdateReply), /INSTALL_OK/);
+
   await controlService("stop", "iva.service");
   const repairedDoctor = await runFixtureCli(["doctor"]);
   assert.equal(repairedDoctor.code, 0, repairedDoctor.output);
@@ -324,7 +408,7 @@ try {
     assert.equal((await stat(path)).mode & 0o777, 0o600, `${basename(path)} must be 0600`);
   }
 
-  console.log("clean install smoke passed: ready, doctor auto-fix, redacted JSON, independent bridge recovery, 0600 secrets, idempotent rerun");
+  console.log("clean install smoke passed: staged build isolation, readiness rollback, successful atomic update, doctor auto-fix, redacted JSON, independent bridge recovery, 0600 secrets, idempotent rerun");
 } finally {
   await stopFixtureProcesses();
   await telegramServer?.close();

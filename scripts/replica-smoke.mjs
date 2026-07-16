@@ -7,7 +7,7 @@ import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink } from "node:f
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { Client } from "eve/client";
 import { Pool } from "pg";
@@ -24,6 +24,7 @@ const logs = [];
 let mock;
 let eve;
 let resourceReport;
+let phase = "setup";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -295,6 +296,14 @@ function doctorReport(port) {
   return report;
 }
 
+async function updateBackupCanary(port) {
+  const { createWorkflowBackup } = await import(pathToFileURL(join(replica, "scripts/update-runtime.mjs")));
+  const backup = createWorkflowBackup(postgresMode ? "postgres" : "local", replicaEnv(port), "fixture-update-backup");
+  assert.equal(backup.verified, true);
+  assert.equal(backup.profile, postgresMode ? "postgres" : "local");
+  assert.ok(existsSync(backup.path), "update backup artifact is missing");
+}
+
 function repairWorkflow(port) {
   const result = spawnSync(process.execPath, [join(replica, "scripts/workflow-health.mjs"), "repair", "--json"], {
     cwd: replica,
@@ -410,12 +419,16 @@ try {
     };
   }
 
+  phase = "first reply";
   const textResult = await (await client.session().send("Reply with exactly: REPLICA_OK")).result();
   assertSuccessfulTurn(textResult);
   assert.equal(textResult.message.trim(), "REPLICA_OK");
   doctorReport(port);
+  if (postgresMode) await updateBackupCanary(port);
 
+  phase = "provider fault retries";
   for (const status of [429, 500]) {
+    phase = `provider fault ${status}`;
     const before = mock.requests.length;
     mock.failNext(status);
     const transient = await (await client.session().send(`Transient ${status}: reply with exactly REPLICA_OK`)).result();
@@ -429,6 +442,7 @@ try {
   assert.equal(terminal.status, "failed", "provider HTTP 400 did not terminate the run");
   assert.equal(mock.requests.length, terminalRequests + 1, "provider HTTP 400 was retried instead of terminating");
 
+  phase = "task tool";
   const toolResult = await (
     await client.session().send("Use the tasks tool to add the replica canary task, then confirm completion.")
   ).result();
@@ -437,6 +451,7 @@ try {
   const tasks = JSON.parse(await readFile(join(replica, "data", "tasks.json"), "utf8"));
   assert.equal(tasks[0].text, "replica canary task");
 
+  phase = "restart recovery";
   const marker = "CEDAR-4729";
   const remembered = client.session();
   const seed = await (
@@ -491,6 +506,10 @@ try {
   assert.equal(tasksAfterKill.length, taskCountBeforeKill + 1, "SIGKILL replay duplicated or lost the durable task side effect");
 
   await stopEve(eve);
+  if (!postgresMode) {
+    phase = "local update backup";
+    await updateBackupCanary(port);
+  }
   if (postgresMode) {
     await setPostgresConnections(false);
     const unavailable = await startEve(port);
@@ -519,16 +538,17 @@ try {
   if (jsonMode) {
     console.log(JSON.stringify({
       ok: true,
-      canaries: ["text-reply", "doctor-storage-probe", "provider-429-500", "sigterm-replay", "sigkill-side-effect-once", "model-task-call", "task-persistence", "workflow-restart-resume"],
+      canaries: ["text-reply", "doctor-storage-probe", "update-backup", "provider-429-500", "sigterm-replay", "sigkill-side-effect-once", "model-task-call", "task-persistence", "workflow-restart-resume"],
       resources: resourceReport ?? null,
     }, null, 2));
   } else {
     console.log(
-      `replica smoke passed (${postgresMode ? "PostgreSQL" : "local"}): doctor storage probe, transient provider faults, SIGTERM/SIGKILL recovery, side effect once, restart/resume`,
+      `replica smoke passed (${postgresMode ? "PostgreSQL" : "local"}): doctor storage probe, verified update backup, transient provider faults, SIGTERM/SIGKILL recovery, side effect once, restart/resume`,
     );
     if (resourceReport) console.log(JSON.stringify(resourceReport, null, 2));
   }
 } catch (error) {
+  console.error(`replica phase: ${phase}; eve exit: ${eve?.exitCode}`);
   console.error(error?.stack || String(error));
   if (logs.length) console.error(logs.join("").slice(-8000));
   process.exitCode = 1;

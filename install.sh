@@ -384,6 +384,12 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ] && grep -q '"eve"' 
   step "$(t "Using current directory: $PROJECT_DIR" "Использую текущий каталог: $PROJECT_DIR")"
 elif [ -d "$INSTALL_DIR/.git" ]; then
   PROJECT_DIR="$INSTALL_DIR"
+  IVA_WRAPPER="$HOME/.local/bin/iva"
+  if [ "${IVA_INSTALL_FULL_RERUN:-false}" != true ] && [ -x "$IVA_WRAPPER" ] \
+    && grep -Fq "$PROJECT_DIR/bin/iva.mjs" "$IVA_WRAPPER"; then
+    step "$(t "Existing installation detected — handing off to transactional iva update…" "Найдена существующая установка — передаю обновление транзакционному iva update…")"
+    exec "$IVA_WRAPPER" update --force
+  fi
   step "$(t "Updating $PROJECT_DIR…" "Обновляю $PROJECT_DIR…")"
   git -C "$PROJECT_DIR" fetch --prune origin "$BRANCH"
   # Fast-forward when possible; on a rewritten upstream (force-push) the branches

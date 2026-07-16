@@ -42,6 +42,7 @@ This gate currently proves:
 - Telegram HTML formatting, delivery request, and plain-text fallback;
 - the structural capability baseline from `npm run manifest`;
 - the doctor schema, severity/exit-code contract, blocking fault matrix, one-screen output and support-bundle redaction;
+- the update preflight/migration contract, broken-build isolation and readiness rollback order;
 - install readiness rejects incomplete configuration, failed health, inactive/restarting services
   and fresh terminal startup errors.
 
@@ -90,13 +91,16 @@ steps without repeating the task side effect. The PostgreSQL variant additionall
 temporarily and proves automatic return after database availability is restored. `npm run replica:install` additionally runs first install and reinstall in a
 disposable home with mock provider, Telegram and systemd boundaries, checking readiness, doctor safe
 auto-fix followed by a green repeat, redacted JSON, private-file modes, vault preservation, and
-independent Telegram-bridge stop/restart while Eve stays available. The PostgreSQL variant runs the official pinned-package bootstrap on a
+independent Telegram-bridge stop/restart while Eve stays available. The same install fixture creates
+a disposable Git remote and proves broken target build isolation, automatic readiness rollback with
+the previous service restored, and a successful atomic update. The PostgreSQL variant runs the official pinned-package bootstrap on a
 fresh real database, verifies the Workflow/Drizzle/Graphile schemas and doctor PostgreSQL write/read
 probe without creating a user session, persists a first turn, repeats
 bootstrap without losing runs, resumes after restart, and proves that no local workflow state was
 created. Fast recovery contracts additionally inject `ENOSPC`, read-only storage and connection errors
 to prove their observable classifications; a true filesystem-capacity fixture remains a release-matrix
-scenario. The broader replica gate still owns update/rollback tests.
+scenario. Migration failure/restore order and both local/PostgreSQL transaction profiles are covered
+by the fast update contract; a future real schema migration must add its own disposable restore drill.
 CI also runs the profile preparer twice on the native Ubuntu runner PostgreSQL cluster. That separate
 gate proves dynamic cluster/config discovery, a role matching the actual Unix runner user, peer auth,
 idempotent database creation, bootstrap/schema verification and the profile-aware build.
