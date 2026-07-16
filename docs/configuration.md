@@ -19,6 +19,7 @@ Four providers. Pick one with `MODEL_PROVIDER` and fill only that block. `ollama
 | `MODEL_PROVIDER` | `ollama` | `ollama` (Ollama Cloud), `opencode` (OpenCode Zen), `openrouter` (OpenRouter) or `codex` (OpenAI ChatGPT subscription). |
 | `OLLAMA_API_KEY` | — | Key from ollama.com. |
 | `OLLAMA_MODEL` | `deepseek-v4-pro` | Any model on your Ollama Cloud plan. |
+| `OLLAMA_VISION_MODEL` | `gemma3:12b-cloud` | Multimodal model used for images. Override it if Ollama retires the default cloud model. |
 | `OLLAMA_BASE_URL` | `https://ollama.com/v1` | Optional OpenAI-compatible Ollama endpoint override; useful for self-hosted instances and isolated tests. |
 | `OLLAMA_CONTEXT_WINDOW` | `131072` | See warning below. |
 | `OPENCODE_API_KEY` | — | Key from opencode.ai/auth. |

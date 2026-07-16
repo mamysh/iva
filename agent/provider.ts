@@ -18,8 +18,9 @@ const PROVIDERS = {
     apiKey: process.env.OLLAMA_API_KEY,
     textModel: process.env.OLLAMA_MODEL ?? "deepseek-v4-pro",
     contextWindow: Number(process.env.OLLAMA_CONTEXT_WINDOW ?? 131072),
-    // Дешёвая мультимодалка того же провайдера (проверено на проде: принимает image_url, http 200).
-    visionModel: "gemma3:12b",
+    // Отдельный override позволяет пережить retire cloud-модели без обновления кода. Bare
+    // `gemma3:12b` Ollama Cloud сняла 2026-07-15; актуальный cloud alias принимает image_url.
+    visionModel: process.env.OLLAMA_VISION_MODEL ?? "gemma3:12b-cloud",
   },
   opencode: {
     baseURL: "https://opencode.ai/zen/go/v1",
