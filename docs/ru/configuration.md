@@ -96,11 +96,11 @@ iva restart
 
 | Переменная | По умолчанию | Заметки |
 |---|---|---|
-| `WORKFLOW_TARGET_WORLD` | *(пусто)* | `@workflow/world-postgres` включает PostgreSQL workflow state. В helper Iva также принимается сокращение `postgres`. |
+| `WORKFLOW_TARGET_WORLD` | `local` | Единственное другое допустимое значение — `@workflow/world-postgres`. Это профиль сборки и runtime; после изменения нужна новая сборка. |
 | `WORKFLOW_POSTGRES_URL` | — | Строка подключения PostgreSQL. Локальный socket-пример: `postgresql:///iva_workflow?host=/var/run/postgresql`; при peer auth нужна PostgreSQL-роль с именем service-user. |
 | `WORKFLOW_QUEUE_NAMESPACE` | `eve` | Queue namespace, который ожидают сгенерированные eve workflow routes. |
 | `WORKFLOW_POSTGRES_JOB_PREFIX` | `iva_` | Префикс имён graphile-worker jobs. |
 | `WORKFLOW_POSTGRES_WORKER_CONCURRENCY` | `8` | Осторожный дефолт для маленького single-user VPS. |
 | `WORKFLOW_POSTGRES_MAX_POOL_SIZE` | `10` | Держите ниже PostgreSQL `max_connections` с запасом под системные подключения. |
 
-В репозитории есть пример `deploy/iva-workflow-postgres.environment.example` и небольшой PostgreSQL profile `deploy/postgresql-iva.conf`. Шаги включения и smoke test описаны в английской канонической странице [deploy.md](../deploy.md#workflow-backend).
+В репозитории есть пример `deploy/iva-workflow-postgres.environment.example` и небольшой PostgreSQL profile `deploy/postgresql-iva.conf`. Файл workflow environment загружается раньше `.env`, поэтому `.env` имеет приоритет. Сборка сохраняет безопасный descriptor профиля; старт и `iva doctor` блокируют несовпадение до приёма сообщений. Шаги включения и smoke test описаны в английской канонической странице [deploy.md](../deploy.md#workflow-backend).

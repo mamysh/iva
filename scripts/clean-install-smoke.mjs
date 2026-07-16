@@ -104,7 +104,7 @@ const start = () => {
   if (running()) return;
   const common = ["--env-file=.env"];
   const args = unit === "iva.service"
-    ? [...common, "node_modules/eve/bin/eve.js", "start", "--host", "127.0.0.1", "--port", process.env.IVA_FIXTURE_PORT]
+    ? [...common, "scripts/start.mjs", "--host", "127.0.0.1", "--port", process.env.IVA_FIXTURE_PORT]
     : [...common, "--import", process.env.IVA_FIXTURE_PRELOAD, "scripts/telegram-poll.mjs"];
   const log = openSync(logfile, "a");
   const child = spawn(process.env.IVA_FIXTURE_NODE, args, {

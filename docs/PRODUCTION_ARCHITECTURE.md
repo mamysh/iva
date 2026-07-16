@@ -62,6 +62,12 @@ WORKFLOW_POSTGRES_URL=postgresql:///iva_workflow?host=/var/run/postgresql
 With this profile, app workflow state lives in `iva_workflow`; the live vault remains at
 `ASSISTANT_VAULT_DIR` and is never migrated into the app database.
 
+The selector is a build/runtime contract, not a runtime-only toggle. `npm run build` loads the
+optional workflow environment file and then `.env`, embeds the selected World, and writes the
+sanitized `.output/iva-workflow-profile.json`. The service starts through the profile guard and
+exits before accepting messages if its runtime profile differs. `iva status` reports only `local`
+or `PostgreSQL`; it never prints connection details.
+
 The example environment and small-VPS PostgreSQL profile live in:
 
 - [`deploy/iva-workflow-postgres.environment.example`](../deploy/iva-workflow-postgres.environment.example)

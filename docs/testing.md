@@ -20,8 +20,10 @@ npm run verify:pr
 narrowest subsystem test first when one exists, then run the complete command. Documentation-only
 changes may run `npm test` without typecheck/build.
 
-The tracked `.github/workflows/verify.yml` runs this gate and `npm run replica:local` on Ubuntu with
-Node 24 for every pull request and every push to `main`. It uses only repository contents and locked
+The tracked `.github/workflows/verify.yml` runs this gate, a two-profile local/PostgreSQL build
+matrix, and `npm run replica:local` on Ubuntu with Node 24 for every pull request and every push to
+`main`. Each matrix build validates its sanitized profile descriptor through the same startup guard.
+It uses only repository contents and locked
 npm dependencies; no provider, Telegram, vault, deployment, or production secrets are available to
 the job.
 

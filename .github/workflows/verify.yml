@@ -13,6 +13,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-profiles:
+    name: Build (${{ matrix.profile.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - name: local
+            selector: local
+          - name: PostgreSQL
+            selector: "@workflow/world-postgres"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build and validate profile descriptor
+        env:
+          WORKFLOW_TARGET_WORLD: ${{ matrix.profile.selector }}
+        run: npm run build && node scripts/start.mjs --check-profile
+
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20

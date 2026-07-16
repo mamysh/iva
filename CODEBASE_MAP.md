@@ -35,7 +35,8 @@ Public product and operations documentation starts at [`docs/README.md`](docs/RE
 | Provider/model configuration | `agent/provider.ts` | Shared by the main agent and vision path. |
 | Agent behavior | `agent/instructions.md` | Character, rules and tool-selection policy. |
 | Runtime configuration | `.env` | Private and ignored. Generated/updated by `scripts/setup.mjs`. |
-| Workflow profile override | `deploy/iva-workflow.environment` | Private, ignored, optional runtime configuration. |
+| Workflow profile contract | `scripts/lib/workflow-config.mjs` | Resolves local/PostgreSQL for agent, build, start and CLI. |
+| Workflow profile override | `deploy/iva-workflow.environment` | Private, ignored, optional; loaded before `.env`. |
 | CLI and generated systemd units | `bin/iva.mjs` | Do not hand-edit installed units; the CLI regenerates them. |
 | Personal memory | live `ASSISTANT_VAULT_DIR` | Separate private Git repository; never part of the app repository. |
 | Vault skeleton | `vault-template/` | Copied only when initializing an empty live vault. |
@@ -69,6 +70,7 @@ scripts/                     Install-time, polling, memory and maintenance progr
   daily-digest.ts            Digest entry point
   reminders-run.mjs          Short-lived reminder dispatcher
   workflow-smoke.mjs         Seed/resume workflow durability check
+  build.mjs / start.mjs      Profile-aware Eve build and pre-start mismatch guard
   install-readiness.mjs      Post-install Eve/service readiness gate
   clean-install-smoke.mjs    Disposable first-install and reinstall fixture
   init-vault.mjs             Safe live-vault initialization
@@ -238,7 +240,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | Test | Main responsibility |
 |---|---|
 | `check-reasoning-strip.mjs` | Provider reasoning compatibility for generate/stream. |
-| `check-workflow-config.mjs` | Workflow profile normalization. |
+| `check-workflow-config.mjs` | Workflow resolver, precedence, descriptor and mismatch contract. |
 | `check-reminders-store.mjs` | Reminder persistence and scheduling behavior. |
 | `check-telegram-update.mjs` | Out-of-band Telegram update flow. |
 | `check-memory-guards.mjs` | CORE and vault failure guards. |
@@ -252,7 +254,8 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 Additional tests:
 
 - `npm run typecheck` checks authored TypeScript.
-- `npm run build` checks Eve discovery, compilation and packaging.
+- `npm run build` checks Eve discovery, compilation, packaging and the selected Workflow artifact;
+  it writes `.output/iva-workflow-profile.json` for the startup/doctor mismatch gate.
 - `npm run verify:pr` is the standard pull-request gate: tests, typecheck and build.
 - `npm run replica:local` builds and starts a disposable Eve replica with a loopback mock provider;
   it checks first reply, a model-driven task call and local workflow restart/resume.
