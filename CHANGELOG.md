@@ -8,6 +8,7 @@ Production hardening carried by this fork after upstream v0.2.5.
 - A five-minute systemd reminder dispatcher and out-of-band `/reminders` command.
 - Fail-closed personal Telegram defaults: loopback-only proxy, read-only tool exposure, pinned upstream dependency and persistent anti-ban guardrails.
 - Deterministic memory safeguards: folded-frontmatter growth prevention, a 1,200-character CORE recovery guard and accurate vault-push diagnostics.
+- Ollama vision recovery after `gemma3:12b` retirement: the configurable `OLLAMA_VISION_MODEL` now defaults to the account-available `gemma4:31b`, with a behavioral canary for the image request contract.
 
 ## [0.2.5] - 2026-07-15
 
