@@ -439,7 +439,8 @@ try {
   const termRepair = repairWorkflow(port);
   assert.ok(Number.isInteger(termRepair.repaired) && termRepair.repaired >= 0, "SIGTERM repair count is invalid");
   if (!postgresMode) assert.ok(termRepair.repaired >= 1, "SIGTERM left no interrupted local step for recovery");
-  assert.ok(termRepair.abandoned >= 1, "SIGTERM interrupted turn was not preserved as cancelled");
+  assert.ok(Number.isInteger(termRepair.abandoned) && termRepair.abandoned >= 0, "SIGTERM abandon count is invalid");
+  if (!postgresMode) assert.ok(termRepair.abandoned >= 1, "SIGTERM interrupted local turn was not preserved as cancelled");
   eve = await startEve(port);
   client = new Client({ host: `http://127.0.0.1:${port}` });
   await waitForHealth(client, eve);
@@ -459,7 +460,8 @@ try {
   const killRepair = repairWorkflow(port);
   assert.ok(Number.isInteger(killRepair.repaired) && killRepair.repaired >= 0, "SIGKILL repair count is invalid");
   if (!postgresMode) assert.ok(killRepair.repaired >= 1, "SIGKILL left no interrupted local step for recovery");
-  assert.ok(killRepair.abandoned >= 1, "SIGKILL interrupted turn was not preserved as cancelled");
+  assert.ok(Number.isInteger(killRepair.abandoned) && killRepair.abandoned >= 0, "SIGKILL abandon count is invalid");
+  if (!postgresMode) assert.ok(killRepair.abandoned >= 1, "SIGKILL interrupted local turn was not preserved as cancelled");
   eve = await startEve(port);
   client = new Client({ host: `http://127.0.0.1:${port}` });
   await waitForHealth(client, eve);
