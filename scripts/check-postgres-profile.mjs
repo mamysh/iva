@@ -87,6 +87,7 @@ assert.match(installer, /node_modules\/@workflow\/world-postgres\/bin\/setup\.js
 assert.match(installer, /SHOW config_file/);
 assert.match(installer, /SHOW unix_socket_directories/);
 assert.match(installer, /runCount === 0/);
+assert.match(installer, /mode & 0o777\) !== 0o600/);
 assert.doesNotMatch(installer, /\/etc\/postgresql\/\d+/);
 assert.match(cli, /"workflow-postgres": cmdWorkflowPostgres/);
 assert.match(cli, /PostgreSQL workflow unavailable/);

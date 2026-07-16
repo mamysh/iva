@@ -231,6 +231,9 @@ function writeProfileEnvironment(text) {
   chmodSync(temporary, 0o600);
   renameSync(temporary, PROFILE_ENV_PATH);
   chmodSync(PROFILE_ENV_PATH, 0o600);
+  if ((statSync(PROFILE_ENV_PATH).mode & 0o777) !== 0o600) {
+    throw new Error("PostgreSQL profile environment must have mode 0600");
+  }
 }
 
 function runBuild(env) {
