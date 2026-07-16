@@ -223,6 +223,30 @@ async function controlService(action, unit) {
   assert.equal(code, 0, `${action} ${unit} failed`);
 }
 
+async function runFixtureCli(args) {
+  const child = spawn(process.execPath, [join(app, "bin/iva.mjs"), ...args], {
+    cwd: app,
+    env: {
+      ...process.env,
+      HOME: home,
+      XDG_STATE_HOME: state,
+      PATH: `${stubs}:${process.env.PATH || ""}`,
+      IVA_FIXTURE_APP: app,
+      IVA_FIXTURE_NODE: process.execPath,
+      IVA_FIXTURE_PORT: process.env.IVA_FIXTURE_PORT,
+      IVA_FIXTURE_PRELOAD: preload,
+      IVA_FIXTURE_CONTROL: serviceControl,
+      IVA_FIXTURE_STATE: processState,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.on("data", (chunk) => { output += chunk; });
+  const code = await new Promise((resolve) => child.once("exit", resolve));
+  return { code, output };
+}
+
 try {
   await mkdir(home, { recursive: true });
   await copyFixture();
@@ -259,6 +283,17 @@ try {
   await runInstaller();
   const firstReply = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();
   assert.match(JSON.stringify(firstReply), /INSTALL_OK/);
+  await controlService("stop", "iva.service");
+  const repairedDoctor = await runFixtureCli(["doctor"]);
+  assert.equal(repairedDoctor.code, 0, repairedDoctor.output);
+  assert.match(repairedDoctor.output, /fixed: 1/);
+  await controlService("status", "iva.service");
+  const jsonDoctor = await runFixtureCli(["doctor", "--json"]);
+  assert.equal(jsonDoctor.code, 0, jsonDoctor.output);
+  const doctorReport = JSON.parse(jsonDoctor.output);
+  assert.equal(doctorReport.exitCode, 0);
+  assert.equal(doctorReport.checks.find((item) => item.id === "services.agent")?.status, "pass");
+  assert.doesNotMatch(jsonDoctor.output, /synthetic-install-key|synthetic-token|1000|\/iva-clean-install-/);
   assert.ok(telegram.requests() > 0, "Telegram polling bridge did not reach the mock Bot API");
   await controlService("stop", "iva-telegram-poll.service");
   const whileBridgeStopped = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();
@@ -289,7 +324,7 @@ try {
     assert.equal((await stat(path)).mode & 0o777, 0o600, `${basename(path)} must be 0600`);
   }
 
-  console.log("clean install smoke passed: ready, independent bridge recovery, 0600 secrets, idempotent rerun");
+  console.log("clean install smoke passed: ready, doctor auto-fix, redacted JSON, independent bridge recovery, 0600 secrets, idempotent rerun");
 } finally {
   await stopFixtureProcesses();
   await telegramServer?.close();

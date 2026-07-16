@@ -27,7 +27,7 @@ It uses only repository contents and locked
 npm dependencies; no provider, Telegram, vault, deployment, or production secrets are available to
 the job.
 
-`npm test` includes the capability-manifest contract and fast core canaries. The canaries use a new
+`npm test` includes the capability-manifest contract, the doctor fault matrix, and fast core canaries. The canaries use a new
 temporary data directory and vault for every run, invoke the task tool in separate Node processes,
 force memory search into offline BM25 mode, and replace Telegram network access with an in-process
 mock. They never read `.env`, the live vault, production application data, or a Telegram token.
@@ -40,7 +40,8 @@ This gate currently proves:
 - one-time reminder state transition and persistence;
 - synthetic memory write and lexical recall;
 - Telegram HTML formatting, delivery request, and plain-text fallback;
-- the structural capability baseline from `npm run manifest`.
+- the structural capability baseline from `npm run manifest`;
+- the doctor schema, severity/exit-code contract, blocking fault matrix, one-screen output and support-bundle redaction;
 - install readiness rejects incomplete configuration, failed health, inactive/restarting services
   and fresh terminal startup errors.
 
@@ -81,14 +82,17 @@ temporary data directory, disposable vault, workflow state, and mock provider/Te
 PostgreSQL variant must use a separate temporary database and role; it must never share the production
 database or credentials.
 
-The automated local replica currently proves a production build, first text reply, model-driven task
-tool selection, task persistence, workflow restart/resume, transient provider 429/500 recovery,
+The automated local replica currently proves a production build, first text reply, a sanitized doctor
+report and temporary Workflow write/read probe, model-driven task tool selection, task persistence,
+workflow restart/resume, transient provider 429/500 recovery,
 terminal provider failure without retry, SIGTERM during a model step, and SIGKILL between durable
 steps without repeating the task side effect. The PostgreSQL variant additionally blocks connections
 temporarily and proves automatic return after database availability is restored. `npm run replica:install` additionally runs first install and reinstall in a
-disposable home with mock provider, Telegram and systemd boundaries, checking readiness, private-file
-modes, vault preservation, and independent Telegram-bridge stop/restart while Eve stays available. The PostgreSQL variant runs the official pinned-package bootstrap on a
-fresh real database, verifies the Workflow/Drizzle/Graphile schemas, persists a first turn, repeats
+disposable home with mock provider, Telegram and systemd boundaries, checking readiness, doctor safe
+auto-fix followed by a green repeat, redacted JSON, private-file modes, vault preservation, and
+independent Telegram-bridge stop/restart while Eve stays available. The PostgreSQL variant runs the official pinned-package bootstrap on a
+fresh real database, verifies the Workflow/Drizzle/Graphile schemas and doctor PostgreSQL write/read
+probe without creating a user session, persists a first turn, repeats
 bootstrap without losing runs, resumes after restart, and proves that no local workflow state was
 created. Fast recovery contracts additionally inject `ENOSPC`, read-only storage and connection errors
 to prove their observable classifications; a true filesystem-capacity fixture remains a release-matrix

@@ -54,7 +54,8 @@ Manual runs and status:
 
 ```bash
 npm run memory -- daily   # or weekly | monthly | yearly
-npm run doctor
+npm run doctor            # nightly memory maintenance/backup job
+iva doctor                # installation and runtime diagnostics
 systemctl --user list-timers
 iva logs                  # agent; `iva logs poll` for the bridge
 ```

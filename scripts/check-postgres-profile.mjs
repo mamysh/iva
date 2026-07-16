@@ -83,6 +83,7 @@ assert.deepEqual(parsePostgresSchemaCheck("t|t|f|t|f|t|t").missing, [
 
 const installer = readFileSync(new URL("./postgres-profile.mjs", import.meta.url), "utf8");
 const cli = readFileSync(new URL("../bin/iva.mjs", import.meta.url), "utf8");
+const doctor = readFileSync(new URL("./doctor.mjs", import.meta.url), "utf8");
 assert.match(installer, /node_modules\/@workflow\/world-postgres\/bin\/setup\.js/);
 assert.match(installer, /SHOW config_file/);
 assert.match(installer, /SHOW unix_socket_directories/);
@@ -90,6 +91,8 @@ assert.match(installer, /runCount === 0/);
 assert.match(installer, /mode & 0o777\) !== 0o600/);
 assert.doesNotMatch(installer, /\/etc\/postgresql\/\d+/);
 assert.match(cli, /"workflow-postgres": cmdWorkflowPostgres/);
-assert.match(cli, /PostgreSQL workflow unavailable/);
+assert.match(cli, /scripts\/doctor\.mjs/);
+assert.match(doctor, /scripts\/postgres-profile\.mjs", "check"/);
+assert.match(doctor, /CREATE TEMP TABLE iva_doctor_probe/);
 
 console.log("PostgreSQL profile checks passed");

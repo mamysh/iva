@@ -10,6 +10,7 @@ const testing = read("docs/testing.md");
 assert.equal(packageJson.scripts["verify:pr"], "npm test && npm run typecheck && npm run build");
 assert.match(packageJson.scripts.test, /node scripts\/check-core-canaries\.mjs/);
 assert.match(packageJson.scripts.test, /node scripts\/check-capability-manifest\.mjs/);
+assert.match(packageJson.scripts.test, /node scripts\/check-doctor-contract\.mjs/);
 
 assert.match(workflow, /^permissions:\n  contents: read$/m);
 assert.match(workflow, /uses: actions\/checkout@v6/);

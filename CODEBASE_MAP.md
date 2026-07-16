@@ -148,7 +148,9 @@ agent/agent.ts
   SQL, environment and preflight contracts live in `scripts/lib/postgres-profile.mjs`.
 - `deploy/iva-workflow-postgres.environment.example` documents the optional runtime variables.
 - `deploy/postgresql-iva.conf` is installed beside the dynamically discovered active config.
-- `bin/iva.mjs` owns the CLI route, doctor integration, backend-aware reset and service environment.
+- `bin/iva.mjs` owns the CLI route, safe doctor auto-fix, backend-aware reset and service environment.
+- `scripts/doctor.mjs` collects layered runtime evidence; `scripts/lib/doctor-contract.mjs` owns the
+  sanitized schema, severity/exit-code contract and human rendering.
 
 Workflow state is not long-term personal memory. Changing the Workflow World must not rewrite the
 vault.
@@ -229,6 +231,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | Setup wizard/config | `scripts/setup.mjs` | `.env.example`, config docs | setup migration test, public docs test |
 | Installer | `install.sh` | setup, init-vault, CLI unit writer | shell check, clean-install test |
 | CLI/systemd lifecycle | `bin/iva.mjs` | `deploy/`, CLI/deploy docs | integration invariants, Linux smoke |
+| Runtime doctor | `scripts/doctor.mjs` + `scripts/lib/doctor-contract.mjs` | CLI, Workflow health, units, usage/backups | doctor contract, clean-install and both disposable replicas |
 | Workflow health/recovery | `scripts/workflow-health.mjs` + `scripts/lib/runtime-recovery.mjs` | CLI, workflow backends, background jobs | runtime recovery check, both disposable replicas |
 | Workflow backend | `scripts/lib/workflow-config.mjs` | agent, package versions, smoke script | config test, both builds, restart/resume |
 | PostgreSQL profile | `scripts/postgres-profile.mjs` + `scripts/lib/postgres-profile.mjs` | deploy examples, upstream package migrations | config test, real PostgreSQL bootstrap + smoke |
@@ -245,6 +248,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | `check-reasoning-strip.mjs` | Provider reasoning compatibility for generate/stream. |
 | `check-workflow-config.mjs` | Workflow resolver, precedence, descriptor and mismatch contract. |
 | `check-runtime-recovery.mjs` | Run-state classification, recovery/reset contract, restart guard and bounded background sessions. |
+| `check-doctor-contract.mjs` | Layered schema, severity/exit codes, fault matrix, redaction and one-screen human output. |
 | `check-reminders-store.mjs` | Reminder persistence and scheduling behavior. |
 | `check-telegram-update.mjs` | Out-of-band Telegram update flow. |
 | `check-memory-guards.mjs` | CORE and vault failure guards. |
@@ -262,9 +266,9 @@ Additional tests:
   it writes `.output/iva-workflow-profile.json` for the startup/doctor mismatch gate.
 - `npm run verify:pr` is the standard pull-request gate: tests, typecheck and build.
 - `npm run replica:local` builds and starts a disposable Eve replica with a loopback mock provider;
-  it checks first reply, a model-driven task call and local workflow restart/resume.
+  it checks first reply, doctor storage probe/redaction, a model-driven task call and local workflow restart/resume.
 - `npm run replica:postgres` adds a real disposable PostgreSQL database, official bootstrap,
-  schema checks, idempotent re-bootstrap and restart/resume without local workflow files.
+  schema/doctor write-read checks, idempotent re-bootstrap and restart/resume without local workflow files.
 - `npm run replica:install` runs the installer twice in a disposable home with mock provider,
   Telegram and systemd boundaries; it checks readiness, `0600` files and vault preservation.
 - `npm run baseline:resources -- --json` runs 100 deterministic replica turns and reports sanitized

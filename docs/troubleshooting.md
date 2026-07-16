@@ -4,6 +4,18 @@ Every entry below is a real failure someone hit, and the fix that shipped. Find 
 
 ## Common issues
 
+### Start here: one diagnostic report
+
+Run `iva doctor`. It checks configuration, the built/runtime storage profile, services and readiness,
+Workflow storage, Telegram, provider activity, memory/index jobs, backups and disk capacity. It may
+rebuild missing output or restore generated units/services/timers; it never resets Workflow state,
+deletes data, changes credentials or sends a Telegram/model test message.
+
+`blocked` means replies are unavailable and the command exits `1`. `degraded` means a non-blocking
+warning needs attention but Iva can still reply; it exits `0`. Every failed check prints the next
+manual command. For support or CI, capture `iva doctor --json`: it performs no auto-repair and removes
+credentials, connection URLs, user/chat IDs, private paths and memory contents.
+
 ### Build killed / exit 137
 
 Cause: `eve build` needs more RAM than a small VPS has — the kernel OOM-kills it. The installer normally adds a swapfile to prevent this ([install.md](install.md)), but skips it when free disk is too low. Add one by hand:
@@ -79,7 +91,7 @@ gh auth login                                      # the installer already put g
 systemctl --user start iva-memory-doctor.service   # backup now: creates the private repo and pushes
 ```
 
-`iva doctor` only reports a missing vault origin — the repo creation and push happen in the nightly memory-doctor job; the second command runs it immediately instead of waiting for 05:00.
+`iva doctor` only reports a missing vault origin — the repo creation and push happen in the nightly memory-doctor job (`npm run doctor`); the second command runs it immediately instead of waiting for 05:00.
 
 ### Vault push rejected for large files
 
