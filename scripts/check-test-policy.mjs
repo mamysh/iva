@@ -20,6 +20,8 @@ assert.match(workflow, /run: npm run verify:pr/);
 assert.match(workflow, /name: Build \(\$\{\{ matrix\.profile\.name \}\}\)/);
 assert.match(workflow, /selector: "@workflow\/world-postgres"/);
 assert.match(workflow, /node scripts\/start\.mjs --check-profile/);
+assert.match(workflow, /image: postgres:17/);
+assert.match(workflow, /run: npm run replica:postgres/);
 assert.match(workflow, /run: npm run replica:local/);
 assert.match(workflow, /run: npm run replica:install/);
 assert.doesNotMatch(workflow, /secrets\.|\.env|TELEGRAM|ASSISTANT_VAULT/i);

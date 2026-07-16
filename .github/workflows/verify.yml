@@ -13,6 +13,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  postgres-replica:
+    name: PostgreSQL replica
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: iva_fixture
+          POSTGRES_PASSWORD: synthetic-fixture-password
+          POSTGRES_DB: iva_workflow_fixture
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U iva_fixture -d iva_workflow_fixture"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run isolated PostgreSQL replica
+        env:
+          POSTGRES_FIXTURE_URL: postgresql://iva_fixture:synthetic-fixture-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/iva_workflow_fixture
+        run: npm run replica:postgres
+
   build-profiles:
     name: Build (${{ matrix.profile.name }})
     runs-on: ubuntu-latest

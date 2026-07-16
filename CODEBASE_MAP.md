@@ -259,6 +259,8 @@ Additional tests:
 - `npm run verify:pr` is the standard pull-request gate: tests, typecheck and build.
 - `npm run replica:local` builds and starts a disposable Eve replica with a loopback mock provider;
   it checks first reply, a model-driven task call and local workflow restart/resume.
+- `npm run replica:postgres` adds a real disposable PostgreSQL database, official bootstrap,
+  schema checks, idempotent re-bootstrap and restart/resume without local workflow files.
 - `npm run replica:install` runs the installer twice in a disposable home with mock provider,
   Telegram and systemd boundaries; it checks readiness, `0600` files and vault preservation.
 - `npm run baseline:resources -- --json` runs 100 deterministic replica turns and reports sanitized

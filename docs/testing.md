@@ -70,6 +70,12 @@ Run the backend-local replica with:
 npm run replica:local
 ```
 
+Run the backend-PostgreSQL replica against a disposable database with:
+
+```bash
+POSTGRES_FIXTURE_URL=<disposable-test-database> npm run replica:postgres
+```
+
 Install the candidate commit on a clean supported Ubuntu fixture. The replica must have its own port,
 temporary data directory, disposable vault, workflow state, and mock provider/Telegram endpoint. The
 PostgreSQL variant must use a separate temporary database and role; it must never share the production
@@ -79,8 +85,10 @@ The automated local replica currently proves a production build, first text repl
 tool selection, task persistence, and workflow restart/resume against a loopback-only deterministic
 OpenAI-compatible mock. `npm run replica:install` additionally runs first install and reinstall in a
 disposable home with mock provider, Telegram and systemd boundaries, checking readiness, private-file
-modes and vault preservation. The broader replica gate still owns PostgreSQL workflow continuity,
-SIGKILL recovery, and update/rollback tests.
+modes and vault preservation. The PostgreSQL variant runs the official pinned-package bootstrap on a
+fresh real database, verifies the Workflow/Drizzle/Graphile schemas, persists a first turn, repeats
+bootstrap without losing runs, resumes after restart, and proves that no local workflow state was
+created. The broader replica gate still owns SIGKILL recovery and update/rollback tests.
 The fixture is destroyed after the run. A dedicated test Telegram bot may be used for a small live
 delivery canary, but it must not poll with the production bot token.
 

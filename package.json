@@ -26,6 +26,7 @@
     "manifest": "node scripts/capability-manifest.mjs",
     "canary:core": "node scripts/check-core-canaries.mjs",
     "replica:local": "node scripts/replica-smoke.mjs",
+    "replica:postgres": "node scripts/replica-smoke.mjs --postgres",
     "replica:install": "node scripts/clean-install-smoke.mjs",
     "baseline:resources": "node scripts/replica-smoke.mjs --baseline",
     "verify:pr": "npm test && npm run typecheck && npm run build",
