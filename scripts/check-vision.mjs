@@ -28,14 +28,13 @@ delete process.env.OLLAMA_VISION_MODEL;
 
 try {
   const { providerConfig } = await import("../agent/provider.ts");
-  const { describeImageOpenAICompatible } = await import("../agent/lib/vision-openai.mjs");
+  const { describeImageWithProvider } = await import("../agent/lib/vision-provider.mjs");
   const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47]).buffer;
-  const description = await describeImageOpenAICompatible({
+  const description = await describeImageWithProvider({
     bytes,
     mimeType: "image/png",
-    baseURL: providerConfig.baseURL,
-    apiKey: providerConfig.apiKey,
-    visionModel: providerConfig.visionModel,
+    providerName: "ollama",
+    providerConfig,
     prompt: "describe fixture",
   });
 

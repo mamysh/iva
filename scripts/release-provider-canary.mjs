@@ -9,8 +9,8 @@ if (process.env.RELEASE_LIVE_CANARY !== "1") {
   throw new Error("live provider canary requires RELEASE_LIVE_CANARY=1 and explicit owner authorization");
 }
 
-const { providerConfig, providerName } = await import("../agent/provider.ts");
-const { describeImage } = await import("../agent/vision.ts");
+const { providerConfig, providerName, makeCodexModel } = await import("../agent/provider.ts");
+const { describeImageWithProvider } = await import("../agent/lib/vision-provider.mjs");
 const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z8L8AAAAASUVORK5CYII=",
   "base64",
@@ -22,7 +22,13 @@ const inventory = await collectProviderInventory({
   visionModel: providerConfig.visionModel,
   codexModels: () => listCodexModels({ dataDir: process.env.ASSISTANT_DATA_DIR || "data" }),
 });
-const description = await describeImage(png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength), "image/png");
+const description = await describeImageWithProvider({
+  bytes: png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+  mimeType: "image/png",
+  providerName,
+  providerConfig,
+  makeCodexModel,
+});
 const evidence = sanitizedProviderEvidence({
   provider: providerName,
   textModel: providerConfig.textModel,

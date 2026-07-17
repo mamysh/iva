@@ -54,7 +54,8 @@ Public product and operations documentation starts at [`docs/README.md`](docs/RE
 agent/                       Eve-authored agent: model, channels, tools, hooks, skills
   agent.ts                   Root agent configuration
   provider.ts                Provider/model selection and Codex integration
-  vision.ts                  Image-description path using the selected provider
+  vision.ts + lib/vision-provider.mjs
+                             Image-description path shared by runtime and live release canary
   instructions.md            Main personality and behavioral contract
   instructions/              Dynamic language, memory map, CORE and current time
   channels/                  Eve HTTP/dev channel and Telegram webhook channel
@@ -133,7 +134,8 @@ Inspect these files first:
 .env
   -> agent/provider.ts
   -> agent/agent.ts       main text model
-  -> agent/vision.ts      image description
+  -> agent/vision.ts + agent/lib/vision-provider.mjs
+                          shared runtime/release image description
   -> agent/subagents/*    subagent-specific choice where explicitly configured
 ```
 
@@ -236,7 +238,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | I want to change… | Start with | Also inspect | Minimum verification |
 |---|---|---|---|
 | Agent personality/rules | `agent/instructions.md` | `agent/instructions/*` | typecheck, build, prompt canary |
-| Provider/model behavior | `agent/provider.ts` | `agent/agent.ts`, `agent/vision.ts` | reasoning test, typecheck, build |
+| Provider/model behavior | `agent/provider.ts` | `agent/agent.ts`, `agent/vision.ts`, `agent/lib/vision-provider.mjs` | reasoning/vision tests, typecheck, build |
 | Telegram polling/commands | `scripts/telegram-poll.mjs` | `scripts/lib/telegram-*`, channel | Telegram update test, typecheck |
 | Telegram media/channel gate | `agent/channels/telegram.ts` | security gate, vision | typecheck, build, media canary |
 | Security filtering | `agent/lib/security-gate.ts` | `agent/skills/security-defense/` | security tests, typecheck |

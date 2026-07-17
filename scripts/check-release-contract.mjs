@@ -71,6 +71,7 @@ assert.match(workflow, /run: npm run replica:postgres-update/);
 assert.match(workflow, /run: node scripts\/release-report\.mjs > "\$RUNNER_TEMP\/release-matrix\.json"/);
 assert.doesNotMatch(workflow, /secrets\.|TELEGRAM|ASSISTANT_VAULT/i);
 assert.match(read("scripts/release-provider-canary.mjs"), /RELEASE_LIVE_CANARY !== "1"/);
+assert.match(JSON.parse(read("package.json")).scripts["release:provider"], /--env-file-if-exists=\.env/);
 assert.match(read("scripts/clean-install-smoke.mjs"), /update did not exercise an N-1 to N version transition/);
 
 console.log("release contract checks passed: immutable identity, complete matrix, provider inventory, vision evidence and seven-day soak");
