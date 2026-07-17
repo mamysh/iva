@@ -190,6 +190,27 @@ export function evaluateDoctorSnapshot(snapshot, { now = Date.now(), fixed = [] 
     summary: capacityCritical ? "Disk capacity is critically low" : "Disk capacity is low",
     evidence: { freeBytes, freePercent }, fix: fix("manual", "free disk space, then run: iva doctor"),
   }));
+  if (snapshot.capacity?.observed) {
+    const freeInodesPercent = Number(snapshot.capacity.freeInodesPercent ?? 100);
+    checks.push(check("capacity.inodes", "capacity", freeInodesPercent >= 10 ? "pass" : freeInodesPercent < 2 ? "fail" : "warn", {
+      severity: freeInodesPercent < 2 ? "critical" : "warning", blocksReplies: freeInodesPercent < 2,
+      summary: freeInodesPercent < 2 ? "Filesystem inode capacity is critically low" : "Filesystem inode capacity is low",
+      evidence: { freePercent: freeInodesPercent }, fix: fix("manual", "inspect small-file growth, then run: iva status"),
+    }));
+    const swapUsedPercent = Number(snapshot.capacity.swapUsedPercent || 0);
+    checks.push(check("capacity.swap", "capacity", swapUsedPercent < 90 ? "pass" : "warn", {
+      severity: "warning", blocksReplies: false, summary: "Swap pressure is high",
+      evidence: { usedPercent: swapUsedPercent }, fix: fix("manual", "inspect memory pressure with: iva status"),
+    }));
+    const baselineReady = Number(snapshot.capacity.baselineDays || 0) >= 7;
+    const daysUntilFull = snapshot.capacity.daysUntilFull === null ? null : Number(snapshot.capacity.daysUntilFull);
+    const runaway = baselineReady && daysUntilFull !== null && Number(snapshot.capacity.workflowGrowthPerDay || 0) >= 10 * 1024 ** 2 && daysUntilFull <= 7;
+    checks.push(check("capacity.workflow_growth", "capacity", !runaway ? "pass" : "warn", {
+      severity: "warning", blocksReplies: false, summary: "Workflow growth could fill the disk within seven days",
+      evidence: { baselineDays: Number(snapshot.capacity.baselineDays || 0), bytesPerDay: Number(snapshot.capacity.workflowGrowthPerDay || 0), daysUntilFull },
+      fix: fix("manual", "run iva status; do not delete Workflow tables manually"),
+    }));
+  }
 
   const blocking = checks.filter((item) => item.status === "fail" && item.blocksReplies);
   const unhealthy = checks.filter((item) => item.status === "fail" || item.status === "warn");

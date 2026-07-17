@@ -29,7 +29,7 @@ for (const entry of manifest.entries) {
 for (const id of [
   "configuration.env", "memory.vault", "memory.derived-indexes", "application.tasks",
   "application.reminders", "application.usage", "authentication.codex-oauth",
-  "authentication.telegram-userbot", "workflow.local", "workflow.postgres", "runtime.generated",
+  "authentication.telegram-userbot", "observability.bounded-history", "workflow.local", "workflow.postgres", "runtime.generated",
 ]) assert.ok(ids.has(id), `data manifest is missing ${id}`);
 
 console.log("data manifest checks passed");

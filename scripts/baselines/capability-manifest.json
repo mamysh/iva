@@ -67,6 +67,7 @@
       "iva-memory-monthly.timer",
       "iva-memory-weekly.timer",
       "iva-memory-yearly.timer",
+      "iva-observe.timer",
       "iva-reminders.timer"
     ],
     "timerTriggeredServices": [
@@ -75,6 +76,7 @@
       "iva-memory-monthly.service",
       "iva-memory-weekly.service",
       "iva-memory-yearly.service",
+      "iva-observe.service",
       "iva-reminders.service"
     ],
     "optionalServices": [
@@ -91,6 +93,8 @@
       "iva-memory-weekly.timer",
       "iva-memory-yearly.service",
       "iva-memory-yearly.timer",
+      "iva-observe.service",
+      "iva-observe.timer",
       "iva-reminders.service",
       "iva-reminders.timer",
       "iva-telegram-poll.service",
@@ -134,6 +138,10 @@
       "doctorSchemaVersion": 1,
       "doctorSource": "scripts/doctor.mjs",
       "statusCommand": "iva status",
+      "observabilitySource": "scripts/lib/health-metrics.mjs",
+      "observabilitySchemaVersion": 1,
+      "observabilityRetentionSamples": 744,
+      "observabilityCollector": "iva-observe.timer",
       "restartCommand": "iva restart",
       "recoverCommand": "iva recover",
       "resetCommand": "iva reset",

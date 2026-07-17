@@ -91,6 +91,17 @@
       "lossTolerance": "accepted; missing offset skips queued backlog on first start"
     },
     {
+      "id": "observability.bounded-history",
+      "path": "${ASSISTANT_DATA_DIR}/{health-metrics.jsonl,health-alert-state.json,workflow-health.json}",
+      "type": "file-set",
+      "classification": { "secret": false, "personal": false, "derived": true },
+      "required": false,
+      "backupMethod": "exclude-and-rebuild",
+      "restoreOrder": 90,
+      "retention": "31 days or 744 hourly samples",
+      "lossTolerance": "accepted; baseline and alert cooldown restart"
+    },
+    {
       "id": "authentication.codex-oauth",
       "path": "${ASSISTANT_DATA_DIR}/codex-auth.json",
       "type": "file",

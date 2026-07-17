@@ -1,0 +1,12 @@
+[Unit]
+Description=Iva hourly lightweight health metrics collector
+
+[Timer]
+OnBootSec=5min
+OnCalendar=hourly
+AccuracySec=5min
+Persistent=true
+Unit=iva-observe.service
+
+[Install]
+WantedBy=timers.target

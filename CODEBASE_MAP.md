@@ -71,6 +71,7 @@ scripts/                     Install-time, polling, memory and maintenance progr
   daily-digest.ts            Digest entry point
   reminders-run.mjs          Short-lived reminder dispatcher
   workflow-smoke.mjs         Seed/resume workflow durability check
+  observe.mjs                Hourly bounded health/capacity collector and alert sender
   build.mjs / start.mjs      Profile-aware Eve build and pre-start mismatch guard
   install-readiness.mjs      Post-install Eve/service readiness gate
   clean-install-smoke.mjs    Disposable first-install and reinstall fixture
@@ -214,6 +215,12 @@ iva backup / iva restore
   -> scripts/data-manifest.json inventory contract
   -> scripts/lib/portable-backup.mjs private snapshot/checksum/local-or-PostgreSQL restore
   -> build + capability check; restored services remain stopped until explicit `iva start`
+
+iva-observe.timer / iva status
+  -> scripts/observe.mjs
+  -> scripts/lib/health-metrics.mjs bounded 31-day counters + cooldown/dedup
+  -> scripts/workflow-health.mjs read-only storage/queue snapshot
+  -> data/health-metrics.jsonl (derived, private, excluded from portable backup)
 ```
 
 `bin/iva.mjs` is the single source of truth for the installed `iva.service`. Templates for the other
@@ -247,6 +254,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | PostgreSQL profile | `scripts/postgres-profile.mjs` + `scripts/lib/postgres-profile.mjs` | deploy examples, upstream package migrations | config test, real PostgreSQL bootstrap + smoke |
 | Update behavior | `scripts/update-runtime.mjs` + `scripts/lib/update-contract.mjs` | CLI, Telegram update, migration manifest | update contract, clean-install build/readiness rollback fixture |
 | Backup, restore, server moves | `scripts/data-manifest.json` + `scripts/lib/portable-backup.mjs` | backup runtime, CLI, data docs, both Workflow profiles | manifest/restore contract, both disposable replicas, clean-host drill |
+| Health metrics and capacity | `scripts/lib/health-metrics.mjs` + `scripts/observe.mjs` | doctor, status, Workflow health, observe timer | health metrics contract, doctor contract, both disposable replicas |
 | Public documentation | `docs/README.md` | README files and docs checks | `npm test` |
 | Telegram userbot beta | `services/telegram-userbot/` | connection + skill + userbot docs | Python tests, typecheck, opt-in smoke |
 
@@ -260,6 +268,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | `check-workflow-config.mjs` | Workflow resolver, precedence, descriptor and mismatch contract. |
 | `check-runtime-recovery.mjs` | Run-state classification, recovery/reset contract, restart guard and bounded background sessions. |
 | `check-doctor-contract.mjs` | Layered schema, severity/exit codes, fault matrix, redaction and one-screen human output. |
+| `check-health-metrics.mjs` | Bounded rotation, baseline, growth projection, alert cooldown and deduplication. |
 | `check-update-transaction.mjs` | Preflight, sequential migration, backup/restore and activation rollback ordering for both profiles. |
 | `check-reminders-store.mjs` | Reminder persistence and scheduling behavior. |
 | `check-telegram-update.mjs` | Out-of-band Telegram update flow. |

@@ -9,7 +9,7 @@ import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:p
 export const BACKUP_SCHEMA_VERSION = 1;
 const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_DIR_MODE = 0o700;
-const DATA_EXCLUDES = new Set(["backups", ".reminders.lock"]);
+const DATA_EXCLUDES = new Set(["backups", ".reminders.lock", "health-metrics.jsonl", "health-alert-state.json", "workflow-health.json"]);
 const VAULT_EXCLUDES = new Set([".index", ".graph"]);
 
 function command(program, args, { cwd, env = process.env, inherit = false, timeout = 20 * 60_000 } = {}) {
@@ -266,7 +266,7 @@ export function createPortableBackup({
       createdAt: createdAt.toISOString(),
       source: { commit, version, profile: selectedProfile },
       postgres,
-      exclusions: ["data/backups", "data/.reminders.lock", "vault/.index", "vault/.graph"],
+      exclusions: ["data/backups", "data/.reminders.lock", "data/health-metrics.jsonl", "data/health-alert-state.json", "data/workflow-health.json", "vault/.index", "vault/.graph"],
       files,
     };
     writePrivateJson(join(temporary, "backup.json"), metadata);

@@ -46,7 +46,7 @@ The installer puts `iva` in `~/.local/bin`. Commands that touch systemd need a L
 | `iva config` | The 5-step setup wizard, then offers a restart to apply |
 | `iva login [--browser]` | Sign in to an OpenAI (ChatGPT) subscription for `MODEL_PROVIDER=codex`. Default is device code (a link + one-time code, works on a headless VPS); `--browser` runs the local PKCE flow. Token → `data/codex-auth.json` (chmod 600) |
 | `iva doctor [--json]` | Layered health check for configuration, build/profile, services, Workflow storage, Telegram, provider, memory, backups and capacity. The human command applies only safe service/build repairs; `--json` returns a sanitized support/CI report without auto-repair |
-| `iva status` | Backend-neutral workflow state counts, oldest active run, queue depth, open streams, storage size/growth, both services and timers |
+| `iva status` | Concise hourly baseline: service RSS/restarts, Workflow size/growth and queue, oldest active run, recent successful jobs/backup, disk/inodes and swap |
 | `iva restart` | Process lifecycle only: regenerate units and restart agent + bridge without changing durable workflow state |
 | `iva recover` | Stop the agent, repair interrupted steps, abandon only interrupted child turns, restart and re-enqueue durable work; refuses to mutate state when storage is unavailable |
 | `iva reset` | With confirmation, cancel every active workflow session and restart the agent; preserve terminal history, storage, vault, tasks and reminders |
@@ -75,6 +75,8 @@ Update prints one final state: `UPDATED` or `ROLLED BACK`. Migration manifests s
 Portable backup and restore semantics, including the honest vault-only boundary, file modes,
 PostgreSQL client compatibility and clean-host move procedure, are documented in
 [Data, backup, restore, and server moves](data-and-backup.md).
+
+The status baseline and alert policy are documented in [Health metrics and capacity](observability.md).
 
 Reminder delivery is claimed durably before Telegram is called. A definite Telegram rejection may retry. If the process or network fails after the call begins, the reminder becomes `delivery_unknown` and is not automatically resent, because Telegram's Bot API provides no idempotency key and a blind retry could deliver a duplicate.
 
