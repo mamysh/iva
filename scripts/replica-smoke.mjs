@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -307,6 +307,23 @@ function doctorReport(port) {
   return report;
 }
 
+function observabilityCanary(port) {
+  const env = replicaEnv(port);
+  const collect = spawnSync(process.execPath, [join(replica, "scripts/observe.mjs"), "collect"], {
+    cwd: replica, env, encoding: "utf8", timeout: 45_000,
+  });
+  if (collect.status !== 0) throw new Error(collect.stderr || collect.stdout || "observability collection failed");
+  const metrics = join(replica, "data/health-metrics.jsonl");
+  assert.ok(existsSync(metrics), "observability collector did not persist a bounded sample");
+  assert.equal(statSync(metrics).mode & 0o777, 0o600, "observability history is not private");
+  const status = spawnSync(process.execPath, [join(replica, "scripts/observe.mjs"), "status"], {
+    cwd: replica, env, encoding: "utf8", timeout: 45_000,
+  });
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, new RegExp(`Workflow \\(${postgresMode ? "postgres" : "local"}\\)`));
+  assert.doesNotMatch(status.stdout, /synthetic-replica-key|postgresql:\/\//);
+}
+
 async function updateBackupCanary(port) {
   const { createWorkflowBackup } = await import(pathToFileURL(join(replica, "scripts/update-runtime.mjs")));
   const backup = createWorkflowBackup(postgresMode ? "postgres" : "local", replicaEnv(port), "fixture-update-backup");
@@ -518,6 +535,8 @@ try {
   assertSuccessfulTurn(textResult);
   assert.equal(textResult.message.trim(), "REPLICA_OK");
   doctorReport(port);
+  phase = "observability baseline";
+  observabilityCanary(port);
   phase = "portable backup restore";
   await stopEve(eve);
   eve = null;
@@ -639,12 +658,12 @@ try {
   if (jsonMode) {
     console.log(JSON.stringify({
       ok: true,
-      canaries: ["text-reply", "doctor-storage-probe", "update-backup", "portable-backup-restore", "provider-429-500", "sigterm-replay", "sigkill-side-effect-once", "model-task-call", "task-persistence", "workflow-restart-resume"],
+      canaries: ["text-reply", "doctor-storage-probe", "bounded-observability", "update-backup", "portable-backup-restore", "provider-429-500", "sigterm-replay", "sigkill-side-effect-once", "model-task-call", "task-persistence", "workflow-restart-resume"],
       resources: resourceReport ?? null,
     }, null, 2));
   } else {
     console.log(
-      `replica smoke passed (${postgresMode ? "PostgreSQL" : "local"}): doctor storage probe, update + portable restore backups, transient provider faults, SIGTERM/SIGKILL recovery, side effect once, restart/resume`,
+      `replica smoke passed (${postgresMode ? "PostgreSQL" : "local"}): doctor + bounded observability, update + portable restore backups, transient provider faults, SIGTERM/SIGKILL recovery, side effect once, restart/resume`,
     );
     if (resourceReport) console.log(JSON.stringify(resourceReport, null, 2));
   }

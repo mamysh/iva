@@ -43,6 +43,7 @@ Note: `getUpdates` — which the setup wizard uses to discover your user ID — 
 | `iva-memory-yearly.timer` | Jan 1, 04:25 | monthlies → yearly summary (silent) |
 | `iva-memory-doctor.timer` | 05:00 nightly | schema/health/decay/MOC checks + vault `git push` |
 | `iva-reminders.timer` | every 5 minutes | short-lived reminder dispatcher; sends due reminders without calling the workflow |
+| `iva-observe.timer` | hourly | bounded health/capacity counters and deduplicated actionable alerts |
 
 Timers fire in the server's **local time** and carry `Persistent=true`, so a run missed during downtime fires after reboot. Set the server clock to match your `.env`:
 

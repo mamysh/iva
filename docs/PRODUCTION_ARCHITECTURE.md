@@ -127,8 +127,15 @@ the capability manifest. Services stay stopped until `iva start`; this is the de
 boundary that prevents two hosts from polling the same Telegram bot. The authoritative inventory and
 runbook are in [data-and-backup.md](data-and-backup.md).
 
+### Lightweight observability
+
+`iva-observe.timer` runs an hourly one-shot collector. It retains at most 744 sanitized samples and
+feeds `iva status` plus the capacity section of the JSON doctor contract. There is no monitoring
+daemon and no automatic Workflow retention or table deletion. Alerts remain disabled for the first
+seven baseline days, then use a 24-hour cooldown and deduplication.
+
 `iva doctor` must report `healthy` or only understood non-blocking `degraded` checks. Its layered
-contract includes both services, HTTP readiness, six timers, Workflow schema/write-read access,
+contract includes both services, HTTP readiness, seven timers, Workflow schema/write-read access,
 Telegram/provider readiness, memory jobs, backups and disk capacity. Exit `1` means a failure blocks
 replies; `iva doctor --json` emits the same schema without auto-repair or private support data. The polling bridge requires
 `TELEGRAM_WEBHOOK_SECRET_TOKEN`; if it is absent from a legacy `.env`, create a new random secret

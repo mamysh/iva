@@ -7,13 +7,13 @@ const recent = "2026-07-16T11:00:00Z";
 const healthy = {
   configuration: { nodeSupported: true, nodeMajor: 24, required: true, provider: "ollama", search: true, searchProvider: "tavily", memory: true, memoryMode: "hybrid" },
   build: { present: true, profileMatch: true, profile: "postgres" },
-  services: { systemd: true, agentActive: true, bridgeActive: true, agentRestarts: 0, bridgeRestarts: 0, health: true, timersReady: true, timersEnabled: 6, timersExpected: 6 },
+  services: { systemd: true, agentActive: true, bridgeActive: true, agentRestarts: 0, bridgeRestarts: 0, health: true, timersReady: true, timersEnabled: 7, timersExpected: 7 },
   workflow: { backend: "postgres", available: true, schemaCurrent: true, writeRead: true, wedged: 0, runawayGrowth: false, chunks: 10 },
   telegram: { configured: true, bridgeReady: true },
   provider: { configured: true, name: "ollama", lastSuccessAt: recent },
   memory: { lastJobSuccessAt: recent, vault: true, indexReady: true },
   backups: { lastReminderDispatchAt: recent, vaultRemote: true, lastVaultBackupAt: recent, databaseBackup: true },
-  capacity: { freeBytes: 10 * 1024 ** 3, freePercent: 50 },
+  capacity: { freeBytes: 10 * 1024 ** 3, freePercent: 50, observed: true, freeInodesPercent: 80, swapUsedPercent: 2, workflowGrowthPerDay: 0, daysUntilFull: null, baselineDays: 30 },
 };
 
 const report = evaluateDoctorSnapshot(healthy, { now });
@@ -51,6 +51,15 @@ const degraded = evaluateDoctorSnapshot({
 }, { now });
 assert.equal(degraded.status, "degraded");
 assert.equal(degraded.exitCode, 0);
+
+const capacityWarnings = evaluateDoctorSnapshot({
+  ...healthy,
+  capacity: { ...healthy.capacity, freeInodesPercent: 5, swapUsedPercent: 95, workflowGrowthPerDay: 200 * 1024 ** 2, daysUntilFull: 3 },
+}, { now });
+for (const id of ["capacity.inodes", "capacity.swap", "capacity.workflow_growth"]) {
+  assert.equal(capacityWarnings.checks.find((item) => item.id === id)?.status, "warn", `${id} must be actionable but non-blocking`);
+}
+assert.equal(capacityWarnings.exitCode, 0);
 
 const fixed = evaluateDoctorSnapshot(healthy, { now, fixed: ["services.agent"] });
 assert.equal(fixed.checks.find((item) => item.id === "services.agent")?.status, "fixed");

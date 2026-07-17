@@ -51,6 +51,13 @@ From Telegram, `/restart` restarts only the agent process. `/new`, `/clear` and 
 
 Both services use a bounded systemd restart policy: five starts in five minutes, then cooldown instead of an endless restart loop.
 
+### Disk, inode, swap, or growth warning
+
+Run `iva status`, then `iva doctor`. The summary shows whether Workflow growth is stable and how
+quickly it would consume current free space. A warning repeats at most once per 24 hours and only
+after the initial seven-day baseline. Do not delete Workflow tables or personal data as automatic
+cleanup; first identify the growing category and create a verified backup when appropriate.
+
 ### Reminder shows delivery_unknown
 
 The dispatcher durably claimed the reminder, but could not prove whether Telegram accepted it before the process or network failed. Iva does not resend it automatically because that could create a duplicate. Check the chat and service log, then cancel and recreate the reminder if it was not delivered.

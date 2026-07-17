@@ -9,13 +9,14 @@ import pg from "pg";
 import { assertWorkflowProfileMatch } from "./lib/workflow-config.mjs";
 import { readWorkflowBuildDescriptor, resolveRuntimeWorkflowProfile } from "./lib/workflow-runtime.mjs";
 import { evaluateDoctorSnapshot, formatDoctorReport } from "./lib/doctor-contract.mjs";
+import { readMetricHistory, summarizeHealth } from "./lib/health-metrics.mjs";
 import { readEntries } from "./lib/usage.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = join(ROOT, ".env");
 const PROFILE_ENV_PATH = join(ROOT, "deploy/iva-workflow.environment");
 const SERVICES = ["iva.service", "iva-telegram-poll.service"];
-const TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((name) => `iva-memory-${name}.timer`).concat("iva-reminders.timer");
+const TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((name) => `iva-memory-${name}.timer`).concat("iva-reminders.timer", "iva-observe.timer");
 const json = process.argv.includes("--json");
 
 function readEnvFile(path) {
@@ -215,6 +216,7 @@ const vaultRemote = existsSync(vaultDir) && command("git", ["-C", vaultDir, "rem
 const indexPath = join(vaultDir, ".index/embeddings.json");
 const indexReady = configuration.memoryMode !== "hybrid" || (existsSync(indexPath) && Date.now() - statSync(indexPath).mtimeMs <= 48 * 3_600_000);
 const disk = statfsSync(existsSync(dataDir) ? dataDir : ROOT);
+const observedHealth = summarizeHealth(readMetricHistory(dataDir));
 const fixed = String(process.env.IVA_DOCTOR_FIXED || "").split(",").filter(Boolean);
 
 const report = evaluateDoctorSnapshot({
@@ -234,7 +236,15 @@ const report = evaluateDoctorSnapshot({
     lastVaultBackupAt: lastSuccessfulUnitRun("iva-memory-doctor.service"),
     databaseBackup: workflow.backend === "postgres" ? newestVerifiedDatabaseBackup() : true,
   },
-  capacity: { freeBytes: disk.bavail * disk.bsize, freePercent: Math.round((disk.bavail / disk.blocks) * 100) },
+  capacity: {
+    freeBytes: disk.bavail * disk.bsize, freePercent: Math.round((disk.bavail / disk.blocks) * 100),
+    observed: observedHealth.available,
+    freeInodesPercent: observedHealth.latest?.capacity?.freeInodesPercent,
+    swapUsedPercent: observedHealth.latest?.capacity?.swapUsedPercent,
+    workflowGrowthPerDay: observedHealth.growthPerDay,
+    daysUntilFull: observedHealth.daysUntilFull,
+    baselineDays: observedHealth.baselineDays,
+  },
 }, { fixed });
 
 console.log(json ? JSON.stringify(report, null, 2) : formatDoctorReport(report));

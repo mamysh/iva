@@ -25,7 +25,7 @@ const childEnv = { ...process.env, PATH: `${NODE_BIN_DIR}:${process.env.PATH || 
 
 const SERVICES = ["iva.service", "iva-telegram-poll.service"];
 const MEMORY_TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((n) => `iva-memory-${n}.timer`);
-const TIMERS = [...MEMORY_TIMERS, "iva-reminders.timer"];
+const TIMERS = [...MEMORY_TIMERS, "iva-reminders.timer", "iva-observe.timer"];
 
 // Telegram userbot proxy — OPT-IN (not in SERVICES, so `iva update` never tries to start
 // it without API creds). Enabled explicitly via `iva userbot setup`.
@@ -394,11 +394,10 @@ function cmdDoctor(args) {
 function cmdStatus() {
   const { profile } = resolveRuntimeWorkflowProfile(ROOT);
   console.log(`Workflow: ${profile.label}`);
-  const health = run(NODE, ["scripts/workflow-health.mjs", "status"]);
-  if (health.status !== 0 && health.status !== 2) warn("Workflow diagnostics reported a storage error");
+  run(NODE, ["scripts/observe.mjs", "status"]);
   requireSystemd();
-  run("systemctl", ["--user", "status", "--no-pager", "-n", "5", ...SERVICES]);
-  run("systemctl", ["--user", "list-timers", "--no-pager", "iva-memory-*", "iva-reminders.timer"]);
+  console.log(`Services: agent ${scQ("is-active", SERVICES[0]).out || "unknown"} · Telegram ${scQ("is-active", SERVICES[1]).out || "unknown"}`);
+  console.log(`Collector: ${scQ("is-enabled", "iva-observe.timer").out || "disabled"}`);
 }
 function cmdRestart() {
   requireSystemd();
@@ -588,7 +587,7 @@ ${C.b}Commands:${C.x}
   ${C.c}iva config${C.x}         configure: model, Telegram, Deepgram, TZ, vault
   ${C.c}iva login${C.x} [--browser]  sign in to an OpenAI subscription (ChatGPT) for MODEL_PROVIDER=codex
   ${C.c}iva doctor${C.x}         diagnose and safely auto-repair the install
-  ${C.c}iva status${C.x}         status of services and memory timers
+  ${C.c}iva status${C.x}         concise health, growth and capacity summary
   ${C.c}iva restart${C.x}        restart the agent and Telegram bridge
   ${C.c}iva recover${C.x}        diagnose and safely restart without deleting workflow state
   ${C.c}iva reset${C.x}          cancel all active workflow sessions (confirmation required)
