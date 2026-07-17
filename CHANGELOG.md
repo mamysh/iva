@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.2] - 2026-07-17
+
+- Fixed the authenticated release canary so it uses the packaged agent's shared vision path without
+  relying on build-only TypeScript import remapping.
+
 ## [0.3.0-rc.1] - 2026-07-17
 
 Release candidate for the first fully gated self-host release. It is not stable until the seven-day
@@ -25,6 +30,7 @@ soak and fresh-owner acceptance pass.
 - 🧪 **Personal Telegram MCP (beta)** — optional QR onboarding for a personal account, disabled by default in this fork and restricted to read-only exposure unless explicitly reviewed.
 
 [Unreleased]: https://github.com/mamysh/iva/compare/1e6e90a7d43544f33ef26bdfe0b145038ab879fb...main
+[0.3.0-rc.2]: https://github.com/mamysh/iva/compare/v0.3.0-rc.1...v0.3.0-rc.2
 [0.3.0-rc.1]: https://github.com/mamysh/iva/compare/v0.2.5...v0.3.0-rc.1
 [0.2.5]: https://github.com/smixs/iva/releases/tag/v0.2.5
 

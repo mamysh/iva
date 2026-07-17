@@ -1,6 +1,6 @@
 {
   "name": "iva",
-  "version": "0.3.0-rc.1",
+  "version": "0.3.0-rc.2",
   "type": "module",
   "bin": {
     "iva": "bin/iva.mjs"
@@ -31,7 +31,7 @@
     "replica:postgres-update": "node scripts/clean-install-smoke.mjs --postgres",
     "baseline:resources": "node scripts/replica-smoke.mjs --baseline",
     "release:check": "node scripts/release-report.mjs",
-    "release:provider": "node scripts/release-provider-canary.mjs",
+    "release:provider": "node --env-file-if-exists=.env scripts/release-provider-canary.mjs",
     "release:soak": "node scripts/release-soak.mjs",
     "verify:pr": "npm test && npm run typecheck && npm run build",
     "typecheck": "tsgo",
