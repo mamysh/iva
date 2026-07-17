@@ -6,7 +6,7 @@
 // Лог живёт в data/usage.jsonl (ASSISTANT_DATA_DIR, дефолт ./data) — рядом с tasks.json,
 // gitignored, НЕ в vault (иначе ночной doctor коммитил бы растущий лог в репо памяти).
 // Одна строка JSONL на шаг модели; ход (turn) = несколько шагов, группируем по turnId.
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const defaultDir = () => process.env.ASSISTANT_DATA_DIR || "data";
@@ -20,7 +20,8 @@ export function usageFilePath(dataDir = defaultDir()) {
 export function appendUsage(record, dataDir = defaultDir()) {
   const file = usageFilePath(dataDir);
   mkdirSync(dirname(file), { recursive: true });
-  appendFileSync(file, JSON.stringify(record) + "\n", "utf8");
+  appendFileSync(file, JSON.stringify(record) + "\n", { encoding: "utf8", mode: 0o600 });
+  chmodSync(file, 0o600);
 }
 
 // Толерантный парсер: нет файла → пусто; битую строку (обрыв при падении на середине

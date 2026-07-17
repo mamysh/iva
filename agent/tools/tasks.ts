@@ -1,6 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 // Хранилище задач — простой JSON-файл на диске app-runtime (на VPS переживает рестарты).
@@ -28,7 +28,8 @@ async function load(): Promise<Task[]> {
 
 async function save(tasks: Task[]): Promise<void> {
   await mkdir(dirname(FILE), { recursive: true });
-  await writeFile(FILE, JSON.stringify(tasks, null, 2), "utf8");
+  await writeFile(FILE, JSON.stringify(tasks, null, 2), { encoding: "utf8", mode: 0o600 });
+  await chmod(FILE, 0o600);
 }
 
 export default defineTool({

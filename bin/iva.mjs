@@ -34,7 +34,7 @@ const USERBOT_DIR = join(ROOT, "services/telegram-userbot");
 const VENV_PY = join(USERBOT_DIR, ".venv/bin/python");
 // Proxy bearer secret. A FILE (not .env) read at runtime by both the proxy and iva's
 // connection, so iva needn't restart after the agent sets the proxy up mid-chat.
-const TOKEN_FILE = join(ROOT, "data/telegram-userbot.token");
+const userbotTokenFile = () => join(dataDirAbs(), "telegram-userbot.token");
 
 // Uncommon default port: 3000/8000/8080 are typically taken on a VPS (docker, etc.).
 // Overridden by the IVA_PORT variable in .env; the default ASSISTANT_HOST depends on it too.
@@ -317,6 +317,35 @@ async function cmdUpdate(args) {
   process.exit(1);
 }
 
+async function cmdBackup(args) {
+  const destination = args.find((arg) => !arg.startsWith("--"));
+  step("Creating a verified portable backup…");
+  const { performBackup } = await import("../scripts/backup-runtime.mjs");
+  const result = performBackup({ destination, log: (message) => console.log(message) });
+  ok(`Backup ready: ${result.path}`);
+  console.log(`${C.d}Copy this private directory off the host; files are 0600 and directories are 0700.${C.x}`);
+}
+
+async function cmdRestore(args) {
+  const source = args.find((arg) => !arg.startsWith("--"));
+  if (!source) {
+    bad("Usage: iva restore <portable-backup-directory> [--yes]");
+    process.exit(1);
+  }
+  warn("Restore replaces configuration, vault, application data and Workflow state.");
+  const confirmed = args.includes("--yes") || await confirm("Restore into this installed Iva root?", false);
+  if (!confirmed) return warn("Restore cancelled; no state changed");
+  step("Verifying and restoring portable backup…");
+  const { performRestore } = await import("../scripts/backup-runtime.mjs");
+  const result = performRestore({ backupDir: source, confirmed: true, log: (message) => console.log(message) });
+  ok(`Restore complete: ${result.profile} state and production build verified`);
+  warn("Services remain stopped to prevent duplicate Telegram polling during a move.");
+  console.log("After the old host is stopped, run: iva start");
+  if (existsSync(join(dataDirAbs(), "telegram-userbot.session"))) {
+    console.log("Userbot session was restored but stays opt-in; enable it explicitly with: iva userbot setup");
+  }
+}
+
 async function cmdConfig() {
   const r = run(NODE, ["scripts/setup.mjs"]);
   if (r.status !== 0) process.exit(r.status ?? 1);
@@ -554,6 +583,8 @@ ${C.b}Iva CLI${C.x} — manage your personal agent
 
 ${C.b}Commands:${C.x}
   ${C.c}iva update${C.x}         update: git pull + build + restart
+  ${C.c}iva backup${C.x} [dir]   create and verify a private portable backup directory
+  ${C.c}iva restore${C.x} <dir>  restore on a clean host (confirmation required; services stay stopped)
   ${C.c}iva config${C.x}         configure: model, Telegram, Deepgram, TZ, vault
   ${C.c}iva login${C.x} [--browser]  sign in to an OpenAI subscription (ChatGPT) for MODEL_PROVIDER=codex
   ${C.c}iva doctor${C.x}         diagnose and safely auto-repair the install
@@ -621,11 +652,12 @@ function writeEnvVars(vars) {
 
 // Generate the proxy bearer once, into a 0600 file both sides read at runtime.
 function ensureUserbotToken() {
-  if (existsSync(TOKEN_FILE)) return;
-  mkdirSync(dirname(TOKEN_FILE), { recursive: true });
-  writeFileSync(TOKEN_FILE, randomBytes(24).toString("hex"), { mode: 0o600 });
+  const tokenFile = userbotTokenFile();
+  if (existsSync(tokenFile)) return;
+  mkdirSync(dirname(tokenFile), { recursive: true });
+  writeFileSync(tokenFile, randomBytes(24).toString("hex"), { mode: 0o600 });
   try {
-    chmodSync(TOKEN_FILE, 0o600);
+    chmodSync(tokenFile, 0o600);
   } catch {}
   ok("Сгенерировал токен прокси (data/telegram-userbot.token).");
 }
@@ -696,12 +728,14 @@ function cmdUserbot(args) {
   const enabled = scQ("is-enabled", SVC_USERBOT).out || "-";
   console.log(`${SVC_USERBOT}: ${active} (${enabled})`);
   console.log(`venv: ${existsSync(VENV_PY) ? "собран" : "нет — будет собран при setup"}`);
-  console.log(`токен: ${existsSync(TOKEN_FILE) ? "есть" : "нет — создастся при setup"}`);
+  console.log(`токен: ${existsSync(userbotTokenFile()) ? "есть" : "нет — создастся при setup"}`);
 }
 
 const [, , cmd, ...rest] = process.argv;
 const cmds = {
   update: cmdUpdate,
+  backup: cmdBackup,
+  restore: cmdRestore,
   userbot: cmdUserbot,
   config: cmdConfig,
   login: cmdLogin,

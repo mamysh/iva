@@ -112,6 +112,21 @@ dependencies only after tests, typecheck, build and profile canary pass. Doctor 
 the transaction; failure restores the previous commit/output/dependencies and restarts it. Schema
 migrations are sequential and require a declared, verified Workflow backup and failure strategy.
 
+### Portable backup and restore
+
+`iva backup` is the full-state operation; the nightly vault Git push is memory-only. Backup briefly
+stops every managed writer and timer, hardens known secret modes, snapshots configuration, app data,
+vault and the active Workflow backend, then verifies a sanitized per-file checksum manifest before
+returning the previously active units. Local Workflow files are copied only offline. PostgreSQL uses
+a custom-format dump, requires a `pg_dump` major version at least as new as the server, and verifies
+the dump with `pg_restore --list`.
+
+`iva restore <directory> --yes` targets an installed clean host, verifies the entire artifact before
+replacement, restores both filesystem and Workflow state, rebuilds the selected profile and checks
+the capability manifest. Services stay stopped until `iva start`; this is the deliberate handoff
+boundary that prevents two hosts from polling the same Telegram bot. The authoritative inventory and
+runbook are in [data-and-backup.md](data-and-backup.md).
+
 `iva doctor` must report `healthy` or only understood non-blocking `degraded` checks. Its layered
 contract includes both services, HTTP readiness, six timers, Workflow schema/write-read access,
 Telegram/provider readiness, memory jobs, backups and disk capacity. Exit `1` means a failure blocks

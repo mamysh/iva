@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
@@ -20,7 +20,8 @@ export async function loadReminders(file = REMINDERS_FILE) {
 
 export async function saveReminders(reminders, file = REMINDERS_FILE) {
   await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, `${JSON.stringify(reminders.map(normalizeReminder).filter(Boolean), null, 2)}\n`, "utf8");
+  await writeFile(file, `${JSON.stringify(reminders.map(normalizeReminder).filter(Boolean), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await chmod(file, 0o600);
 }
 
 export function nextReminderId(reminders) {

@@ -7,7 +7,7 @@
 // URL/токен модель НЕ видит: они на стороне рантайма.
 import { defineMcpClientConnection } from "eve/connections";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 const port = process.env.TELEGRAM_MCP_PORT ?? "8724";
 
@@ -17,7 +17,9 @@ const port = process.env.TELEGRAM_MCP_PORT ?? "8724";
 function proxyToken(): string {
   if (process.env.TELEGRAM_MCP_TOKEN) return process.env.TELEGRAM_MCP_TOKEN;
   try {
-    return readFileSync(join(process.cwd(), "data", "telegram-userbot.token"), "utf8").trim();
+    const configured = process.env.ASSISTANT_DATA_DIR || "data";
+    const dataDir = isAbsolute(configured) ? configured : join(process.cwd(), configured);
+    return readFileSync(join(dataDir, "telegram-userbot.token"), "utf8").trim();
   } catch {
     return "";
   }

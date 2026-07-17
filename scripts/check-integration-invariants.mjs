@@ -18,6 +18,8 @@ const doctor = read("scripts/doctor.mjs");
 assert.match(doctor, /CREATE TEMP TABLE iva_doctor_probe/);
 assert.match(doctor, /workflow-health\.mjs", "status", "--json", "--no-sample"/);
 assert.match(doctor, /IVA_DOCTOR_FIXED/);
+assert.match(doctor, /backup-state\.json/);
+assert.match(doctor, /metadataSha256/);
 
 const doctorContract = read("scripts/lib/doctor-contract.mjs");
 assert.match(doctorContract, /schemaVersion: DOCTOR_SCHEMA_VERSION/);
@@ -31,6 +33,17 @@ assert.match(updateRuntime, /rollbackActivation/);
 assert.match(updateRuntime, /doctor", "--json"/);
 assert.match(updateRuntime, /profile\.backend === "local" \? "local" : profile\.world/);
 assert.doesNotMatch(updateRuntime, /@googleworkspace\/cli@latest/);
+
+const backupRuntime = read("scripts/backup-runtime.mjs");
+assert.match(backupRuntime, /stopWriters/);
+assert.match(backupRuntime, /createPortableBackup/);
+assert.match(backupRuntime, /verifyPortableBackup/);
+assert.match(backupRuntime, /Services remain stopped|services remain stopped/i);
+const portableBackup = read("scripts/lib/portable-backup.mjs");
+assert.match(portableBackup, /pg_dump/);
+assert.match(portableBackup, /pg_restore/);
+assert.match(portableBackup, /client < server/);
+assert.match(portableBackup, /VAULT_EXCLUDES = new Set\(\["\.index", "\.graph"\]\)/);
 
 const proxy = read("services/telegram-userbot/serve.py");
 assert.match(proxy, /setdefault\("TELEGRAM_EXPOSED_TOOLS", "read-only"\)/);

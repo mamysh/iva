@@ -39,17 +39,21 @@ def _fail(msg: str) -> None:
 def _session_file() -> Path:
     explicit = os.getenv("TELEGRAM_SESSION_FILE")
     if explicit:
-        return Path(explicit)
+        path = Path(explicit)
+        return path if path.is_absolute() else Path(__file__).resolve().parents[2] / path
     data_dir = os.getenv("ASSISTANT_DATA_DIR")
-    base = Path(data_dir) if data_dir else Path.cwd()
+    if data_dir:
+        configured = Path(data_dir)
+        base = configured if configured.is_absolute() else Path(__file__).resolve().parents[2] / configured
+    else:
+        base = Path(__file__).resolve().parents[2] / "data"
     return base / "telegram-userbot.session"
 
 
 def _token_file() -> Path:
-    # Anchored at <iva_root>/data so iva's connection (cwd = iva root) and this proxy
-    # (cwd = services/telegram-userbot) resolve the SAME file: services/telegram-userbot/
-    # serve.py → parents[2] = iva root. `iva userbot setup` writes it (0600).
-    return Path(__file__).resolve().parents[2] / "data" / "telegram-userbot.token"
+    configured = Path(os.getenv("ASSISTANT_DATA_DIR", "data"))
+    base = configured if configured.is_absolute() else Path(__file__).resolve().parents[2] / configured
+    return base / "telegram-userbot.token"
 
 
 def _resolve_token() -> str:

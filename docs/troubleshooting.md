@@ -142,6 +142,12 @@ gh repo clone <user>/iva-vault ~/iva/vault
 iva restart
 ```
 
+This is a vault-only recovery. It does not restore tasks, reminders, authentication or Workflow
+sessions. For a complete clean-host restore use a verified portable backup and the procedure in
+[Data, backup, restore, and server moves](data-and-backup.md). If `iva restore` fails, do not start
+managed services against partial state; correct the reported filesystem/PostgreSQL problem and run
+the same restore again.
+
 ### Uninstall
 
 `iva uninstall`, with `--purge` to also delete code and vault — push the vault first; there is no undo. Details: [cli.md](cli.md).

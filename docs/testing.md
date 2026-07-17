@@ -43,6 +43,8 @@ This gate currently proves:
 - the structural capability baseline from `npm run manifest`;
 - the doctor schema, severity/exit-code contract, blocking fault matrix, one-screen output and support-bundle redaction;
 - the update preflight/migration contract, broken-build isolation and readiness rollback order;
+- the sanitized data inventory, private portable-backup modes/checksums, clean-host local restore,
+  tasks/reminders/memory recall, derived-index rebuild and honest vault-only boundary;
 - install readiness rejects incomplete configuration, failed health, inactive/restarting services
   and fresh terminal startup errors.
 
@@ -88,7 +90,10 @@ report and temporary Workflow write/read probe, model-driven task tool selection
 workflow restart/resume, transient provider 429/500 recovery,
 terminal provider failure without retry, SIGTERM during a model step, and SIGKILL between durable
 steps without repeating the task side effect. The PostgreSQL variant additionally blocks connections
-temporarily and proves automatic return after database availability is restored. `npm run replica:install` additionally runs first install and reinstall in a
+temporarily, proves automatic return after database availability is restored, creates a real portable
+custom-format dump and restores it into a second disposable database without losing durable runs.
+The local variant likewise performs an offline portable snapshot/restore of real Workflow state.
+`npm run replica:install` additionally runs first install and reinstall in a
 disposable home with mock provider, Telegram and systemd boundaries, checking readiness, doctor safe
 auto-fix followed by a green repeat, redacted JSON, private-file modes, vault preservation, and
 independent Telegram-bridge stop/restart while Eve stays available. The same install fixture creates
