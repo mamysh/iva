@@ -9,6 +9,7 @@ const cli = read("bin/iva.mjs");
 assert.match(cli, /const SERVICES = \["iva\.service", "iva-telegram-poll\.service"\]/);
 assert.doesNotMatch(cli, /const SERVICES = \[[^\]]*userbot/);
 assert.match(cli, /const TIMERS = \[\.\.\.MEMORY_TIMERS, "iva-reminders\.timer", "iva-observe\.timer"\]/);
+assert.match(cli, /if \(scQ\("is-enabled", timer\)\.out !== "enabled"\) sc\("enable", "--now", timer\)/);
 assert.match(cli, /EnvironmentFile=-\$\{WORKFLOW_ENV_PATH\}/);
 assert.match(cli, /replaceAll\("__PYTHON_BIN__", VENV_PY\)/);
 assert.match(cli, /scripts\/doctor\.mjs/);

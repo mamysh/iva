@@ -209,6 +209,9 @@ function migrateEnv() {
 // on the old port (the unit was already baked) while clients read the new one — the same desync.
 function restartServices() {
   writeUnits();
+  for (const timer of TIMERS) {
+    if (scQ("is-enabled", timer).out !== "enabled") sc("enable", "--now", timer);
+  }
   sc("restart", ...SERVICES);
 }
 
