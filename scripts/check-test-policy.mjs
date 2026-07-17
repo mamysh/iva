@@ -12,6 +12,8 @@ assert.match(packageJson.scripts.test, /node scripts\/check-core-canaries\.mjs/)
 assert.match(packageJson.scripts.test, /node scripts\/check-capability-manifest\.mjs/);
 assert.match(packageJson.scripts.test, /node scripts\/check-doctor-contract\.mjs/);
 assert.match(packageJson.scripts.test, /node scripts\/check-update-transaction\.mjs/);
+assert.match(packageJson.scripts.test, /node scripts\/check-data-manifest\.mjs/);
+assert.match(packageJson.scripts.test, /node scripts\/check-backup-restore\.mjs/);
 
 assert.match(workflow, /^permissions:\n  contents: read$/m);
 assert.match(workflow, /uses: actions\/checkout@v6/);

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -181,6 +182,14 @@ async function workflowSnapshot() {
 }
 
 function newestVerifiedDatabaseBackup() {
+  try {
+    const state = JSON.parse(readFileSync(join(dataDir, "backup-state.json"), "utf8"));
+    const metadata = join(state.artifactPath, "backup.json");
+    const dump = join(state.artifactPath, "payload/workflow/postgres.dump");
+    const hash = createHash("sha256").update(readFileSync(metadata)).digest("hex");
+    if (state.profile === "postgres" && hash === state.metadataSha256 && statSync(dump).size > 0 &&
+        command("pg_restore", ["-l", dump], { timeout: 15_000 }).code === 0) return true;
+  } catch {}
   if (!existsSync(join(dataDir, "backups"))) return false;
   const dumps = readdirSync(join(dataDir, "backups"))
     .filter((name) => name.endsWith(".dump"))

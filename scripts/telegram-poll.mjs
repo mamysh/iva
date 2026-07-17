@@ -8,7 +8,7 @@
 // so we fetch updates from Telegram ourselves (getUpdates, long-poll) and POST them to
 // the local eve route with the same secret — Telegram sees an ordinary bot, no proxy needed.
 // The channel/agent are unchanged. Webhook and polling are mutually exclusive → deleteWebhook on start.
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { chmod, readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { join, dirname } from "node:path";
@@ -97,7 +97,8 @@ function chatKey(update) {
 async function saveOffset(offset) {
   try {
     await mkdir(DATA_DIR, { recursive: true });
-    await writeFile(OFFSET_FILE, JSON.stringify({ offset }), "utf8");
+    await writeFile(OFFSET_FILE, JSON.stringify({ offset }), { encoding: "utf8", mode: 0o600 });
+    await chmod(OFFSET_FILE, 0o600);
   } catch (e) {
     log("offset save failed:", e.message);
   }

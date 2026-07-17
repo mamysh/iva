@@ -42,6 +42,7 @@ Public product and operations documentation starts at [`docs/README.md`](docs/RE
 | Vault skeleton | `vault-template/` | Copied only when initializing an empty live vault. |
 | Memory search index | live vault `.index/` | Derived and rebuildable, not a source of truth. |
 | Tasks/reminders/usage | `ASSISTANT_DATA_DIR` (`data/` by default) | Private and ignored application data. |
+| Data inventory and portable backup | `scripts/data-manifest.json` + `scripts/lib/portable-backup.mjs` | Sanitized catalog plus checksum/restore contract; operational writer control is in `scripts/backup-runtime.mjs`. |
 | Public docs | `docs/` | `docs/README.md` is the documentation index. |
 | Dependency versions | `package.json` + `package-lock.json` | Keep runtime packages pinned where compatibility is sensitive. |
 
@@ -206,6 +207,13 @@ iva update
   -> scripts/update-manifest.json migration/backup contract
   -> atomic output/dependency activation + regenerated units + restart
   -> iva doctor readiness OR automatic previous-version rollback
+
+iva backup / iva restore
+  -> bin/iva.mjs
+  -> scripts/backup-runtime.mjs stops every managed writer
+  -> scripts/data-manifest.json inventory contract
+  -> scripts/lib/portable-backup.mjs private snapshot/checksum/local-or-PostgreSQL restore
+  -> build + capability check; restored services remain stopped until explicit `iva start`
 ```
 
 `bin/iva.mjs` is the single source of truth for the installed `iva.service`. Templates for the other
@@ -238,6 +246,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | Workflow backend | `scripts/lib/workflow-config.mjs` | agent, package versions, smoke script | config test, both builds, restart/resume |
 | PostgreSQL profile | `scripts/postgres-profile.mjs` + `scripts/lib/postgres-profile.mjs` | deploy examples, upstream package migrations | config test, real PostgreSQL bootstrap + smoke |
 | Update behavior | `scripts/update-runtime.mjs` + `scripts/lib/update-contract.mjs` | CLI, Telegram update, migration manifest | update contract, clean-install build/readiness rollback fixture |
+| Backup, restore, server moves | `scripts/data-manifest.json` + `scripts/lib/portable-backup.mjs` | backup runtime, CLI, data docs, both Workflow profiles | manifest/restore contract, both disposable replicas, clean-host drill |
 | Public documentation | `docs/README.md` | README files and docs checks | `npm test` |
 | Telegram userbot beta | `services/telegram-userbot/` | connection + skill + userbot docs | Python tests, typecheck, opt-in smoke |
 

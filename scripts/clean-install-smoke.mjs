@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { mkdtemp, mkdir, cp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
@@ -164,6 +164,7 @@ const start = () => {
   writeFileSync(pidfile, String(child.pid));
 };
 if (action === "restart") { stop(); start(); }
+else if (action === "start") start();
 else if (action === "status") process.exit(running() ? 0 : 1);
 else if (action === "stop") stop();
 `,
@@ -192,6 +193,7 @@ case "$action" in
   show-environment|daemon-reload|reset-failed) exit 0 ;;
   enable) exit 0 ;;
   restart) for unit in "$@"; do "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" restart "$unit"; done ;;
+  start) for unit in "$@"; do "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" start "$unit"; done ;;
   stop) for unit in "$@"; do "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" stop "$unit"; done ;;
   is-active)
     [ "\${1:-}" = --quiet ] && shift
@@ -253,7 +255,7 @@ async function stopFixtureProcesses() {
   await sleep(200);
 }
 
-async function controlService(action, unit) {
+async function controlService(action, unit, { allowFailure = false } = {}) {
   const child = spawn(process.execPath, [serviceControl, action, unit], {
     cwd: app,
     env: {
@@ -267,7 +269,8 @@ async function controlService(action, unit) {
     stdio: "ignore",
   });
   const code = await new Promise((resolve) => child.once("exit", resolve));
-  assert.equal(code, 0, `${action} ${unit} failed`);
+  if (!allowFailure) assert.equal(code, 0, `${action} ${unit} failed`);
+  return { code };
 }
 
 async function runFixtureCli(args) {
@@ -388,6 +391,23 @@ try {
   while (telegram.requests() <= telegramBeforeRestart && Date.now() < bridgeDeadline) await sleep(50);
   assert.ok(telegram.requests() > telegramBeforeRestart, "Telegram bridge did not recover independently");
 
+  const portableBackup = join(sandbox, "portable-backup");
+  const backupResult = await runFixtureCli(["backup", portableBackup]);
+  assert.equal(backupResult.code, 0, backupResult.output);
+  assert.match(backupResult.output, /Backup ready:/);
+  await controlService("status", "iva.service");
+  await controlService("status", "iva-telegram-poll.service");
+  const afterBackupOnly = join(sandbox, "data", "after-backup-only.json");
+  await writeFile(afterBackupOnly, '{"mustDisappear":true}\n', { mode: 0o600 });
+  const restoreResult = await runFixtureCli(["restore", portableBackup, "--yes"]);
+  assert.equal(restoreResult.code, 0, restoreResult.output);
+  assert.match(restoreResult.output, /Services remain stopped/i);
+  assert.equal(existsSync(afterBackupOnly), false, "restore did not replace post-backup application state");
+  assert.notEqual((await controlService("status", "iva.service", { allowFailure: true })).code, 0, "restore restarted the agent unexpectedly");
+  assert.notEqual((await controlService("status", "iva-telegram-poll.service", { allowFailure: true })).code, 0, "restore restarted Telegram polling unexpectedly");
+  await controlService("start", "iva.service");
+  await controlService("start", "iva-telegram-poll.service");
+
   const sentinel = join(sandbox, "vault", "sentinel.txt");
   await writeFile(sentinel, "preserve me\n");
   await runInstaller();
@@ -408,7 +428,7 @@ try {
     assert.equal((await stat(path)).mode & 0o777, 0o600, `${basename(path)} must be 0600`);
   }
 
-  console.log("clean install smoke passed: staged build isolation, readiness rollback, successful atomic update, doctor auto-fix, redacted JSON, independent bridge recovery, 0600 secrets, idempotent rerun");
+  console.log("clean install smoke passed: staged build isolation, readiness rollback, atomic update, portable backup/restore with stopped handoff, doctor recovery, private secrets, idempotent rerun");
 } finally {
   await stopFixtureProcesses();
   await telegramServer?.close();

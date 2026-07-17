@@ -118,13 +118,14 @@ You need neither for Telegram — polling is outbound-only. Add an nginx reverse
 
 ## Moving servers
 
-Your state is three things: the vault (its own git repo, pushed nightly by the doctor), `.env` (all keys), and `data/` (`tasks.json`, `reminders.json`, `usage.jsonl`). If you enabled the PostgreSQL workflow backend, the workflow database is a fourth stateful component.
+Use `iva backup`, copy the verified private directory off the old host, install Iva on the new host,
+and run `iva restore <directory> --yes`. Restore leaves services stopped: stop the old host before
+`iva start` on the new one, so two processes never poll the same Telegram bot. The complete inventory,
+PostgreSQL requirements, modes and failure procedure are in [Data, backup, restore, and server
+moves](data-and-backup.md).
 
-1. Old box: `npm run doctor` to push the vault, then copy `.env` and `data/` off.
-2. New box: run the installer ([install](./install.md)) with `--skip-setup`, drop in `.env`.
-3. Clone the vault back — `gh repo clone <user>/iva-vault <vault-dir>` — restore `data/`, then `iva restart`.
-
-If all you have left is the vault repo, you lose open tasks, reminders and token history. Memory survives intact.
+If all you have is the vault repo, memory survives, but tasks, reminders, OAuth, userbot authorization
+and Workflow sessions do not.
 
 ## Vercel (advanced)
 

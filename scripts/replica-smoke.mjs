@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -86,6 +86,17 @@ async function prepareReplica() {
   await symlink(join(ROOT, "node_modules"), join(replica, "node_modules"), "dir");
   await mkdir(join(replica, "vault", "cards"), { recursive: true });
   await mkdir(join(replica, "data"), { recursive: true });
+  await writeFile(
+    join(replica, ".env"),
+    [
+      "ASSISTANT_DATA_DIR=data",
+      "ASSISTANT_VAULT_DIR=vault",
+      postgresMode ? "WORKFLOW_TARGET_WORLD=@workflow/world-postgres" : "WORKFLOW_TARGET_WORLD=local",
+      ...(postgresMode ? [`WORKFLOW_POSTGRES_URL=${postgresUrl}`] : []),
+      "",
+    ].join("\n"),
+    { mode: 0o600 },
+  );
 }
 
 function replicaEnv(port) {
@@ -304,6 +315,89 @@ async function updateBackupCanary(port) {
   assert.ok(existsSync(backup.path), "update backup artifact is missing");
 }
 
+function postgresUrlForDatabase(source, database) {
+  const url = new URL(source);
+  url.pathname = `/${database}`;
+  return url.toString();
+}
+
+async function createRestoreDatabase() {
+  const source = new URL(postgresUrl);
+  const database = `iva_restore_${process.pid}`;
+  source.pathname = "/postgres";
+  const pool = new Pool({ connectionString: source.toString(), max: 1 });
+  try {
+    await pool.query(`CREATE DATABASE "${database}"`);
+  } finally { await pool.end(); }
+  return { database, url: postgresUrlForDatabase(postgresUrl, database) };
+}
+
+async function dropRestoreDatabase(database) {
+  const source = new URL(postgresUrl);
+  source.pathname = "/postgres";
+  const pool = new Pool({ connectionString: source.toString(), max: 1 });
+  try {
+    await pool.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()", [database]);
+    await pool.query(`DROP DATABASE IF EXISTS "${database}"`);
+  } finally { await pool.end(); }
+}
+
+async function portableRestoreCanary(port) {
+  const { createPortableBackup, restorePortableBackup, verifyPortableBackup } = await import(
+    pathToFileURL(join(replica, "scripts/lib/portable-backup.mjs"))
+  );
+  const backupDir = join(sandbox, `portable-${postgresMode ? "postgres" : "local"}`);
+  const targetRoot = join(sandbox, `restored-${postgresMode ? "postgres" : "local"}`);
+  const env = replicaEnv(port);
+  const backup = createPortableBackup({
+    root: replica,
+    destination: backupDir,
+    writersStopped: true,
+    environment: env,
+    profile: postgresMode ? "postgres" : "local",
+    commit: "fixture-portable-backup",
+    version: "0.0.0-fixture",
+  });
+  assert.equal(backup.metadata.source.profile, postgresMode ? "postgres" : "local");
+  verifyPortableBackup(backupDir);
+  await mkdir(targetRoot, { recursive: true });
+  await cp(join(replica, "package.json"), join(targetRoot, "package.json"));
+  const targetEnvironment = {
+    ASSISTANT_DATA_DIR: join(targetRoot, "data"),
+    ASSISTANT_VAULT_DIR: join(targetRoot, "vault"),
+    WORKFLOW_LOCAL_DATA_DIR: join(targetRoot, ".workflow-data"),
+  };
+  let restoreDatabase;
+  try {
+    if (postgresMode) {
+      restoreDatabase = await createRestoreDatabase();
+      targetEnvironment.WORKFLOW_TARGET_WORLD = "@workflow/world-postgres";
+      targetEnvironment.WORKFLOW_POSTGRES_URL = restoreDatabase.url;
+    }
+    restorePortableBackup({
+      root: targetRoot,
+      backupDir,
+      writersStopped: true,
+      force: true,
+      targetEnvironment,
+    });
+    assert.ok(existsSync(join(targetRoot, "vault")), "portable restore did not recreate the vault");
+    assert.ok(!existsSync(join(targetRoot, "vault/.index")), "portable restore copied a derived memory index");
+    if (postgresMode) {
+      const sourceRuns = await inspectPostgresFixture();
+      const pool = new Pool({ connectionString: restoreDatabase.url, max: 1 });
+      try {
+        const restoredRuns = await pool.query("SELECT count(*)::integer AS count FROM workflow.workflow_runs");
+        assert.equal(restoredRuns.rows[0].count, sourceRuns, "PostgreSQL restore lost durable workflow runs");
+      } finally { await pool.end(); }
+    } else {
+      assert.ok(existsSync(join(targetRoot, ".workflow-data")), "local restore did not recreate workflow state");
+    }
+  } finally {
+    if (restoreDatabase) await dropRestoreDatabase(restoreDatabase.database);
+  }
+}
+
 function repairWorkflow(port) {
   const result = spawnSync(process.execPath, [join(replica, "scripts/workflow-health.mjs"), "repair", "--json"], {
     cwd: replica,
@@ -424,7 +518,14 @@ try {
   assertSuccessfulTurn(textResult);
   assert.equal(textResult.message.trim(), "REPLICA_OK");
   doctorReport(port);
-  if (postgresMode) await updateBackupCanary(port);
+  phase = "portable backup restore";
+  await stopEve(eve);
+  eve = null;
+  await updateBackupCanary(port);
+  await portableRestoreCanary(port);
+  eve = await startEve(port);
+  client = new Client({ host: `http://127.0.0.1:${port}` });
+  await waitForHealth(client, eve);
 
   phase = "provider fault retries";
   for (const status of [429, 500]) {
@@ -538,12 +639,12 @@ try {
   if (jsonMode) {
     console.log(JSON.stringify({
       ok: true,
-      canaries: ["text-reply", "doctor-storage-probe", "update-backup", "provider-429-500", "sigterm-replay", "sigkill-side-effect-once", "model-task-call", "task-persistence", "workflow-restart-resume"],
+      canaries: ["text-reply", "doctor-storage-probe", "update-backup", "portable-backup-restore", "provider-429-500", "sigterm-replay", "sigkill-side-effect-once", "model-task-call", "task-persistence", "workflow-restart-resume"],
       resources: resourceReport ?? null,
     }, null, 2));
   } else {
     console.log(
-      `replica smoke passed (${postgresMode ? "PostgreSQL" : "local"}): doctor storage probe, verified update backup, transient provider faults, SIGTERM/SIGKILL recovery, side effect once, restart/resume`,
+      `replica smoke passed (${postgresMode ? "PostgreSQL" : "local"}): doctor storage probe, update + portable restore backups, transient provider faults, SIGTERM/SIGKILL recovery, side effect once, restart/resume`,
     );
     if (resourceReport) console.log(JSON.stringify(resourceReport, null, 2));
   }

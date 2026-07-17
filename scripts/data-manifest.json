@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "backupFormatVersion": 1,
+  "entries": [
+    {
+      "id": "configuration.env",
+      "path": "${IVA_ROOT}/.env",
+      "type": "file",
+      "classification": { "secret": true, "personal": true, "derived": false },
+      "required": true,
+      "backupMethod": "private-copy",
+      "restoreOrder": 10,
+      "retention": "keep with every portable backup",
+      "lossTolerance": "none"
+    },
+    {
+      "id": "configuration.workflow",
+      "path": "${IVA_ROOT}/deploy/iva-workflow.environment",
+      "type": "file",
+      "classification": { "secret": true, "personal": false, "derived": false },
+      "required": false,
+      "backupMethod": "private-copy",
+      "restoreOrder": 20,
+      "retention": "keep with every portable backup",
+      "lossTolerance": "none when PostgreSQL is enabled"
+    },
+    {
+      "id": "memory.vault",
+      "path": "${ASSISTANT_VAULT_DIR}/**",
+      "type": "directory",
+      "classification": { "secret": false, "personal": true, "derived": false },
+      "required": true,
+      "backupMethod": "consistent-private-snapshot",
+      "restoreOrder": 30,
+      "retention": "private Git history plus portable backup generations",
+      "lossTolerance": "none"
+    },
+    {
+      "id": "memory.derived-indexes",
+      "path": "${ASSISTANT_VAULT_DIR}/{.index,.graph}/**",
+      "type": "directory",
+      "classification": { "secret": false, "personal": false, "derived": true },
+      "required": false,
+      "backupMethod": "exclude-and-rebuild",
+      "restoreOrder": 90,
+      "retention": "none",
+      "lossTolerance": "recreatable"
+    },
+    {
+      "id": "application.tasks",
+      "path": "${ASSISTANT_DATA_DIR}/tasks.json",
+      "type": "file",
+      "classification": { "secret": false, "personal": true, "derived": false },
+      "required": false,
+      "backupMethod": "consistent-private-snapshot",
+      "restoreOrder": 40,
+      "retention": "portable backup generations",
+      "lossTolerance": "none when present"
+    },
+    {
+      "id": "application.reminders",
+      "path": "${ASSISTANT_DATA_DIR}/reminders.json",
+      "type": "file",
+      "classification": { "secret": true, "personal": true, "derived": false },
+      "required": false,
+      "backupMethod": "consistent-private-snapshot",
+      "restoreOrder": 41,
+      "retention": "portable backup generations",
+      "lossTolerance": "none when present"
+    },
+    {
+      "id": "application.usage",
+      "path": "${ASSISTANT_DATA_DIR}/usage.jsonl",
+      "type": "file",
+      "classification": { "secret": false, "personal": true, "derived": false },
+      "required": false,
+      "backupMethod": "consistent-private-snapshot",
+      "restoreOrder": 42,
+      "retention": "portable backup generations",
+      "lossTolerance": "accepted; only accounting history is lost"
+    },
+    {
+      "id": "application.telegram-offset",
+      "path": "${ASSISTANT_DATA_DIR}/telegram-offset.json",
+      "type": "file",
+      "classification": { "secret": false, "personal": false, "derived": false },
+      "required": false,
+      "backupMethod": "consistent-private-snapshot",
+      "restoreOrder": 43,
+      "retention": "latest portable backup",
+      "lossTolerance": "accepted; missing offset skips queued backlog on first start"
+    },
+    {
+      "id": "authentication.codex-oauth",
+      "path": "${ASSISTANT_DATA_DIR}/codex-auth.json",
+      "type": "file",
+      "classification": { "secret": true, "personal": true, "derived": false },
+      "required": false,
+      "backupMethod": "consistent-private-snapshot",
+      "restoreOrder": 44,
+      "retention": "portable backup generations",
+      "lossTolerance": "accepted only if the owner can sign in again"
+    },
+    {
+      "id": "authentication.telegram-userbot",
+      "path": "${ASSISTANT_DATA_DIR}/telegram-userbot.{token,session,session-journal,health.json}",
+      "type": "file-set",
+      "classification": { "secret": true, "personal": true, "derived": false },
+      "required": false,
+      "backupMethod": "offline-consistent-private-snapshot",
+      "restoreOrder": 45,
+      "retention": "portable backup generations while userbot is enabled",
+      "lossTolerance": "accepted only if the account can be authorized again"
+    },
+    {
+      "id": "application.other-private-state",
+      "path": "${ASSISTANT_DATA_DIR}/**",
+      "type": "directory",
+      "classification": { "secret": true, "personal": true, "derived": false },
+      "required": false,
+      "backupMethod": "consistent-private-snapshot excluding backups and locks",
+      "restoreOrder": 49,
+      "retention": "portable backup generations",
+      "lossTolerance": "unknown files fail safe into the backup"
+    },
+    {
+      "id": "workflow.local",
+      "path": "${IVA_ROOT}/.workflow-data/**",
+      "type": "directory",
+      "classification": { "secret": false, "personal": true, "derived": false },
+      "required": false,
+      "backupMethod": "offline-consistent-private-snapshot",
+      "restoreOrder": 60,
+      "retention": "portable backup generations",
+      "lossTolerance": "none when the local profile is active"
+    },
+    {
+      "id": "workflow.postgres",
+      "path": "postgresql://configured-workflow-database",
+      "type": "database",
+      "classification": { "secret": false, "personal": true, "derived": false },
+      "required": false,
+      "backupMethod": "pg_dump custom format plus pg_restore list verification",
+      "restoreOrder": 60,
+      "retention": "portable backup generations",
+      "lossTolerance": "none when the PostgreSQL profile is active"
+    },
+    {
+      "id": "runtime.generated",
+      "path": "${IVA_ROOT}/{node_modules,.output,.eve,.iva-update}/**",
+      "type": "directory",
+      "classification": { "secret": false, "personal": false, "derived": true },
+      "required": false,
+      "backupMethod": "exclude-and-rebuild",
+      "restoreOrder": 100,
+      "retention": "none",
+      "lossTolerance": "recreatable"
+    },
+    {
+      "id": "runtime.telegram-userbot-venv",
+      "path": "${IVA_ROOT}/services/telegram-userbot/.venv/**",
+      "type": "directory",
+      "classification": { "secret": false, "personal": false, "derived": true },
+      "required": false,
+      "backupMethod": "exclude-and-rebuild",
+      "restoreOrder": 101,
+      "retention": "none",
+      "lossTolerance": "recreatable"
+    }
+  ]
+}
