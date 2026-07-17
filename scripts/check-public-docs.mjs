@@ -21,10 +21,14 @@ for (const path of ["README.md", "README.ru.md"]) {
   assert.match(text, /userbot \(beta\)/i);
   assert.match(text, /`\/update`/);
 }
-assert.match(read("docs/deploy.md"), /two systemd user services and six timers/i);
+assert.match(read("docs/deploy.md"), /two systemd user services and seven timers/i);
 assert.match(read("docs/deploy.md"), /iva workflow-postgres enable/);
 assert.match(read("docs/userbot.md"), /49 upstream read-only tools/);
 assert.match(read("docs/userbot.md"), /four local onboarding tools/);
+assert.match(read("docs/supported.md"), /Node\.js 24\.x/);
+assert.match(read("docs/supported.md"), /Telegram userbot remains opt-in beta/i);
+assert.match(read("docs/owner-runbook.md"), /iva backup <private-directory>/);
+assert.match(read("docs/releasing.md"), /seven continuous days/i);
 
 const publicText = [
   "README.md",

@@ -65,7 +65,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash
 
 <img src="assets/iva-flow.webp" alt="Поток данных: Telegram → long-poll мост → гейт безопасности → агент → vault, плюс ночная сборка и цикл doctor" width="100%">
 
-Мост опрашивает Telegram через long-poll, так что публичный HTTPS, домен и webhook не нужны. Агент, мост, пять таймеров памяти и диспетчер напоминаний работают как systemd user units на вашей машине — эксплуатация описана в [docs/deploy.md](docs/deploy.md).
+Мост опрашивает Telegram через long-poll, так что публичный HTTPS, домен и webhook не нужны. Агент, мост, пять таймеров памяти, диспетчер напоминаний и ограниченный сборщик состояния работают как systemd user units на вашей машине — эксплуатация описана в [docs/deploy.md](docs/deploy.md).
 
 ## Провайдеры и цена
 

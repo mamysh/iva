@@ -44,6 +44,7 @@ Public product and operations documentation starts at [`docs/README.md`](docs/RE
 | Tasks/reminders/usage | `ASSISTANT_DATA_DIR` (`data/` by default) | Private and ignored application data. |
 | Data inventory and portable backup | `scripts/data-manifest.json` + `scripts/lib/portable-backup.mjs` | Sanitized catalog plus checksum/restore contract; operational writer control is in `scripts/backup-runtime.mjs`. |
 | Extension contracts | `scripts/extension-contracts.json` + `scripts/lib/extension-contracts.mjs` | Static validation metadata, not a plugin loader; inert examples live in `examples/extensions/`. |
+| Release contract | `scripts/release-contract.json` + `scripts/lib/release-contract.mjs` | Immutable tag identity, required matrix scenarios, supported platforms and soak thresholds. |
 | Public docs | `docs/` | `docs/README.md` is the documentation index. |
 | Dependency versions | `package.json` + `package-lock.json` | Keep runtime packages pinned where compatibility is sensitive. |
 
@@ -80,6 +81,7 @@ scripts/                     Install-time, polling, memory and maintenance progr
   memory/                    Rollup, doctor and embedding-index jobs
   lib/                       Shared implementation modules used by CLI/scripts/agent
   check-*.mjs                Fast contract and invariant tests run by npm test
+  release-*.mjs              RC report, provider/vision evidence and seven-day soak gates
 
 examples/extensions/         Inert copyable extension examples; `.txt` prevents auto-discovery
 deploy/                      systemd templates and optional PostgreSQL examples
@@ -258,6 +260,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | Backup, restore, server moves | `scripts/data-manifest.json` + `scripts/lib/portable-backup.mjs` | backup runtime, CLI, data docs, both Workflow profiles | manifest/restore contract, both disposable replicas, clean-host drill |
 | Health metrics and capacity | `scripts/lib/health-metrics.mjs` + `scripts/observe.mjs` | doctor, status, Workflow health, observe timer | health metrics contract, doctor contract, both disposable replicas |
 | Extension contract or example | `scripts/extension-contracts.json` + `examples/extensions/` | extending docs, security, capability manifest | extension contract test, capability diff, relevant behavior canary |
+| Release engineering | `scripts/release-contract.json` + `.github/workflows/release-candidate.yml` | releasing/supported/owner docs, provider and soak gates | release contract test, full RC matrix |
 | Public documentation | `docs/README.md` | README files and docs checks | `npm test` |
 | Telegram userbot beta | `services/telegram-userbot/` | connection + skill + userbot docs | Python tests, typecheck, opt-in smoke |
 
@@ -273,6 +276,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | `check-doctor-contract.mjs` | Layered schema, severity/exit codes, fault matrix, redaction and one-screen human output. |
 | `check-health-metrics.mjs` | Bounded rotation, baseline, growth projection, alert cooldown and deduplication. |
 | `check-extension-contracts.mjs` | Config/dependency activation, background ownership, inert removal and source safety. |
+| `check-release-contract.mjs` | Immutable candidate identity, required matrix, provider evidence and continuous soak rules. |
 | `check-update-transaction.mjs` | Preflight, sequential migration, backup/restore and activation rollback ordering for both profiles. |
 | `check-reminders-store.mjs` | Reminder persistence and scheduling behavior. |
 | `check-telegram-update.mjs` | Out-of-band Telegram update flow. |
@@ -298,6 +302,12 @@ Additional tests:
   Telegram and systemd boundaries; it checks readiness, `0600` files and vault preservation.
 - `npm run baseline:resources -- --json` runs 100 deterministic replica turns and reports sanitized
   build/start/first-response, idle CPU/RSS and workflow-state sizes.
+- `npm run release:check` emits an immutable commit/tag-bound matrix report; live provider and soak
+  scenarios remain missing until their separately authorized evidence passes.
+- `npm run release:provider -- --json` is a bounded live-provider/vision gate and requires explicit
+  `RELEASE_LIVE_CANARY=1` authorization.
+- `npm run release:soak -- --json` validates seven continuous days of commit-bound private health
+  samples plus a reviewed P0/P1 incident list.
 - `python3 -m unittest services/telegram-userbot/test_guardrails.py` checks userbot guardrails.
 - `node --env-file=.env scripts/workflow-smoke.mjs seed|resume` is a live runtime check, not a unit
   test.
@@ -327,6 +337,9 @@ integration checks against the selected runtime profile.
 - [`docs/security.md`](docs/security.md) — trust boundaries.
 - [`docs/extending.md`](docs/extending.md) — skills, tools, connections and subagents.
 - [`docs/testing.md`](docs/testing.md) — automated gates, disposable replicas and production limits.
+- [`docs/releasing.md`](docs/releasing.md) — immutable release candidates, matrix evidence and soak.
+- [`docs/supported.md`](docs/supported.md) — supported environment and known limitations.
+- [`docs/owner-runbook.md`](docs/owner-runbook.md) — concise owner operations.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — operator diagnosis.
 
 Keep this map short enough to scan. Update paths and ownership when a subsystem moves; put detailed

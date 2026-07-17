@@ -5,6 +5,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 const packageJson = JSON.parse(read("package.json"));
 const workflow = read(".github/workflows/verify.yml");
 const baselineWorkflow = read(".github/workflows/resource-baseline.yml");
+const releaseWorkflow = read(".github/workflows/release-candidate.yml");
 const testing = read("docs/testing.md");
 
 assert.equal(packageJson.scripts["verify:pr"], "npm test && npm run typecheck && npm run build");
@@ -45,6 +46,17 @@ assert.match(
 assert.match(baselineWorkflow, /path: \$\{\{ runner\.temp \}\}\/resource-baseline\.json/);
 assert.match(baselineWorkflow, /uses: actions\/upload-artifact@v7/);
 assert.doesNotMatch(baselineWorkflow, /secrets\.|\.env|TELEGRAM|ASSISTANT_VAULT/i);
+
+assert.match(releaseWorkflow, /^name: Release candidate matrix$/m);
+assert.match(releaseWorkflow, /ref: \$\{\{ inputs\.candidate_tag \}\}/);
+assert.match(releaseWorkflow, /runs-on: ubuntu-24\.04/);
+assert.match(releaseWorkflow, /name: Build \(\$\{\{ matrix\.profile\.name \}\}\)/);
+assert.match(releaseWorkflow, /selector: "@workflow\/world-postgres"/);
+assert.match(releaseWorkflow, /run: npm run replica:install/);
+assert.match(releaseWorkflow, /run: npm run replica:postgres$/m);
+assert.match(releaseWorkflow, /run: npm run replica:postgres-update/);
+assert.match(releaseWorkflow, /uses: actions\/upload-artifact@v7/);
+assert.doesNotMatch(releaseWorkflow, /secrets\.|\.env|TELEGRAM|ASSISTANT_VAULT/i);
 
 assert.match(testing, /source of truth for choosing and executing Iva tests/i);
 assert.match(testing, /npm run verify:pr/);

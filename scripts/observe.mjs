@@ -74,12 +74,14 @@ function workflowReport() {
 function collectSample(now = Date.now()) {
   const workflow = workflowReport();
   const process = processMemory();
+  const commit = cap("git", ["rev-parse", "HEAD"]).out;
   const disk = statfsSync(existsSync(dataDir) ? dataDir : ROOT);
   const usage = readEntries(dataDir);
   const lastTurn = [...usage].reverse().find((entry) => !entry.error)?.ts || null;
   const oldest = Date.parse(workflow.oldestActiveAt || "");
   return {
     at: new Date(now).toISOString(),
+    release: { commit: /^[0-9a-f]{40}$/.test(commit) ? commit : null },
     services: {
       agentRestarts: numberValue(systemdValue("iva.service", "NRestarts")),
       bridgeRestarts: numberValue(systemdValue("iva-telegram-poll.service", "NRestarts")),

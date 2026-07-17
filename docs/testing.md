@@ -68,6 +68,12 @@ If a required replica scenario has not been automated yet, record it as a missin
 or extend the fixture in the owning stabilization stage. Do not substitute production testing and do
 not silently declare the scenario passed.
 
+The manual `Release candidate matrix` workflow accepts only an immutable tag matching the package
+version. It runs clean install/reinstall, both Workflow replicas, both update/rollback profiles,
+portable restore and capability comparison, then uploads a sanitized commit-bound report. Live
+provider/vision evidence and the seven-day soak remain explicit required scenarios; absence is
+reported as `missing`, never treated as a skip or pass. See [releasing](releasing.md).
+
 ## Gate 2: disposable replica
 
 Run the backend-local replica with:

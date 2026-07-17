@@ -1,6 +1,6 @@
 # Reference production architecture
 
-This is the supported self-host architecture of the current `main` branch. It combines Iva v0.2.5
+This is the supported self-host architecture of the current `main` branch. It combines Iva v0.3.0-rc.1
 with production hardening for a long-running single-user VPS. Portable defaults remain lightweight;
 PostgreSQL and the personal-account Telegram proxy are explicit opt-ins.
 

@@ -1,6 +1,6 @@
 # Deploy
 
-The default self-host profile runs on one VPS as two systemd user services and six timers. `install.sh`
+The default self-host profile runs on one VPS as two systemd user services and seven timers. `install.sh`
 sets them up ([install](./install.md)); the optional userbot adds a third service only when explicitly enabled.
 
 ## Transport: long polling
