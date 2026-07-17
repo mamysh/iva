@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "candidateTagPattern": "^v\\d+\\.\\d+\\.\\d+-rc\\.\\d+$",
+  "stableTagPattern": "^v\\d+\\.\\d+\\.\\d+$",
+  "supported": {
+    "node": "24.x",
+    "operatingSystems": ["Ubuntu 24.04 LTS"],
+    "architectures": ["linux-x64"],
+    "postgresql": ["17"],
+    "workflowProfiles": ["local", "postgres"]
+  },
+  "requiredScenarios": [
+    { "id": "verify-pr", "kind": "automated", "command": "npm run verify:pr" },
+    { "id": "build-profile-matrix", "kind": "automated", "command": "GitHub Release candidate matrix" },
+    { "id": "ubuntu-clean-local-install", "kind": "automated", "command": "npm run replica:install" },
+    { "id": "ubuntu-local-reinstall", "kind": "automated", "command": "npm run replica:install" },
+    { "id": "local-restart-resume", "kind": "automated", "command": "npm run replica:local" },
+    { "id": "postgres-clean-bootstrap", "kind": "automated", "command": "npm run replica:postgres" },
+    { "id": "postgres-restart-resume", "kind": "automated", "command": "npm run replica:postgres" },
+    { "id": "local-update-rollback", "kind": "automated", "command": "npm run replica:install" },
+    { "id": "postgres-update-rollback", "kind": "automated", "command": "npm run replica:postgres-update" },
+    { "id": "local-backup-restore", "kind": "automated", "command": "npm run replica:local" },
+    { "id": "postgres-backup-restore", "kind": "automated", "command": "npm run replica:postgres" },
+    { "id": "capability-manifest-comparison", "kind": "automated", "command": "node scripts/check-capability-manifest.mjs" },
+    { "id": "provider-inventory", "kind": "live", "command": "npm run release:provider -- --json" },
+    { "id": "vision-live-canary", "kind": "live", "command": "npm run release:provider -- --json" },
+    { "id": "production-like-soak-7d", "kind": "soak", "command": "npm run release:soak -- --json" },
+    { "id": "fresh-owner-documented-install", "kind": "acceptance", "command": "follow docs/owner-runbook.md without author assistance" }
+  ],
+  "stableRequirements": {
+    "minimumSoakDays": 7,
+    "backendDefaultObservationDays": 30,
+    "maximumP0": 0,
+    "maximumP1": 0
+  }
+}

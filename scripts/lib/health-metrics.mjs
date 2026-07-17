@@ -25,6 +25,7 @@ export function sanitizeMetricSample(sample) {
   return {
     schemaVersion: HEALTH_METRICS_SCHEMA_VERSION,
     at: new Date(sample.at).toISOString(),
+    release: { commit: /^[0-9a-f]{40}$/.test(sample.release?.commit || "") ? sample.release.commit : null },
     services: {
       agentRestarts: finite(sample.services?.agentRestarts), bridgeRestarts: finite(sample.services?.bridgeRestarts),
       rssBytes: finite(sample.services?.rssBytes), peakRssBytes: finite(sample.services?.peakRssBytes),

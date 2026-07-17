@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { mkdtemp, mkdir, cp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
@@ -13,8 +13,18 @@ import { fileURLToPath } from "node:url";
 
 import { Client } from "eve/client";
 import { startMockOpenAiServer } from "./lib/mock-openai-server.mjs";
+import { nextFixtureVersion } from "./lib/release-contract.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const postgresMode = process.argv.includes("--postgres");
+const postgresUrl = process.env.POSTGRES_FIXTURE_URL;
+if (postgresMode) {
+  if (!postgresUrl) throw new Error("--postgres requires POSTGRES_FIXTURE_URL");
+  const parsed = new URL(postgresUrl);
+  if (!["127.0.0.1", "localhost", "::1"].includes(parsed.hostname) || !/(?:fixture|test)/i.test(parsed.pathname)) {
+    throw new Error("PostgreSQL install fixture must use a loopback disposable test database");
+  }
+}
 const sandbox = await mkdtemp(join(tmpdir(), "iva-clean-install-"));
 const app = join(sandbox, "app");
 const home = join(sandbox, "home");
@@ -94,6 +104,30 @@ function pushTarget(author, baseline, mutate, message) {
   return target;
 }
 
+function bumpFixtureVersion(author) {
+  const packagePath = join(author, "package.json");
+  const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
+  const currentVersion = packageJson.version;
+  const nextVersion = nextFixtureVersion(currentVersion);
+  packageJson.version = nextVersion;
+  writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+  const lockPath = join(author, "package-lock.json");
+  const lock = JSON.parse(readFileSync(lockPath, "utf8"));
+  lock.version = nextVersion;
+  lock.packages[""].version = nextVersion;
+  writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+  for (const path of ["docs/index.html", "docs/ru/index.html"]) {
+    const target = join(author, path);
+    writeFileSync(target, readFileSync(target, "utf8").replaceAll(`\"softwareVersion\": \"${currentVersion}\"`, `\"softwareVersion\": \"${nextVersion}\"`));
+  }
+  const manifestPath = join(author, "scripts/baselines/capability-manifest.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.product.version = nextVersion;
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  appendFileSync(join(author, "CHANGELOG.md"), `\n## [${nextVersion}] - fixture\n\nDisposable update target.\n`);
+  return nextVersion;
+}
+
 async function fileHash(path) {
   return createHash("sha256").update(await readFile(path)).digest("hex");
 }
@@ -148,7 +182,7 @@ const stop = () => {
 const start = () => {
   if (running()) return;
   if (unit === "iva.service" && existsSync(join(app, "scripts/fixture-readiness-fail"))) return;
-  const common = ["--env-file=.env"];
+  const common = ["--env-file=deploy/iva-workflow.environment", "--env-file=.env"];
   const args = unit === "iva.service"
     ? [...common, "scripts/start.mjs", "--host", "127.0.0.1", "--port", process.env.IVA_FIXTURE_PORT]
     : [...common, "--import", process.env.IVA_FIXTURE_PRELOAD, "scripts/telegram-poll.mjs"];
@@ -305,6 +339,19 @@ try {
   telegramServer = telegram;
   const port = await freePort();
   process.env.IVA_FIXTURE_PORT = String(port);
+  if (postgresMode) {
+    process.env.WORKFLOW_TARGET_WORLD = "@workflow/world-postgres";
+    process.env.WORKFLOW_POSTGRES_URL = postgresUrl;
+    process.env.WORKFLOW_QUEUE_NAMESPACE = "eve";
+    process.env.WORKFLOW_POSTGRES_JOB_PREFIX = "iva_install_fixture_";
+    process.env.WORKFLOW_POSTGRES_WORKER_CONCURRENCY = "8";
+    process.env.WORKFLOW_POSTGRES_MAX_POOL_SIZE = "10";
+    execFileSync(process.execPath, [join(ROOT, "node_modules/@workflow/world-postgres/bin/setup.js")], {
+      cwd: ROOT,
+      env: process.env,
+      stdio: "pipe",
+    });
+  }
   await writeStubs(port, telegram.baseUrl);
 
   await writeFile(
@@ -328,7 +375,17 @@ try {
     ].join("\n") + "\n",
     { mode: 0o644 },
   );
-  await writeFile(join(app, "deploy", "iva-workflow.environment"), "WORKFLOW_TARGET_WORLD=local\n", { mode: 0o644 });
+  const workflowEnvironment = postgresMode
+    ? [
+        "WORKFLOW_TARGET_WORLD=@workflow/world-postgres",
+        `WORKFLOW_POSTGRES_URL=${postgresUrl}`,
+        "WORKFLOW_QUEUE_NAMESPACE=eve",
+        "WORKFLOW_POSTGRES_JOB_PREFIX=iva_install_fixture_",
+        "WORKFLOW_POSTGRES_WORKER_CONCURRENCY=8",
+        "WORKFLOW_POSTGRES_MAX_POOL_SIZE=10",
+      ].join("\n") + "\n"
+    : "WORKFLOW_TARGET_WORLD=local\n";
+  await writeFile(join(app, "deploy", "iva-workflow.environment"), workflowEnvironment, { mode: 0o600 });
 
   await runInstaller();
   const firstReply = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();
@@ -338,6 +395,7 @@ try {
   const activeOutput = join(app, ".output/server/index.mjs");
   const baselineOutputHash = await fileHash(activeOutput);
   const brokenBuildTarget = pushTarget(author, baseline, () => {
+    bumpFixtureVersion(author);
     appendFileSync(join(author, "agent/agent.ts"), "\nthis is not valid TypeScript\n");
   }, "broken target build");
   const brokenBuild = await runFixtureCli(["update"]);
@@ -348,6 +406,7 @@ try {
   await controlService("status", "iva.service");
 
   const readinessTarget = pushTarget(author, baseline, () => {
+    bumpFixtureVersion(author);
     writeFileSync(join(author, "scripts/fixture-readiness-fail"), "fixture\n");
   }, "broken target readiness");
   const brokenReadiness = await runFixtureCli(["update"]);
@@ -357,12 +416,19 @@ try {
   assert.equal(await fileHash(activeOutput), baselineOutputHash, "readiness rollback did not restore active output");
   await controlService("status", "iva.service");
 
+  let successfulVersion;
+  const baselineVersion = JSON.parse(await readFile(join(app, "package.json"), "utf8")).version;
   const successfulTarget = pushTarget(author, baseline, () => {
+    successfulVersion = bumpFixtureVersion(author);
     writeFileSync(join(author, "scripts/fixture-update-success"), "fixture\n");
   }, "successful target update");
   const successfulUpdate = await runFixtureCli(["update"]);
   assert.equal(successfulUpdate.code, 0, successfulUpdate.output);
   assert.match(successfulUpdate.output, /UPDATED:/);
+  assert.ok(
+    successfulUpdate.output.includes(baselineVersion) && successfulUpdate.output.includes(successfulVersion),
+    "update did not exercise an N-1 to N version transition",
+  );
   assert.equal(git(app, ["rev-parse", "HEAD"]), successfulTarget);
   assert.notEqual(successfulTarget, brokenBuildTarget);
   assert.notEqual(successfulTarget, readinessTarget);
@@ -428,7 +494,7 @@ try {
     assert.equal((await stat(path)).mode & 0o777, 0o600, `${basename(path)} must be 0600`);
   }
 
-  console.log("clean install smoke passed: staged build isolation, readiness rollback, atomic update, portable backup/restore with stopped handoff, doctor recovery, private secrets, idempotent rerun");
+  console.log(`clean install smoke passed (${postgresMode ? "PostgreSQL" : "local"}): staged build isolation, readiness rollback, atomic update, portable backup/restore with stopped handoff, doctor recovery, private secrets, idempotent rerun`);
 } finally {
   await stopFixtureProcesses();
   await telegramServer?.close();

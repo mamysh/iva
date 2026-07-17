@@ -2,13 +2,21 @@
 
 ## [Unreleased]
 
-Production hardening carried by this fork after upstream v0.2.5.
+## [0.3.0-rc.1] - 2026-07-17
+
+Release candidate for the first fully gated self-host release. It is not stable until the seven-day
+soak and fresh-owner acceptance pass.
 
 - Durable optional PostgreSQL workflow state with restart/resume smoke checks.
 - A five-minute systemd reminder dispatcher and out-of-band `/reminders` command.
 - Fail-closed personal Telegram defaults: loopback-only proxy, read-only tool exposure, pinned upstream dependency and persistent anti-ban guardrails.
 - Deterministic memory safeguards: folded-frontmatter growth prevention, a 1,200-character CORE recovery guard and accurate vault-push diagnostics.
 - Ollama vision recovery after `gemma3:12b` retirement: the configurable `OLLAMA_VISION_MODEL` now defaults to the account-available `gemma4:31b`, with a behavioral canary for the image request contract.
+- Transactional updates with staged builds, profile-aware readiness rollback and sequential migration contracts.
+- Sanitized runtime doctor, bounded observability, recovery actions and seven managed timers.
+- Private portable backup/restore for local and PostgreSQL Workflow state, including clean-host moves.
+- Formal extension contracts, inert examples and fail-closed optional dependency/background ownership checks.
+- Immutable release-candidate identity, two-profile release matrix, live provider/vision evidence and continuous soak gates.
 
 ## [0.2.5] - 2026-07-15
 
@@ -17,6 +25,7 @@ Production hardening carried by this fork after upstream v0.2.5.
 - 🧪 **Personal Telegram MCP (beta)** — optional QR onboarding for a personal account, disabled by default in this fork and restricted to read-only exposure unless explicitly reviewed.
 
 [Unreleased]: https://github.com/mamysh/iva/compare/1e6e90a7d43544f33ef26bdfe0b145038ab879fb...main
+[0.3.0-rc.1]: https://github.com/mamysh/iva/compare/v0.2.5...v0.3.0-rc.1
 [0.2.5]: https://github.com/smixs/iva/releases/tag/v0.2.5
 
 ## [0.2.4] - 2026-07-09

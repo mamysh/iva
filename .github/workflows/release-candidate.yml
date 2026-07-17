@@ -1,0 +1,202 @@
+name: Release candidate matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: Immutable tag matching package version, for example v0.3.0-rc.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ inputs.candidate_tag }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_tag }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Validate immutable candidate
+        env:
+          RELEASE_TAG: ${{ inputs.candidate_tag }}
+        run: npm run release:check
+      - run: npm run verify:pr
+
+  build-profiles:
+    name: Build (${{ matrix.profile.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - name: local
+            selector: local
+          - name: PostgreSQL
+            selector: "@workflow/world-postgres"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_tag }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Build and validate profile descriptor
+        env:
+          WORKFLOW_TARGET_WORLD: ${{ matrix.profile.selector }}
+        run: npm run build && node scripts/start.mjs --check-profile
+
+  local-replica:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_tag }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run replica:local
+
+  clean-install-update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_tag }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run replica:install
+
+  postgres-replica:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: iva_fixture
+          POSTGRES_PASSWORD: synthetic-fixture-password
+          POSTGRES_DB: iva_workflow_fixture
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U iva_fixture -d iva_workflow_fixture"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_tag }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install --yes postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+      - run: npm ci
+      - name: Run PostgreSQL restart, recovery and restore replica
+        env:
+          POSTGRES_FIXTURE_URL: postgresql://iva_fixture:synthetic-fixture-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/iva_workflow_fixture
+        run: npm run replica:postgres
+
+  postgres-update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: iva_update_fixture
+          POSTGRES_PASSWORD: synthetic-update-password
+          POSTGRES_DB: iva_update_fixture
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U iva_update_fixture -d iva_update_fixture"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_tag }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install --yes postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+      - run: npm ci
+      - name: Run PostgreSQL install, N-1 to N update, rollback and restore drill
+        env:
+          POSTGRES_FIXTURE_URL: postgresql://iva_update_fixture:synthetic-update-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/iva_update_fixture
+        run: npm run replica:postgres-update
+
+  automated-report:
+    needs: [verify, build-profiles, local-replica, clean-install-update, postgres-replica, postgres-update]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_tag }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Write sanitized automated matrix report
+        env:
+          RELEASE_TAG: ${{ inputs.candidate_tag }}
+          RELEASE_SCENARIO_RESULTS: >-
+            [
+              {"id":"verify-pr","status":"pass","evidence":"github-actions"},
+              {"id":"build-profile-matrix","status":"pass","evidence":"github-actions"},
+              {"id":"ubuntu-clean-local-install","status":"pass","evidence":"github-actions"},
+              {"id":"ubuntu-local-reinstall","status":"pass","evidence":"github-actions"},
+              {"id":"local-restart-resume","status":"pass","evidence":"github-actions"},
+              {"id":"postgres-clean-bootstrap","status":"pass","evidence":"github-actions"},
+              {"id":"postgres-restart-resume","status":"pass","evidence":"github-actions"},
+              {"id":"local-update-rollback","status":"pass","evidence":"github-actions"},
+              {"id":"postgres-update-rollback","status":"pass","evidence":"github-actions"},
+              {"id":"local-backup-restore","status":"pass","evidence":"github-actions"},
+              {"id":"postgres-backup-restore","status":"pass","evidence":"github-actions"},
+              {"id":"capability-manifest-comparison","status":"pass","evidence":"github-actions"}
+            ]
+        run: node scripts/release-report.mjs > "$RUNNER_TEMP/release-matrix.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: iva-release-matrix-${{ inputs.candidate_tag }}
+          path: ${{ runner.temp }}/release-matrix.json
+          retention-days: 90

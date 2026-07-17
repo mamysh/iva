@@ -37,7 +37,7 @@ Five steps. Each key comes with a direct link to where it lives, and each is val
 - 🟢 **Node 24 via nvm** — no root needed; 24 is a hard floor because memory search uses the built-in `node:sqlite`.
 - 🌐 **agent-browser + Chromium** — headless browser for web tasks; the longest step, 1–3 minutes of visible download output.
 - 🗂️ **Vault init** — your memory is created from `vault-template/` as a separate git repo, so personal data never enters the code repo.
-- ⚙️ **systemd user units** — the agent, Telegram bridge, five memory timers and reminder dispatcher, with linger enabled so they survive logout. Details: [deploy.md](deploy.md).
+- ⚙️ **systemd user units** — the agent, Telegram bridge, five memory timers, reminder dispatcher and bounded observability collector, with linger enabled so they survive logout. Details: [deploy.md](deploy.md).
 - 🧰 **The `iva` command** — installed into `~/.local/bin`: `iva status`, `iva doctor`, `iva update`. Full reference: [cli.md](cli.md).
 - ✅ **Readiness verification** — the installer checks Eve health twice, both services, restart counts
   and fresh startup journals. A direct Telegram API request is not treated as proof that Iva works.

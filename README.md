@@ -65,7 +65,7 @@ Headless installs take `--skip-setup` or `--non-interactive`. Wizard walkthrough
 
 <img src="assets/iva-flow.webp" alt="Dataflow: Telegram to long-poll bridge to security gate to agent to vault, with a nightly rollup and doctor loop" width="100%">
 
-The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed. The agent, bridge, five memory timers and reminder dispatcher run as systemd user units on your box — operations live in [docs/deploy.md](docs/deploy.md).
+The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed. The agent, bridge, five memory timers, reminder dispatcher and bounded observability collector run as systemd user units on your box — operations live in [docs/deploy.md](docs/deploy.md).
 
 ## Providers & cost
 
