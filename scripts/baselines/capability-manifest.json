@@ -101,6 +101,38 @@
       "iva-telegram-userbot.service"
     ]
   },
+  "extensions": {
+    "contractVersion": 1,
+    "contractSource": "scripts/extension-contracts.json",
+    "types": [
+      "provider",
+      "tool",
+      "skill",
+      "channel-connection",
+      "hook",
+      "subagent",
+      "background-job-timer",
+      "memory-processor-indexer"
+    ],
+    "examples": [
+      "examples/extensions/provider.ts.txt",
+      "examples/extensions/tool.ts.txt",
+      "examples/extensions/skill.md.txt",
+      "examples/extensions/connection.ts.txt",
+      "examples/extensions/hook.ts.txt",
+      "examples/extensions/subagent/agent.ts.txt",
+      "examples/extensions/background-job.mjs.txt",
+      "examples/extensions/memory-processor.ts.txt"
+    ],
+    "backgroundPolicy": "managed-oneshot-only",
+    "optionalFeatures": [
+      {
+        "name": "telegram-userbot",
+        "status": "beta",
+        "activation": "iva userbot setup"
+      }
+    ]
+  },
   "storage": {
     "contractVersion": 1,
     "selector": [

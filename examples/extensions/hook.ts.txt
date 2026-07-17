@@ -1,0 +1,10 @@
+import { defineHook } from "eve/hooks";
+
+export default defineHook({
+  events: {
+    "step.completed": (event) => {
+      // Keep handlers short; persist only bounded, non-secret projections.
+      void event.data.stepIndex;
+    },
+  },
+});

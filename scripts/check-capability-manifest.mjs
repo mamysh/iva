@@ -30,6 +30,12 @@ for (const [kind, names] of Object.entries(required)) {
 assert.deepEqual(manifest.systemd.managedServices, ["iva-telegram-poll.service", "iva.service"]);
 assert.ok(manifest.systemd.managedTimers.includes("iva-reminders.timer"));
 assert.ok(manifest.systemd.managedTimers.includes("iva-observe.timer"));
+assert.equal(manifest.extensions.contractVersion, 1);
+assert.deepEqual(manifest.extensions.types, [
+  "provider", "tool", "skill", "channel-connection", "hook", "subagent", "background-job-timer", "memory-processor-indexer",
+]);
+assert.equal(manifest.extensions.backgroundPolicy, "managed-oneshot-only");
+assert.deepEqual(manifest.extensions.optionalFeatures, [{ name: "telegram-userbot", status: "beta", activation: "iva userbot setup" }]);
 assert.equal(manifest.storage.defaultProfile, "local");
 assert.ok(manifest.storage.profiles.some(({ name, world }) => name === "postgres" && world === "@workflow/world-postgres"));
 assert.equal(manifest.storage.lifecycle.recoverCommand, "iva recover");

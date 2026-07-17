@@ -4,6 +4,7 @@ After=network-online.target iva.service
 
 [Service]
 Type=oneshot
+RuntimeMaxSec=1h
 WorkingDirectory=__PROJECT_DIR__
 EnvironmentFile=__PROJECT_DIR__/.env
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin

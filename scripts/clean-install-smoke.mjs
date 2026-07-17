@@ -53,7 +53,7 @@ async function copyFixture() {
     await cp(join(ROOT, path), join(app, path));
   }
   // Overlay the current working tree, including new Stage files that are not committed yet.
-  for (const name of ["agent", "bin", "deploy", "docs", "patches", "scripts", "services", "vault-template", ".github"]) {
+  for (const name of ["agent", "bin", "deploy", "docs", "examples", "patches", "scripts", "services", "vault-template", ".github"]) {
     await cp(join(ROOT, name), join(app, name), { recursive: true });
   }
   for (const name of [".env.example", ".gitignore", "CHANGELOG.md", "CODEBASE_MAP.md", "README.md", "README.ru.md", "install.sh", "package.json", "package-lock.json", "tsconfig.json"]) {

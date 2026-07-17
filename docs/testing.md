@@ -43,6 +43,7 @@ This gate currently proves:
 - the structural capability baseline from `npm run manifest`;
 - the doctor schema, severity/exit-code contract, blocking fault matrix, one-screen output and support-bundle redaction;
 - bounded 31-day health history, 7-day baseline gate, Workflow growth projection and alert cooldown/deduplication;
+- extension config/dependency fail-closed behavior, managed background ownership and optional removal safety;
 - the update preflight/migration contract, broken-build isolation and readiness rollback order;
 - the sanitized data inventory, private portable-backup modes/checksums, clean-host local restore,
   tasks/reminders/memory recall, derived-index rebuild and honest vault-only boundary;

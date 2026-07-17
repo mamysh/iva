@@ -95,6 +95,7 @@ function runtimeVersions(packageJson, lock) {
 export function createCapabilityManifest() {
   const packageJson = readJson("package.json");
   const lock = readJson("package-lock.json");
+  const extensionContracts = readJson("scripts/extension-contracts.json");
   return {
     schemaVersion: 1,
     product: { name: packageJson.name, version: packageJson.version },
@@ -111,6 +112,14 @@ export function createCapabilityManifest() {
       },
     },
     systemd: systemdCapabilities(),
+    extensions: {
+      contractVersion: extensionContracts.schemaVersion,
+      contractSource: "scripts/extension-contracts.json",
+      types: extensionContracts.types.map(({ id }) => id),
+      examples: extensionContracts.types.map(({ example }) => example),
+      backgroundPolicy: "managed-oneshot-only",
+      optionalFeatures: [{ name: "telegram-userbot", status: "beta", activation: "iva userbot setup" }],
+    },
     storage: {
       contractVersion: 1,
       selector: ["WORKFLOW_TARGET_WORLD"],

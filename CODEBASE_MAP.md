@@ -43,6 +43,7 @@ Public product and operations documentation starts at [`docs/README.md`](docs/RE
 | Memory search index | live vault `.index/` | Derived and rebuildable, not a source of truth. |
 | Tasks/reminders/usage | `ASSISTANT_DATA_DIR` (`data/` by default) | Private and ignored application data. |
 | Data inventory and portable backup | `scripts/data-manifest.json` + `scripts/lib/portable-backup.mjs` | Sanitized catalog plus checksum/restore contract; operational writer control is in `scripts/backup-runtime.mjs`. |
+| Extension contracts | `scripts/extension-contracts.json` + `scripts/lib/extension-contracts.mjs` | Static validation metadata, not a plugin loader; inert examples live in `examples/extensions/`. |
 | Public docs | `docs/` | `docs/README.md` is the documentation index. |
 | Dependency versions | `package.json` + `package-lock.json` | Keep runtime packages pinned where compatibility is sensitive. |
 
@@ -80,6 +81,7 @@ scripts/                     Install-time, polling, memory and maintenance progr
   lib/                       Shared implementation modules used by CLI/scripts/agent
   check-*.mjs                Fast contract and invariant tests run by npm test
 
+examples/extensions/         Inert copyable extension examples; `.txt` prevents auto-discovery
 deploy/                      systemd templates and optional PostgreSQL examples
 services/telegram-userbot/   Opt-in personal-account Telegram MCP proxy (beta)
 vault-template/              Versioned skeleton and maintenance code for a new vault
@@ -255,6 +257,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | Update behavior | `scripts/update-runtime.mjs` + `scripts/lib/update-contract.mjs` | CLI, Telegram update, migration manifest | update contract, clean-install build/readiness rollback fixture |
 | Backup, restore, server moves | `scripts/data-manifest.json` + `scripts/lib/portable-backup.mjs` | backup runtime, CLI, data docs, both Workflow profiles | manifest/restore contract, both disposable replicas, clean-host drill |
 | Health metrics and capacity | `scripts/lib/health-metrics.mjs` + `scripts/observe.mjs` | doctor, status, Workflow health, observe timer | health metrics contract, doctor contract, both disposable replicas |
+| Extension contract or example | `scripts/extension-contracts.json` + `examples/extensions/` | extending docs, security, capability manifest | extension contract test, capability diff, relevant behavior canary |
 | Public documentation | `docs/README.md` | README files and docs checks | `npm test` |
 | Telegram userbot beta | `services/telegram-userbot/` | connection + skill + userbot docs | Python tests, typecheck, opt-in smoke |
 
@@ -269,6 +272,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | `check-runtime-recovery.mjs` | Run-state classification, recovery/reset contract, restart guard and bounded background sessions. |
 | `check-doctor-contract.mjs` | Layered schema, severity/exit codes, fault matrix, redaction and one-screen human output. |
 | `check-health-metrics.mjs` | Bounded rotation, baseline, growth projection, alert cooldown and deduplication. |
+| `check-extension-contracts.mjs` | Config/dependency activation, background ownership, inert removal and source safety. |
 | `check-update-transaction.mjs` | Preflight, sequential migration, backup/restore and activation rollback ordering for both profiles. |
 | `check-reminders-store.mjs` | Reminder persistence and scheduling behavior. |
 | `check-telegram-update.mjs` | Out-of-band Telegram update flow. |
