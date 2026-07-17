@@ -40,6 +40,10 @@ Not "everyone until configured" — nobody. A stranger who DMs the bot gets one 
 
 Iva's tools (`bash`, `read_file`, `write_file`, `glob`, `grep`) run host-native on your VPS — Node `fs` and `child_process`, no Docker, no sandbox. That's deliberate: it can read your files, fix its own config, run your scripts. It also means a hijacked turn has whatever access the service user has. Run the installer as a dedicated non-root user; everything is systemd *user* units, so Iva inherits exactly that user's permissions and nothing more.
 
+Authored extensions may not detach background work from an agent turn. Long-lived or scheduled work
+requires an owned systemd service/timer with bounded runtime, logs, health and uninstall behavior;
+the extension contract test rejects detached Node children and incomplete background ownership.
+
 ## Privacy
 
 - 🗄️ **Your vault, your repo** — memory lives in a separate private git repository you own; the nightly doctor commits and pushes it ([memory.md](memory.md)).

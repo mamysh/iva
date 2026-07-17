@@ -1,0 +1,4 @@
+// A deterministic derived indexer: same cards in, same disposable index out.
+export function buildExampleIndex(cards: Array<{ file: string; text: string }>) {
+  return cards.map(({ file, text }) => ({ file, words: text.trim().split(/\s+/).length }));
+}

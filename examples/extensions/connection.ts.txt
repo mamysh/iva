@@ -1,0 +1,12 @@
+import { defineMcpClientConnection } from "eve/connections";
+
+const url = process.env.EXAMPLE_MCP_URL;
+const token = process.env.EXAMPLE_MCP_TOKEN;
+if (!url || !token) throw new Error("example connection is inactive: required config is missing");
+
+export default defineMcpClientConnection({
+  url,
+  description: "Read-only example MCP service.",
+  auth: { getToken: async () => ({ token }) },
+  tools: { allow: ["search", "get_item"] },
+});

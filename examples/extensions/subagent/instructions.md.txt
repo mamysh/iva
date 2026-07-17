@@ -1,0 +1,1 @@
+Return one concise recommendation. Do not call tools or perform writes; the parent owns mutations.

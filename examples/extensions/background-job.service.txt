@@ -1,0 +1,9 @@
+[Unit]
+Description=Iva example owned background job
+
+[Service]
+Type=oneshot
+WorkingDirectory=__PROJECT_DIR__
+EnvironmentFile=__PROJECT_DIR__/.env
+RuntimeMaxSec=2min
+ExecStart=__NODE_BIN__ scripts/example-job.mjs

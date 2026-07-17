@@ -1,0 +1,5 @@
+import { eveChannel } from "eve/channels/eve";
+import { localDev } from "eve/channels/auth";
+
+// In production replace localDev with an explicit fail-closed auth provider.
+export default eveChannel({ auth: [localDev()] });

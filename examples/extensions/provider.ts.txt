@@ -1,0 +1,12 @@
+// Inert example: copy the validated entry into agent/provider.ts; do not rename this file in place.
+export function exampleProviderConfig() {
+  const key = process.env.EXAMPLE_API_KEY;
+  const model = process.env.EXAMPLE_MODEL;
+  if (!key || !model) throw new Error("example provider is inactive: required config is missing");
+  return {
+    baseURL: process.env.EXAMPLE_BASE_URL ?? "https://provider.example/v1",
+    apiKey: key,
+    textModel: model,
+    contextWindow: Number(process.env.EXAMPLE_CONTEXT_WINDOW ?? 32768),
+  };
+}

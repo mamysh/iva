@@ -1,0 +1,19 @@
+import { defineAgent } from "eve";
+import { z } from "zod";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+
+const key = process.env.EXAMPLE_SUBAGENT_API_KEY;
+if (!key) throw new Error("example subagent is inactive: required config is missing");
+const provider = createOpenAICompatible({
+  name: "example-subagent",
+  baseURL: "https://provider.example/v1",
+  apiKey: key,
+});
+
+// Use the repository provider factory; fail activation before this file loads if config is missing.
+export default defineAgent({
+  description: "Return one small, structured recommendation when explicitly delegated.",
+  model: provider(process.env.EXAMPLE_SUBAGENT_MODEL ?? "example-model"),
+  modelContextWindowTokens: 32768,
+  outputSchema: z.object({ recommendation: z.string().max(500) }),
+});

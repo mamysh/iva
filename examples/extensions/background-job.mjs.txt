@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+// Pair with a Type=oneshot service and Persistent timer. Never spawn this detached from an agent turn.
+// The real job must write bounded state atomically and be safe when the same period runs twice.
+console.log(JSON.stringify({ ok: true, checkedAt: new Date().toISOString() }));

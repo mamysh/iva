@@ -1,0 +1,7 @@
+---
+description: Use when the user explicitly asks for the example greeting.
+---
+
+# Example greeting
+
+Call the example tool once with the requested name. Do not retry a side-effecting tool.
