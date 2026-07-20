@@ -40,6 +40,7 @@ assert.match(updateRuntime, /npm\(\["test"\]/);
 assert.match(updateRuntime, /rollbackActivation/);
 assert.match(updateRuntime, /doctor", "--json"/);
 assert.match(updateRuntime, /profile\.backend === "local" \? "local" : profile\.world/);
+assert.match(updateRuntime, /PATH: `\$\{NODE_BIN_DIR\}:\$\{process\.env\.PATH \|\| ""\}`/);
 assert.doesNotMatch(updateRuntime, /@googleworkspace\/cli@latest/);
 
 const backupRuntime = read("scripts/backup-runtime.mjs");

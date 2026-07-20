@@ -18,7 +18,8 @@ const DATA_DIR = resolvePath(readEnvironment().ASSISTANT_DATA_DIR || "data");
 const MIGRATION_STATE = join(DATA_DIR, "update-migrations.json");
 const SERVICES = ["iva.service", "iva-telegram-poll.service"];
 const BASELINE_MANIFEST = { schemaVersion: 1, migrationVersion: 0, migrations: [] };
-const NPM = existsSync(join(dirname(process.execPath), "npm")) ? join(dirname(process.execPath), "npm") : "npm";
+const NODE_BIN_DIR = dirname(process.execPath);
+const NPM = existsSync(join(NODE_BIN_DIR, "npm")) ? join(NODE_BIN_DIR, "npm") : "npm";
 
 function resolvePath(path) {
   return isAbsolute(path) ? path : resolve(ROOT, path);
@@ -125,7 +126,9 @@ function stagingEnvironment(profile) {
   const home = join(UPDATE_DIR, "staging-home");
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const clean = {
-    PATH: process.env.PATH || "",
+    // npm may be invoked by absolute path, but its lifecycle scripts use `#!/usr/bin/env node`.
+    // Non-interactive SSH and systemd environments often omit an NVM-managed Node directory.
+    PATH: `${NODE_BIN_DIR}:${process.env.PATH || ""}`,
     HOME: home,
     TMPDIR: process.env.TMPDIR,
     TMP: process.env.TMP,
