@@ -1,4 +1,4 @@
-> 🇬🇧 [English version](../memory.md) — каноническая версия, она может быть новее.
+> 🇬🇧 [English version](../memory.md)
 <!-- ru-sync: docs/memory.md@v0.2.0 -->
 
 # Память

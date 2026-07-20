@@ -18,18 +18,23 @@
 
 ---
 
-Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data. One command installs it:
+> **Pre-release:** `v0.3.0-rc.4` is in a seven-day production-like soak. It has passed the full
+> release matrix and live vision check, but it is not the stable `v0.3.0` release yet.
+
+Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data. To evaluate the exact tested release candidate:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.4/install.sh | BRANCH=v0.3.0-rc.4 bash
 ```
+
+General users should wait for the stable release command. `main` is the moving development channel.
 
 **Origin & authorship.** Iva was created by [Shima (`smixs`)](https://github.com/smixs) as [smixs/iva](https://github.com/smixs/iva). This repository is a production-hardened continuation that regularly integrates the upstream project while keeping its self-hosting changes reviewable.
 
 ## Features
 
 - 🎙️ **Voice** — voice, audio and video notes transcribed with Deepgram nova-3; auto-detects ru/uz/en.
-- 👁️ **Vision** — photos described by your provider's own vision model; no extra key, no extra bill.
+- 👁️ **Vision** — photos use a separate configurable multimodal route; Ollama defaults to MiniMax M3.
 - 🧾 **Rich replies** — tables, checklists, collapsible blocks and formulas render natively in Telegram via Bot API 10.1 rich messages; plain formatting keeps its proven path, with a graceful fallback.
 - 🧠 **Layered memory** — remembers across months, not just the current chat window.
 - 📇 **Personal CRM** — who your people are, what you agreed, when to follow up.
@@ -56,7 +61,7 @@ Full architecture and search internals: [docs/memory.md](docs/memory.md).
 ## Quick start
 
 1. Get a bot token from [@BotFather](https://t.me/BotFather).
-2. Run the one-line installer above on any Ubuntu/Debian box — a fresh VPS or your own machine.
+2. Run the pinned RC installer above on a supported Ubuntu 24.04 x64 host.
 3. Message your bot. The wizard picks your Telegram ID out of that message, finishes setup, and Iva confirms right in the chat that it's live.
 
 Headless installs take `--skip-setup` or `--non-interactive`. Wizard walkthrough and an SSH primer for first-time VPS owners: [docs/install.md](docs/install.md).
@@ -78,8 +83,8 @@ Four model providers. Pick one and fill its block in `.env`:
 | OpenRouter | API key, pay-as-you-go, 300+ models |
 | OpenAI (ChatGPT) | your Plus/Pro subscription, no API key |
 
-Default model is deepseek-v4-pro, 131k context. Actual cost depends on the selected model, usage, VPS and
-provider availability; Iva adds no usage markup. Voice uses Deepgram's starter credit when available.
+The Ollama defaults are DeepSeek V4 Pro for text and MiniMax M3 for images. Actual cost depends on the
+selected provider, models, usage and VPS; Iva adds no usage markup. Voice uses Deepgram's starter credit when available.
 Model lists, limits and the search matrix: [docs/providers.md](docs/providers.md).
 
 ## Security & privacy
@@ -101,6 +106,8 @@ Full reference, including `/usage` breakdowns by model and by source: [docs/cli.
 [Install](docs/install.md) · [Configuration](docs/configuration.md) · [Memory](docs/memory.md) · [Providers](docs/providers.md) · [Security](docs/security.md) · [Deploy](docs/deploy.md) · [CLI](docs/cli.md) · [Extending](docs/extending.md) · [FAQ](docs/faq.md) · [Troubleshooting](docs/troubleshooting.md)
 
 Документация на русском → [docs/ru/](docs/ru/)
+
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · Security reports: [SECURITY.md](SECURITY.md)
 
 ## Built on
 

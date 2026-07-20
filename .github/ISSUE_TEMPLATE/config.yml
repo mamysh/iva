@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report / Сообщить об уязвимости
+    url: https://github.com/mamysh/iva/security/advisories/new
+    about: Never publish credentials, private logs or exploit details / Не публикуйте ключи, приватные логи и детали уязвимости

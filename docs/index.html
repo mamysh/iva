@@ -45,7 +45,7 @@
   "alternateName": "Iva — personal AI agent",
   "description": "Open-source, self-hosted Telegram assistant with layered Markdown memory, ranked local recall, reminders and configurable model providers.",
   "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "Linux, macOS",
+  "operatingSystem": "Ubuntu 24.04 LTS (Linux x64)",
   "url": "https://mamysh.github.io/iva/",
   "image": "https://mamysh.github.io/iva/iva-og.png",
   "softwareVersion": "0.3.0-rc.4",
@@ -98,15 +98,16 @@
     <img src="iva-header.webp" alt="Iva — a personal assistant in Telegram that remembers everything" width="2429" height="630">
     <h1>Iva — a personal assistant in Telegram that remembers everything</h1>
     <p class="tagline">A personal assistant in Telegram that remembers everything. Throw it voice notes, files, forwarded posts and videos — it reads them, files them, and links them. You talk, it files.</p>
-    <p class="sub">Lives in Telegram. Built on <a href="https://eve.dev/docs/introduction">eve</a>, with your own server and model provider.</p>
+    <p class="sub">Pre-release v0.3.0-rc.4 · seven-day soak in progress. Built on <a href="https://eve.dev/docs/introduction">eve</a>, with your own server and model provider.</p>
     <p>
       <a class="cta" href="https://github.com/mamysh/iva">Open on GitHub</a>
       <a class="cta alt" href="https://github.com/mamysh/iva#quick-start">How to install</a>
     </p>
   </header>
 
-  <h2>Install with one command</h2>
-  <pre><code>curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash</code></pre>
+  <h2>Evaluate the tested RC</h2>
+  <pre><code>curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.4/install.sh | BRANCH=v0.3.0-rc.4 bash</code></pre>
+  <p>This is not stable yet. General users should wait for the v0.3.0 stable-channel command.</p>
 
   <h2>Why Iva</h2>
   <p>Self-hosting an assistant usually means choosing a model, memory system, search stack and deployment
@@ -127,7 +128,7 @@
     <li>⏰ <b>On a schedule</b> — day or week digests, recurring jobs, inbox summaries, on time.</li>
     <li>🔔 <b>Reminders</b> — tell it what and when, it won't let you forget.</li>
     <li>🧪 <b>Personal Telegram MCP (beta)</b> — optional, disabled by default and read-only unless you explicitly accept the account risk.</li>
-    <li>🤖 <b>Your choice of model</b> — DeepSeek, Kimi, GLM and other open models.</li>
+    <li>🤖 <b>Your choice of model</b> — Ollama defaults to DeepSeek V4 Pro for text and MiniMax M3 for images; other routes remain configurable.</li>
     <li>🔒 <b>Clear privacy boundary</b> — runtime and source memory stay on your server; only the cloud providers you configure receive the content they process.</li>
   </ul>
 
@@ -164,9 +165,8 @@
 
   <h2>Providers &amp; cost</h2>
   <p>Free and open-source. You pay only for a small always-on server (the PostgreSQL production profile
-  recommends at least 1 GB RAM) and the model service you choose: OpenCode Zen and OpenRouter are pay-as-you-go,
-  while Ollama Cloud offers provider-defined plans. A ChatGPT subscription is also supported. Voice runs on
-  <a href="https://console.deepgram.com">Deepgram</a> (free starter credit).</p>
+  recommends at least 1 GB RAM) and the services you choose. Provider pricing and free credits change;
+  check their current terms before paying. Iva adds no usage markup.</p>
 
   <p style="text-align:center; margin-top:40px">
     <a class="cta" href="https://github.com/mamysh/iva">Get Iva →</a>

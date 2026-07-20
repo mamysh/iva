@@ -6,7 +6,7 @@ readiness gate.
 
 ## Requirements
 
-- 🖥️ **A server or your own machine** — Ubuntu/Debian is the tested path (apt); Fedora (dnf) and macOS (brew) work too. Any always-on box.
+- 🖥️ **A supported server** — the stable release matrix targets Ubuntu 24.04 LTS on Linux x64. Other systems may work but are not yet release-qualified.
 - 🧠 **512MB RAM is enough** — on boxes under 1.5GB the installer adds a 2GB swapfile so the build isn't OOM-killed (needs ~2.6GB free disk).
 - 🔑 **sudo** — asked up front, and only if system packages are missing or a swapfile is needed; the Chromium step may ask once more.
 
@@ -15,8 +15,11 @@ readiness gate.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.4/install.sh | BRANCH=v0.3.0-rc.4 bash
 ```
+
+This installs the exact tested RC4. General users should wait for the stable-channel command in the
+`v0.3.0` release notes; `main` is a moving development channel.
 
 The first question is your language — English or Russian — before anything touches the system. Input is read from `/dev/tty`, so the wizard stays interactive even piped through `curl`. If there's no terminal at all (Docker, CI), setup is skipped and the script prints how to run it later.
 
@@ -24,7 +27,7 @@ The first question is your language — English or Russian — before anything t
 
 Five steps. Each key comes with a direct link to where it lives, and each is validated live — a bad key is rejected on the spot, not discovered at runtime. Enter keeps the current value, so re-running the wizard (`iva config`) changes only what you want.
 
-1. **Provider and model.** Ollama Cloud or OpenCode Zen ([comparison](providers.md)); the key is checked against the API, then you pick a model from the provider's list.
+1. **Provider and model.** Ollama Cloud, OpenCode Zen, OpenRouter or a ChatGPT subscription ([comparison](providers.md)); access is checked live before setup continues.
 2. **Voice, search, hybrid memory.** Deepgram key (free starter credit); recognition language `multi` auto-detects ru/uz/en. The same step picks a web-search provider — Tavily, Exa, Parallel or Brave; Enter skips and search stays off — and offers optional hybrid memory with an embedding key.
 3. **Telegram bot.** Paste the token from @BotFather; the wizard validates it via `getMe` and detects the bot's username itself.
 4. **Access.** Send your new bot any message — "hi" works. The wizard reads `getUpdates`, shows who wrote, and you pick yourself. Iva answers only these IDs; an empty list means it answers nobody.
@@ -51,7 +54,7 @@ Re-running the same command later is safe: it reuses the existing checkout, fast
 Flags pass through the pipe with `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash -s -- --skip-setup
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.4/install.sh | BRANCH=v0.3.0-rc.4 bash -s -- --skip-setup
 ```
 
 | Option | Effect |
@@ -60,7 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash -
 | `--non-interactive` | no questions at all — defaults only, wizard skipped |
 | `-h`, `--help` | show the built-in help and exit |
 | `REPO_URL=…` | install from a fork (default `https://github.com/mamysh/iva.git`) |
-| `BRANCH=…` | install a branch (default `main`) |
+| `BRANCH=…` | install a branch or tag (`v0.3.0-rc.4` for the current tested candidate) |
 | `INSTALL_DIR=…` | where the code goes (default `~/iva`) |
 
 The last three are environment variables, read by the script at startup.
