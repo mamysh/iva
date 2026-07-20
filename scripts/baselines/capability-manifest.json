@@ -121,6 +121,39 @@
       ]
     }
   },
+  "controls": {
+    "telegram": {
+      "bridgeSource": "scripts/telegram-poll.mjs",
+      "bridgeOwnedCommands": [
+        "/help",
+        "/usage",
+        "/reminders",
+        "/restart",
+        "/new",
+        "/clear",
+        "/compact",
+        "/update",
+        "/model",
+        "/think"
+      ],
+      "modelConfiguration": {
+        "commands": [
+          "/model",
+          "/think"
+        ],
+        "roles": [
+          "text",
+          "vision",
+          "effort"
+        ],
+        "wizardSource": "scripts/lib/model-wizard.mjs",
+        "applySource": "scripts/lib/model-config-transaction.mjs",
+        "probeSource": "scripts/model-config-probe.mjs",
+        "callbackTtlSeconds": 300,
+        "restartScope": "iva.service"
+      }
+    }
+  },
   "systemd": {
     "managedServices": [
       "iva-telegram-poll.service",

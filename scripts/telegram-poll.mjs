@@ -11,11 +11,18 @@
 import { chmod, readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { join, dirname } from "node:path";
+import { join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Client } from "eve/client";
 import { readEntries, summarize, formatUsageReport, parseWindow } from "./lib/usage.mjs";
 import { loadReminders, formatReminder } from "./lib/reminders-store.mjs";
 import { CONTROL_COMMANDS, checkDeploymentUpdate, parseUpdateAction } from "./lib/telegram-update.mjs";
+import { readEnvValues } from "./lib/env-file.mjs";
+import { providerAccessConfigured } from "./lib/model-catalog.mjs";
+import { ModelWizard } from "./lib/model-wizard.mjs";
+import { applyModelSelection } from "./lib/model-config-transaction.mjs";
+import { runBoundedModelProbe } from "./lib/model-probe.mjs";
+import { listConfiguredModels } from "./lib/model-inventory.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const NODE = process.execPath;
@@ -25,6 +32,8 @@ const SECRET = process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN;
 const PORT = process.env.IVA_PORT ?? "8723";
 const HOST = (process.env.ASSISTANT_HOST ?? `http://127.0.0.1:${PORT}`).replace(/\/$/, "");
 const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
+const DATA_PATH = isAbsolute(DATA_DIR) ? DATA_DIR : join(ROOT, DATA_DIR);
+const ENV_PATH = join(ROOT, ".env");
 const ROUTE = `${HOST}/eve/v1/telegram`;
 const API = `https://api.telegram.org/bot${TOKEN}`;
 const OFFSET_FILE = join(DATA_DIR, "telegram-offset.json");
@@ -42,6 +51,8 @@ const HELP = [
   "/help — this list",
   "/restart — restart the agent if it's stuck",
   "/update — check for a new version and install it",
+  "/model — choose text and vision models independently",
+  "/think — choose text reasoning depth",
   "/new — start over (reset the current conversation)",
   "/task <text> — add a task",
   "/tasks — show tasks",
@@ -143,12 +154,70 @@ async function reply(chatId, text) {
   }
 }
 
+async function sendWizard(chatId, view, messageId) {
+  const body = { chat_id: chatId, text: view.text, ...(view.reply_markup ? { reply_markup: view.reply_markup } : {}) };
+  try {
+    if (messageId) await tg("editMessageText", { ...body, message_id: messageId });
+    else await tg("sendMessage", body);
+  } catch (e) {
+    log("model wizard delivery failed:", e.message);
+  }
+}
+
 const sc = (...args) =>
   new Promise((resolve) => execFile("systemctl", ["--user", ...args], (err) => resolve(!err)));
 
 async function restartAgent() {
   return sc("restart", "iva.service");
 }
+
+async function waitAgentReadiness(timeoutMs = 60_000) {
+  const client = new Client({ host: HOST });
+  const healthy = async (deadline) => {
+    while (Date.now() < deadline) {
+      try {
+        await Promise.race([
+          client.health(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("health timeout")), 3_000)),
+        ]);
+        return true;
+      } catch {
+        await sleep(500);
+      }
+    }
+    return false;
+  };
+  if (!(await healthy(Date.now() + timeoutMs))) return false;
+  await sleep(2_000);
+  return healthy(Date.now() + 5_000);
+}
+
+async function freshEnvironment() {
+  return { ...process.env, ...await readEnvValues(ENV_PATH) };
+}
+
+async function configuredProvider(provider, env) {
+  const codexAuthenticated = existsSync(join(DATA_PATH, "codex-auth.json"));
+  return providerAccessConfigured(provider, env, { codexAuthenticated });
+}
+
+const modelWizard = new ModelWizard({
+  loadEnvironment: freshEnvironment,
+  providerAvailable: configuredProvider,
+  inventory: (provider, _role, env) => listConfiguredModels(provider, env),
+  applySelection: (selection) => applyModelSelection({
+    envPath: ENV_PATH,
+    dataDir: DATA_PATH,
+    selection,
+    baseEnvironment: process.env,
+    providerAvailable: configuredProvider,
+    probe: ({ selection: candidate, env }) => candidate.role === "effort"
+      ? true
+      : runBoundedModelProbe({ root: ROOT, role: candidate.role, env }),
+    restart: restartAgent,
+    readiness: waitAgentReadiness,
+  }),
+});
 
 // /new is an explicit owner reset. Use the same backend-neutral cancellation path as the CLI;
 // the bridge stays alive while iva.service is stopped, so it can report the outcome.
@@ -252,6 +321,15 @@ async function handleControl(update) {
   if (cq && typeof cq.data === "string" && cq.data.startsWith("iva_update:")) {
     return handleUpdateCallback(cq);
   }
+  if (cq && typeof cq.data === "string" && cq.data.startsWith("iva_model:")) {
+    const from = String(cq.from?.id ?? "");
+    await tg("answerCallbackQuery", { callback_query_id: cq.id, text: "Обрабатываю…" });
+    if (ALLOWED.size === 0 || !ALLOWED.has(from)) return true;
+    const chatId = cq.message?.chat?.id;
+    const view = await modelWizard.handle(cq.data, { userId: from, chatId });
+    await sendWizard(chatId, view, cq.message?.message_id);
+    return true;
+  }
   const msg = update.message;
   const text = (msg?.text || "").trim();
   if (!text.startsWith("/")) return false;
@@ -262,6 +340,11 @@ async function handleControl(update) {
   const chatId = msg?.chat?.id;
   if (cmd === "/help") {
     await reply(chatId, HELP);
+    return true;
+  }
+  if (cmd === "/model" || cmd === "/think") {
+    const view = await modelWizard.open(cmd === "/think" ? "think" : "model", { userId: from, chatId });
+    await sendWizard(chatId, view);
     return true;
   }
   // /usage — token spend from data/usage.jsonl. Out-of-band and FREE (we don't call the model).
@@ -304,6 +387,17 @@ async function main() {
   const firstRun = !existsSync(OFFSET_FILE);
   const dw = await tg("deleteWebhook", { drop_pending_updates: firstRun });
   log("deleteWebhook:", dw.ok ? `ok (drop_pending=${firstRun})` : dw.description);
+  const commandMenu = CONTROL_COMMANDS.map((command) => ({
+    command: command.slice(1),
+    description: {
+      "/help": "Show commands", "/usage": "Token usage", "/reminders": "Active reminders",
+      "/restart": "Restart agent", "/new": "Reset conversation", "/clear": "Reset conversation",
+      "/compact": "Compact conversation", "/update": "Update Iva", "/model": "Text and vision models",
+      "/think": "Text reasoning depth",
+    }[command] || "Iva command",
+  }));
+  const menu = await tg("setMyCommands", { commands: commandMenu });
+  log("setMyCommands:", menu.ok ? "ok" : menu.description);
 
   let offset = await loadOffset();
   if (offset === null) {

@@ -23,6 +23,7 @@ const replica = join(sandbox, "app");
 const logs = [];
 let mock;
 let eve;
+let client;
 let resourceReport;
 let phase = "setup";
 
@@ -269,13 +270,29 @@ async function killEve(child, signal) {
   if (groupAlive()) throw new Error(`${signal} did not stop the replica process group`);
 }
 
-async function waitForRequests(count, timeoutMs = 15_000) {
+// A restart/recovery turn can sit behind durable cleanup after the earlier fault canaries. Keep
+// this bounded below the 90s health gate, but do not mistake a busy local builder for a lost call.
+async function waitForRequests(count, timeoutMs = 45_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (mock.requests.length >= count) return;
     await sleep(25);
   }
   throw new Error(`mock provider received ${mock.requests.length}/${count} expected requests`);
+}
+
+async function freshTurnResultWithTransportRetry(message, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await (await client.session().send(message)).result();
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) break;
+      await waitForHealth(client, eve, 15_000);
+    }
+  }
+  throw lastError;
 }
 
 function workflowReport(port) {
@@ -484,7 +501,7 @@ try {
   const buildDurationMs = Math.round(performance.now() - buildStarted);
   const startStarted = performance.now();
   eve = await startEve(port);
-  let client = new Client({ host: `http://127.0.0.1:${port}` });
+  client = new Client({ host: `http://127.0.0.1:${port}` });
   await waitForHealth(client, eve);
   const startupDurationMs = Math.round(performance.now() - startStarted);
 
@@ -586,9 +603,15 @@ try {
   const failedBeforeTerm = report.states.terminal;
   const termRequests = mock.requests.length;
   mock.delayNext(5_000);
-  const interruptedTerm = client.session().send("SIGTERM canary: reply with exactly REPLICA_OK")
-    .then((response) => response.result()).catch(() => null);
-  await waitForRequests(termRequests + 1);
+  const interruptedTerm = freshTurnResultWithTransportRetry("SIGTERM canary: reply with exactly REPLICA_OK")
+    .then((result) => ({ result }), (error) => ({ error }));
+  await Promise.race([
+    waitForRequests(termRequests + 1),
+    interruptedTerm.then((outcome) => {
+      const detail = outcome.error?.message || `${outcome.result?.status || "unknown"}: ${outcome.result?.message || "no message"}`;
+      throw new Error(`SIGTERM canary ended before reaching the provider: ${detail.slice(0, 500)}`);
+    }),
+  ]);
   await killEve(eve, "SIGTERM");
   await Promise.race([interruptedTerm, sleep(2_000)]);
   const termRepair = repairWorkflow(port);
@@ -607,8 +630,8 @@ try {
   const killRequests = mock.requests.length;
   mock.passNext();
   mock.delayNext(5_000);
-  const interruptedKill = client.session().send("Use the tasks tool to add the replica canary task, then confirm completion.")
-    .then((response) => response.result()).catch(() => null);
+  const interruptedKill = freshTurnResultWithTransportRetry("Use the tasks tool to add the replica canary task, then confirm completion.")
+    .catch(() => null);
   await waitForRequests(killRequests + 2);
   await killEve(eve, "SIGKILL");
   await Promise.race([interruptedKill, sleep(2_000)]);

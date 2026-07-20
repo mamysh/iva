@@ -10,6 +10,8 @@ export const CONTROL_COMMANDS = Object.freeze([
   "/clear",
   "/compact",
   "/update",
+  "/model",
+  "/think",
 ]);
 
 export function packageVersion(jsonText) {

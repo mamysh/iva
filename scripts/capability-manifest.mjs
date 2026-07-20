@@ -57,6 +57,26 @@ function providerRoute() {
   };
 }
 
+function telegramControlSurface() {
+  const source = read("scripts/lib/telegram-update.mjs");
+  const block = source.match(/export const CONTROL_COMMANDS = Object\.freeze\((\[[\s\S]*?\])\);/)?.[1] ?? "";
+  const commands = [...block.matchAll(/"(\/[a-z]+)"/g)].map((match) => match[1]);
+  if (!commands.length) throw new Error("Cannot derive Telegram control commands");
+  return {
+    bridgeSource: "scripts/telegram-poll.mjs",
+    bridgeOwnedCommands: commands,
+    modelConfiguration: {
+      commands: ["/model", "/think"],
+      roles: ["text", "vision", "effort"],
+      wizardSource: "scripts/lib/model-wizard.mjs",
+      applySource: "scripts/lib/model-config-transaction.mjs",
+      probeSource: "scripts/model-config-probe.mjs",
+      callbackTtlSeconds: 300,
+      restartScope: "iva.service",
+    },
+  };
+}
+
 function systemdCapabilities() {
   const deploy = join(ROOT, "deploy");
   const templates = readdirSync(deploy, { withFileTypes: true })
@@ -113,6 +133,7 @@ export function createCapabilityManifest() {
         subagents: subagentNames(),
       },
     },
+    controls: { telegram: telegramControlSurface() },
     systemd: systemdCapabilities(),
     extensions: {
       contractVersion: extensionContracts.schemaVersion,

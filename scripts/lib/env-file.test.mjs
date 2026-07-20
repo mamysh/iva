@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { MODEL_CONFIG_KEYS, parseEnvText, readEnvValues, upsertModelEnv } from "./env-file.mjs";
+import { MODEL_CONFIG_KEYS, parseEnvText, readEnvValues, renderModelEnv, upsertModelEnv } from "./env-file.mjs";
 
 const directory = await mkdtemp(join(tmpdir(), "iva-model-env-"));
 const path = join(directory, ".env");
@@ -13,6 +13,7 @@ try {
   assert.deepEqual(await readEnvValues(join(directory, "missing")), {});
   assert.ok(MODEL_CONFIG_KEYS.includes("VISION_PROVIDER"));
   assert.ok(MODEL_CONFIG_KEYS.includes("CODEX_VISION_MODEL"));
+  assert.equal(renderModelEnv("A=1\nMODEL_PROVIDER=ollama\n", { MODEL_PROVIDER: "codex" }), "A=1\nMODEL_PROVIDER=codex\n");
 
   await upsertModelEnv(path, { MODEL_PROVIDER: "codex", CODEX_MODEL: "fixture-text" });
   assert.equal(await readFile(path, "utf8"), "MODEL_PROVIDER=codex\nCODEX_MODEL=fixture-text\n");

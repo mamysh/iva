@@ -12,6 +12,8 @@ export const MODEL_CATALOG = Object.freeze({
     visionDefault: "minimax-m3",
     contextWindowDefault: 131072,
     effort: Object.freeze([]),
+    textCandidates: Object.freeze(["deepseek-v4-pro"]),
+    visionCandidates: Object.freeze(["minimax-m3"]),
   }),
   opencode: Object.freeze({
     label: "OpenCode Go",
@@ -23,6 +25,8 @@ export const MODEL_CATALOG = Object.freeze({
     visionDefault: "gemini-3-flash",
     contextWindowDefault: 131072,
     effort: Object.freeze([]),
+    textCandidates: Object.freeze(["deepseek-v4-pro"]),
+    visionCandidates: Object.freeze(["gemini-3-flash"]),
   }),
   openrouter: Object.freeze({
     label: "OpenRouter",
@@ -34,6 +38,8 @@ export const MODEL_CATALOG = Object.freeze({
     visionDefault: "google/gemini-2.5-flash",
     contextWindowDefault: 131072,
     effort: Object.freeze([]),
+    textCandidates: Object.freeze(["openai/gpt-5.1"]),
+    visionCandidates: Object.freeze(["google/gemini-2.5-flash"]),
   }),
   codex: Object.freeze({
     label: "OpenAI (ChatGPT subscription)",
@@ -45,6 +51,8 @@ export const MODEL_CATALOG = Object.freeze({
     visionDefault: "text-model",
     contextWindowDefault: 272000,
     effort: THINKING_EFFORTS,
+    textCandidates: Object.freeze(["gpt-5.5"]),
+    visionCandidates: Object.freeze(["gpt-5.5"]),
   }),
 });
 

@@ -15,9 +15,18 @@ Iva has two control surfaces: slash commands in Telegram and the `iva` command o
 | `/restart` | Restart only the agent process; durable workflow state is preserved |
 | `/clear` `/compact` | Same reset as `/new` |
 | `/update` | Check for a new version; if there is one, tap **Update** to install it |
+| `/model` | Show and independently change the text and vision provider/model using owner-only buttons |
+| `/think` | Change text reasoning depth when the active provider supports it (currently Codex) |
 | `/usage [window]` | Token spend — variants below |
 
-Two kinds here. `/task`, `/tasks` and `/digest` route into the agent and need it running. `/help`, `/usage`, `/reminders`, `/restart`, `/new`, `/clear`, `/compact` and `/update` never reach the agent — the long-poll bridge handles them itself, out-of-band. `/restart` restarts only `iva.service`; `/new`, `/clear` and `/compact` explicitly cancel active workflow sessions through the same backend-neutral reset used by the server CLI. Neither operation deletes workflow storage, terminal history, the vault, tasks or reminders. The bridge only obeys user IDs on the allowlist.
+Two kinds here. `/task`, `/tasks` and `/digest` route into the agent and need it running. `/help`, `/usage`, `/reminders`, `/restart`, `/new`, `/clear`, `/compact`, `/update`, `/model` and `/think` never reach the agent — the long-poll bridge handles them itself, out-of-band. `/restart` restarts only `iva.service`; `/new`, `/clear` and `/compact` explicitly cancel active workflow sessions through the same backend-neutral reset used by the server CLI. Neither operation deletes workflow storage, terminal history, the vault, tasks or reminders. The bridge only obeys user IDs on the allowlist.
+
+`/model` lists only providers whose key or Codex OAuth is already configured. Telegram never accepts a
+new credential or arbitrary model ID. Text and vision are separate roles: changing text preserves the
+active vision route. Before applying a model, Iva runs a bounded synthetic capability probe, writes
+only allowlisted model keys to `.env`, restarts `iva.service`, waits for stable readiness, and restores
+the exact previous configuration if readiness fails. Picker callbacks are opaque, owner/chat-bound and
+expire after five minutes.
 
 `/update` compares your install with its deployment repository, `origin/<current-branch>`. If a newer version exists it replies with the version bump and two buttons — **⬆️ Update** and **Skip**. Update pulls the reviewed fork branch, rebuilds and restarts Iva in its own detached scope (so the restart of the bridge can't kill the update mid-flight), then reports ✅ or ❌ back in the chat. Nothing happens until you tap. Changes from the source `smixs/iva` repository are integrated into this deployment repository separately before they can reach production.
 

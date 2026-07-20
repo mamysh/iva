@@ -11,6 +11,8 @@ export interface ModelCatalogEntry {
   readonly visionDefault: string;
   readonly contextWindowDefault: number;
   readonly effort: readonly ThinkingEffort[];
+  readonly textCandidates: readonly string[];
+  readonly visionCandidates: readonly string[];
 }
 
 export const MODEL_PROVIDERS: readonly ModelProvider[];
