@@ -44,7 +44,7 @@
   "alternateName": "Iva — личный AI-агент",
   "description": "Open-source self-hosted агент в Telegram: Markdown-память, ранжированный локальный поиск, напоминания и настраиваемые провайдеры моделей.",
   "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "Linux, macOS",
+  "operatingSystem": "Ubuntu 24.04 LTS (Linux x64)",
   "url": "https://mamysh.github.io/iva/ru/",
   "image": "https://mamysh.github.io/iva/iva-og.png",
   "softwareVersion": "0.3.0-rc.4",
@@ -97,15 +97,16 @@
     <img src="../iva-header.webp" alt="Iva — личный AI-агент с долговременной памятью" width="1200" height="676">
     <h1>Iva — личный AI-агент с долговременной памятью</h1>
     <p class="tagline">Личный AI-агент с долговременной памятью. Ставится одной командой на ваш сервер и сохраняет контекст надолго.</p>
-    <p class="sub">Живёт в Telegram. Собран на <a href="https://eve.dev/docs/introduction">eve</a>, работает на вашем сервере и с выбранным вами провайдером модели.</p>
+    <p class="sub">Предрелиз v0.3.0-rc.4 · идёт семидневное наблюдение. Собран на <a href="https://eve.dev/docs/introduction">eve</a>, работает на вашем сервере и с выбранным вами провайдером модели.</p>
     <p>
       <a class="cta" href="https://github.com/mamysh/iva">Открыть на GitHub</a>
       <a class="cta alt" href="https://github.com/mamysh/iva/blob/main/README.ru.md#быстрый-старт">Как установить</a>
     </p>
   </header>
 
-  <h2>Установка одной командой</h2>
-  <pre><code>curl -fsSL https://raw.githubusercontent.com/mamysh/iva/main/install.sh | bash</code></pre>
+  <h2>Попробовать проверенный RC</h2>
+  <pre><code>curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.4/install.sh | BRANCH=v0.3.0-rc.4 bash</code></pre>
+  <p>Это ещё не stable. Обычным пользователям лучше дождаться stable-команды релиза v0.3.0.</p>
 
   <h2>Почему Iva</h2>
   <p>Self-hosted ассистент обычно заставляет сначала выбрать модель, память, поиск и схему деплоя — и
@@ -123,7 +124,7 @@
     <li>⏰ <b>По расписанию</b> - дайджест дня или недели, регулярные задачи, сводка по почте, вовремя.</li>
     <li>🔔 <b>Напоминания</b> - скажете, о чём и когда, и Iva не даст забыть.</li>
     <li>🧪 <b>Личный Telegram MCP (beta)</b> - опционален, выключен по умолчанию и работает read-only, пока вы явно не примете риск аккаунта.</li>
-    <li>🤖 <b>Выбор модели</b> - DeepSeek, Kimi, GLM и другие открытые модели.</li>
+    <li>🤖 <b>Выбор модели</b> - для Ollama по умолчанию DeepSeek V4 Pro обрабатывает текст, а MiniMax M3 — изображения; другие маршруты настраиваются.</li>
     <li>🌐 <b>Умеет больше</b> - ищет в интернете, открывает сайты, водит браузер, подключается к MCP.</li>
     <li>🔒 <b>Честная граница приватности</b> - runtime и исходная память остаются на вашем сервере; обрабатываемый контент получают только настроенные вами облачные провайдеры.</li>
   </ul>
@@ -146,9 +147,8 @@
 
   <h2>Провайдеры и цена</h2>
   <p>Бесплатный и открытый. Платите только за маленький всегда включённый сервер (для production-профиля
-  с PostgreSQL рекомендуется минимум 1 ГБ RAM) и выбранный сервис моделей: OpenCode Zen и OpenRouter оплачиваются по факту использования,
-  а планы Ollama Cloud задаёт сам провайдер. Также поддерживается подписка ChatGPT. Голос
-  работает на <a href="https://console.deepgram.com">Deepgram</a> (бесплатный стартовый кредит).</p>
+  с PostgreSQL рекомендуется минимум 1 ГБ RAM) и выбранные внешние сервисы. Цены и бесплатные кредиты
+  меняют провайдеры — проверяйте актуальные условия перед оплатой. Iva не добавляет наценку.</p>
 
   <p style="text-align:center; margin-top:40px">
     <a class="cta" href="https://github.com/mamysh/iva">Поставить Iva →</a>

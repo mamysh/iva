@@ -1,0 +1,43 @@
+name: Bug report / Ошибка
+description: Report reproducible Iva behavior without private data / Сообщить о воспроизводимой ошибке без личных данных
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste `.env`, tokens, database URLs, vault contents or production logs.
+        Не вставляйте `.env`, токены, URL базы, содержимое vault или production-логи.
+  - type: input
+    id: version
+    attributes:
+      label: Version and commit / Версия и commit
+      placeholder: "iva version"
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Workflow profile / Профиль Workflow
+      options: [local, PostgreSQL, unknown / не знаю]
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened / Что произошло
+      description: Expected and actual behavior, without private content / Ожидаемое и фактическое поведение без личных данных
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction / Как повторить
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Sanitized doctor report / Очищенный отчёт doctor
+      description: Attach only `iva doctor --json`; inspect it before posting / Только `iva doctor --json`, проверьте перед публикацией
+      render: json

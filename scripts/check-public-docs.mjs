@@ -3,12 +3,16 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-const tracked = execFileSync("git", ["ls-files", "*.md", "*.html"], { encoding: "utf8" })
+const tracked = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "--", "*.md", "*.html"], { encoding: "utf8" })
   .trim()
   .split("\n")
   .filter(Boolean);
 const read = (path) => readFileSync(path, "utf8");
 const packageVersion = JSON.parse(read("package.json")).version;
+const ownerDocs = [
+  "install", "configuration", "memory", "security", "providers", "deploy", "data-and-backup",
+  "observability", "userbot", "cli", "owner-runbook", "supported", "faq", "troubleshooting",
+];
 
 for (const path of ["docs/index.html", "docs/ru/index.html"]) {
   assert.match(read(path), new RegExp(`"softwareVersion": "${packageVersion.replaceAll(".", "\\.")}"`));
@@ -20,7 +24,18 @@ for (const path of ["README.md", "README.ru.md"]) {
   assert.match(text, /Rich Messages|Rich replies|Богатые ответы/);
   assert.match(text, /userbot \(beta\)/i);
   assert.match(text, /`\/update`/);
+  assert.match(text, /v0\.3\.0-rc\.4\/install\.sh/);
+  assert.match(text, /BRANCH=v0\.3\.0-rc\.4/);
 }
+for (const name of ownerDocs) {
+  assert.equal(existsSync(`docs/${name}.md`), true, `missing English owner doc: ${name}.md`);
+  assert.equal(existsSync(`docs/ru/${name}.md`), true, `missing Russian owner doc: ${name}.md`);
+}
+for (const path of ["SECURITY.md", "SECURITY.ru.md", "CONTRIBUTING.md", "CONTRIBUTING.ru.md"]) {
+  assert.equal(existsSync(path), true, `missing public project file: ${path}`);
+}
+assert.doesNotMatch(read("README.md"), /no extra bill/i);
+assert.doesNotMatch(read("README.ru.md"), /ни лишнего сч[её]та/i);
 assert.match(read("docs/deploy.md"), /two systemd user services and seven timers/i);
 assert.match(read("docs/deploy.md"), /iva workflow-postgres enable/);
 assert.match(read("docs/userbot.md"), /49 upstream read-only tools/);

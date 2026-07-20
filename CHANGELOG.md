@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Prepare the public project surface for outside adopters: honest RC/stable installation guidance,
+  complete English/Russian owner documentation, security and contribution policies, and bilingual
+  issue templates.
+
 ## [0.3.0-rc.4] - 2026-07-20
 
 - Preserve systemd execution history across ordinary Iva restarts and updates by leaving unchanged

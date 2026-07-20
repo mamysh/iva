@@ -1,0 +1,25 @@
+name: Feature request / Идея
+description: Suggest one user-facing improvement / Предложить одно улучшение для пользователя
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: User need / Потребность
+      description: Describe the problem before the implementation / Сначала опишите проблему, а не реализацию
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome / Желаемый результат
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Area / Область
+      options: [Install and updates / Установка и обновления, Memory / Память, Telegram, Providers / Провайдеры, Backup and recovery / Backup и восстановление, Extensions / Расширения, Other / Другое]
+    validations:
+      required: true

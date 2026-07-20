@@ -1,4 +1,4 @@
-> 🇬🇧 [English version](../security.md) — каноническая версия, она может быть новее.
+> 🇬🇧 [English version](../security.md)
 <!-- ru-sync: docs/security.md@v0.2.0 -->
 
 # Безопасность и приватность
