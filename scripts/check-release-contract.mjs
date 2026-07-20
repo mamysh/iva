@@ -14,6 +14,7 @@ const contract = validateReleaseContract(JSON.parse(read("scripts/release-contra
 assert.equal(nextFixtureVersion("0.2.5"), "0.2.6");
 assert.equal(nextFixtureVersion("0.3.0-rc.1"), "0.3.0-rc.2");
 assert.equal(nextFixtureVersion("0.3.0-rc.2"), "0.3.0-rc.3");
+assert.equal(nextFixtureVersion("0.3.0-rc.3"), "0.3.0-rc.4");
 const capabilityManifest = { schemaVersion: 1, product: { name: "iva", version: "0.3.0-rc.1" } };
 const commit = "a".repeat(40);
 const identity = candidateIdentity({
