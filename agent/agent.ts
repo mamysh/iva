@@ -1,6 +1,6 @@
 import { defineAgent } from "eve";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-// Провайдер и его модели — единый источник в provider.ts (тот же конфиг у agent/vision.ts).
+// Text role resolves through provider.ts; vision has an independent resolved role in agent/vision.ts.
 // codex = подписка ChatGPT (Responses API + OAuth); ollama/opencode = OpenAI-совместимый chat.
 import { providerConfig as cfg, providerName, withReasoningStripped, makeCodexModel } from "./provider.js";
 import { workflowAgentOptions } from "../scripts/lib/workflow-config.mjs";

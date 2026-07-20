@@ -25,6 +25,7 @@ for (const profile of ["local", "postgres"]) {
     },
   });
   assert.equal(result.outcome, "updated");
+  assert.deepEqual(result.events, ["prepare", "activate", "restart", "readiness", "commit"]);
   assert.deepEqual(calls, ["prepare", "activate", "restart", "readiness", "commit", "cleanup"]);
 }
 
@@ -41,6 +42,7 @@ const brokenBuild = await runUpdateTransaction({
 });
 assert.equal(brokenBuild.outcome, "rolled_back");
 assert.equal(brokenBuild.activated, false);
+assert.deepEqual(brokenBuild.events, ["prepare"]);
 
 const rollbackCalls = [];
 const brokenReadiness = await runUpdateTransaction({
@@ -53,6 +55,7 @@ const brokenReadiness = await runUpdateTransaction({
 });
 assert.equal(brokenReadiness.outcome, "rolled_back");
 assert.equal(brokenReadiness.activated, true);
+assert.deepEqual(brokenReadiness.events, ["prepare", "activate", "restart", "readiness", "rollback", "restart-previous"]);
 assert.deepEqual(rollbackCalls, ["rollback", "restart"]);
 
 const migrationPlan = createMigrationPlan(baseline, target("postgres", {
@@ -70,6 +73,7 @@ const brokenMigration = await runUpdateTransaction({
 assert.equal(brokenMigration.outcome, "rolled_back");
 assert.equal(brokenMigration.activated, false);
 assert.equal(restored, true);
+assert.deepEqual(brokenMigration.events, ["prepare", "backup", "migration:v1", "restore"]);
 
 assert.throws(() => createMigrationPlan(baseline, manifest(2), "local"), /sequential update required/);
 assert.equal(createUpdatePreflight({

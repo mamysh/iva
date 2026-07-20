@@ -46,24 +46,28 @@ export async function collectProviderInventory({ provider, baseURL, apiKey, visi
   };
 }
 
-export function sanitizedProviderEvidence({ provider, textModel, visionModel, inventory, description, commit }) {
-  if (!new Set(["ollama", "opencode", "openrouter", "codex"]).has(provider)) throw new Error("unsupported provider evidence");
+export function sanitizedProviderEvidence({ textProvider, visionProvider, textModel, visionModel, inventory, description, commit }) {
+  const supported = new Set(["ollama", "opencode", "openrouter", "codex"]);
+  if (!supported.has(textProvider) || !supported.has(visionProvider)) throw new Error("unsupported provider evidence");
   for (const [name, value] of [["text model", textModel], ["vision model", visionModel]]) {
     if (!/^[A-Za-z0-9._:/@+-]+$/.test(value || "")) throw new Error(`unsafe ${name} identifier`);
   }
   if (!/^[0-9a-f]{40}$/.test(commit || "")) throw new Error("provider evidence commit must be a full SHA");
-  if (!String(description || "").trim()) throw new Error(`${provider} vision canary returned an empty description`);
+  if (!String(description || "").trim()) throw new Error(`${visionProvider} vision canary returned an empty description`);
   if (inventory.available && inventory.visionModelPresent !== true) {
-    throw new Error(`${provider} configured vision model is absent from authenticated inventory`);
+    throw new Error(`${visionProvider} configured vision model is absent from authenticated inventory`);
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     capturedAt: new Date().toISOString(),
     commit,
-    provider,
-    textModel,
-    visionModel,
+    text: { provider: textProvider, model: textModel },
     inventory,
-    vision: { status: "pass", responseCharacters: description.trim().length },
+    vision: {
+      provider: visionProvider,
+      model: visionModel,
+      status: "pass",
+      responseCharacters: description.trim().length,
+    },
   };
 }

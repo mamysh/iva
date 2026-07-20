@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { generateText, streamText } from "ai";
 import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
-import { withReasoningStripped } from "../agent/provider.ts";
+import { codexRequestOptions, withReasoningStripped } from "../agent/provider.ts";
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 
@@ -50,4 +50,7 @@ for await (const part of res.fullStream) {
 assert.equal(reasoningSeen, false, "stream: reasoning-части должны быть вырезаны");
 assert.equal(text, "ответ", "stream: текст должен сохраниться");
 
-console.log("OK reasoning-strip: generate + stream");
+assert.deepEqual(codexRequestOptions("text", "high"), { store: false, reasoningEffort: "high" });
+assert.deepEqual(codexRequestOptions("vision", "high"), { store: false });
+
+console.log("OK reasoning-strip: generate + stream; Codex effort stays text-only");

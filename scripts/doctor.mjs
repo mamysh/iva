@@ -10,6 +10,8 @@ import { assertWorkflowProfileMatch } from "./lib/workflow-config.mjs";
 import { readWorkflowBuildDescriptor, resolveRuntimeWorkflowProfile } from "./lib/workflow-runtime.mjs";
 import { evaluateDoctorSnapshot, formatDoctorReport } from "./lib/doctor-contract.mjs";
 import { readMetricHistory, summarizeHealth } from "./lib/health-metrics.mjs";
+import { providerAccessConfigured } from "./lib/model-catalog.mjs";
+import { resolveModelRoles } from "./lib/model-profile.mjs";
 import { readEntries } from "./lib/usage.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -93,16 +95,26 @@ function configurationSnapshot() {
     openrouter: ["OPENROUTER_API_KEY", "OPENROUTER_MODEL"], codex: ["CODEX_MODEL"],
   };
   const required = [...(providerKeys[provider] || providerKeys.ollama), "DEEPGRAM_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS"];
+  const codexAuthenticated = existsSync(join(dataDir, "codex-auth.json"));
   const providerConfigured = (providerKeys[provider] || providerKeys.ollama).every((key) => Boolean(String(env[key] || "").trim())) &&
-    (provider !== "codex" || existsSync(join(dataDir, "codex-auth.json")));
+    providerAccessConfigured(provider, env, { codexAuthenticated });
+  let visionProvider = "invalid";
+  let visionConfigured = false;
+  try {
+    visionProvider = resolveModelRoles(env).vision.provider;
+    visionConfigured = providerAccessConfigured(visionProvider, env, { codexAuthenticated });
+  } catch {
+    /* Invalid explicit VISION_PROVIDER is reported as incomplete configuration. */
+  }
   const searchProvider = (env.SEARCH_PROVIDER || "tavily").trim().toLowerCase();
   const searchKey = { tavily: "TAVILY_API_KEY", brave: "BRAVE_API_KEY", exa: "EXA_API_KEY", parallel: "PARALLEL_API_KEY" }[searchProvider] || "TAVILY_API_KEY";
   const memoryMode = (env.MEMORY_SEARCH_MODE || "grep").trim().toLowerCase();
   return {
     nodeSupported: Number(process.versions.node.split(".")[0]) >= 24,
     nodeMajor: Number(process.versions.node.split(".")[0]),
-    required: existsSync(ENV_PATH) && required.every((key) => Boolean(String(env[key] || "").trim())) && providerConfigured,
-    provider, providerConfigured, search: Boolean(String(env[searchKey] || "").trim()), searchProvider,
+    required: existsSync(ENV_PATH) && required.every((key) => Boolean(String(env[key] || "").trim())) && providerConfigured && visionConfigured,
+    provider, providerConfigured, visionProvider, visionConfigured,
+    search: Boolean(String(env[searchKey] || "").trim()), searchProvider,
     memory: memoryMode !== "hybrid" || Boolean(String(env.JINA_API_KEY || env.DEEPINFRA_API_KEY || "").trim()), memoryMode,
   };
 }

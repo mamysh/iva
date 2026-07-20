@@ -42,7 +42,8 @@ Git's recorded conflict resolutions (`rerere`) are enabled locally to make repea
 ## Model and integration stack
 
 - Providers: Ollama Cloud, OpenCode Zen, OpenRouter, or an OpenAI ChatGPT subscription through Codex OAuth. Codex requests use stateless inline history (`store:false`), not backend-persisted response references.
-- Voice: Deepgram transcription; vision uses the selected provider's compatible vision path.
+- Voice: Deepgram transcription; vision has an independent resolved model/provider role and inherits
+  the text provider when no explicit override is configured.
 - Web search: the selected API provider; if its key is missing, the assistant reports that search is unavailable instead of guessing.
 - Google Workspace: the optional `gws` CLI skill, configured only when the owner explicitly connects it.
 - Telegram userbot/MCP code is present as a **beta, opt-in** integration. It is disabled by default and

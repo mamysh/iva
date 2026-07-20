@@ -421,7 +421,8 @@ export default telegramChannel({
         const stamp = localStamp();
         const rel = saveBlob(f.bytes, media.fileName, media.tag, media.mimeType, stamp);
 
-        // Неподвижное изображение → распознаём vision-моделью ТОГО ЖЕ провайдера (один ключ).
+        // Неподвижное изображение → распознаём отдельной resolved vision-ролью. По умолчанию она
+        // наследует text provider; VISION_PROVIDER может направить её через другой настроенный доступ.
         // Сбой/нет ключа → vision="", ход продолжается без зрения (graceful).
         const isStillImage =
           media.tag === "photo" ||

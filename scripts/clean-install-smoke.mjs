@@ -82,6 +82,10 @@ async function initializeUpdateRepository() {
   git(app, ["config", "user.name", "Iva fixture"]);
   git(app, ["config", "user.email", "iva-fixture@example.invalid"]);
   git(app, ["add", "."]);
+  // The live-vault ignore rule also matches the intentionally tracked template
+  // skeleton. A freshly initialized fixture has no index history to preserve
+  // those files, so add that bounded subtree explicitly.
+  git(app, ["add", "-f", "vault-template/.claude"]);
   git(app, ["commit", "-m", "fixture baseline"]);
   const baseline = git(app, ["rev-parse", "HEAD"]);
   git(app, ["remote", "add", "origin", remote]);

@@ -40,18 +40,40 @@ function subagentNames() {
 }
 
 function providerRoute() {
-  const source = read("agent/provider.ts");
-  const defaultProvider = source.match(/process\.env\.MODEL_PROVIDER \?\? "([^"]+)"/)?.[1];
-  const providerBlock = source.match(/const PROVIDERS = \{([\s\S]*?)\n\} as const;/)?.[1] ?? "";
-  const providers = [...providerBlock.matchAll(/^  ([a-z0-9-]+): \{$/gm)].map((match) => match[1]).sort(byName);
-  if (!defaultProvider || providers.length === 0) throw new Error("Cannot derive provider route from agent/provider.ts");
+  const roleContract = readJson("scripts/baselines/model-role-contract.json");
+  const defaultProvider = roleContract.roles?.text?.providerDefault;
+  const providers = Object.keys(roleContract.providers ?? {}).sort(byName);
+  if (!defaultProvider || providers.length === 0) throw new Error("Cannot derive provider route from model role contract");
   return {
     selector: "MODEL_PROVIDER",
     default: defaultProvider,
     providers,
     textModelSource: "agent/agent.ts",
     visionModelSource: "agent/vision.ts",
-    configurationSource: "agent/provider.ts",
+    configurationSource: "scripts/lib/model-profile.mjs",
+    runtimeAdapterSource: "agent/provider.ts",
+    roleContractSource: "scripts/baselines/model-role-contract.json",
+    roleContract,
+  };
+}
+
+function telegramControlSurface() {
+  const source = read("scripts/lib/telegram-update.mjs");
+  const block = source.match(/export const CONTROL_COMMANDS = Object\.freeze\((\[[\s\S]*?\])\);/)?.[1] ?? "";
+  const commands = [...block.matchAll(/"(\/[a-z]+)"/g)].map((match) => match[1]);
+  if (!commands.length) throw new Error("Cannot derive Telegram control commands");
+  return {
+    bridgeSource: "scripts/telegram-poll.mjs",
+    bridgeOwnedCommands: commands,
+    modelConfiguration: {
+      commands: ["/model", "/think"],
+      roles: ["text", "vision", "effort"],
+      wizardSource: "scripts/lib/model-wizard.mjs",
+      applySource: "scripts/lib/model-config-transaction.mjs",
+      probeSource: "scripts/model-config-probe.mjs",
+      callbackTtlSeconds: 300,
+      restartScope: "iva.service",
+    },
   };
 }
 
@@ -111,6 +133,7 @@ export function createCapabilityManifest() {
         subagents: subagentNames(),
       },
     },
+    controls: { telegram: telegramControlSurface() },
     systemd: systemdCapabilities(),
     extensions: {
       contractVersion: extensionContracts.schemaVersion,

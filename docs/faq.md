@@ -24,7 +24,10 @@ Yes — the setup wizard and the agent both run in Russian or English (`AGENT_LA
 
 ## What models does it support?
 
-Four provider paths are supported: OpenCode Zen, Ollama Cloud, OpenRouter and an OpenAI ChatGPT subscription through Codex OAuth. Setup validates the chosen model and, where available, fetches the live model list. Photos use the selected provider's compatible vision path. Full details: [providers.md](providers.md).
+Four provider paths are supported: OpenCode Zen, Ollama Cloud, OpenRouter and an OpenAI ChatGPT
+subscription through Codex OAuth. Text and vision have independent model roles; vision inherits the
+text provider unless `VISION_PROVIDER` explicitly selects another configured access. Full details:
+[providers.md](providers.md).
 
 ## Do I need a domain or HTTPS?
 

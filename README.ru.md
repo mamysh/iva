@@ -97,7 +97,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.4/install.sh |
 
 | В Telegram | На сервере |
 |---|---|
-| `/help` · `/task` · `/reminders` · `/digest` · `/new` · `/update` · `/usage` | `iva status` · `iva update` · `iva reminders` · `iva userbot` · `iva doctor` · `iva logs` |
+| `/help` · `/task` · `/reminders` · `/digest` · `/model` · `/think` · `/new` · `/update` · `/usage` | `iva status` · `iva update` · `iva reminders` · `iva userbot` · `iva doctor` · `iva logs` |
 
 Полный справочник, включая разбивку `/usage` по моделям и источникам: [docs/ru/cli.md](docs/ru/cli.md).
 

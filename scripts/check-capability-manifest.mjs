@@ -28,6 +28,10 @@ for (const [kind, names] of Object.entries(required)) {
 }
 
 assert.deepEqual(manifest.systemd.managedServices, ["iva-telegram-poll.service", "iva.service"]);
+assert.deepEqual(manifest.controls.telegram.modelConfiguration.commands, ["/model", "/think"]);
+assert.deepEqual(manifest.controls.telegram.modelConfiguration.roles, ["text", "vision", "effort"]);
+assert.equal(manifest.controls.telegram.modelConfiguration.callbackTtlSeconds, 300);
+assert.equal(manifest.controls.telegram.modelConfiguration.restartScope, "iva.service");
 assert.ok(manifest.systemd.managedTimers.includes("iva-reminders.timer"));
 assert.ok(manifest.systemd.managedTimers.includes("iva-observe.timer"));
 assert.equal(manifest.extensions.contractVersion, 1);
@@ -49,6 +53,12 @@ assert.equal(manifest.storage.lifecycle.doctorSchemaVersion, 1);
 assert.equal(manifest.storage.lifecycle.observabilitySchemaVersion, 1);
 assert.equal(manifest.storage.lifecycle.observabilityRetentionSamples, 744);
 assert.equal(manifest.storage.lifecycle.purgeCommand, null);
+assert.equal(manifest.agent.providerRoute.roleContract.roles.vision.defaultFollowsRole, "text");
+assert.equal(manifest.agent.providerRoute.roleContract.roles.effort.selector, "THINKING_EFFORT");
+assert.deepEqual(
+  Object.keys(manifest.agent.providerRoute.roleContract.providers).sort(),
+  ["codex", "ollama", "opencode", "openrouter"],
+);
 assert.match(manifest.runtime.node, /^24/);
 assert.equal(manifest.runtime.eve, "0.11.10");
 

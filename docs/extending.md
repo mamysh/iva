@@ -12,7 +12,7 @@ half-configured code.
 
 | Type | Source | Minimum activation proof | Capability manifest |
 |---|---|---|---|
-| Provider | `agent/provider.ts` | required key/model, reasoning test, replica turn | `agent.providerRoute.providers` |
+| Provider | `scripts/lib/model-catalog.mjs` + `agent/provider.ts` | role defaults, required access, reasoning/vision test, replica turn | `agent.providerRoute.providers` |
 | Tool | `agent/tools/<name>.ts` | zod input, bounded execute fixture, declared writes | `agent.capabilities.tools` |
 | Skill | flat Markdown or `<name>/SKILL.md` | trigger and non-trigger canary | `agent.capabilities.skills` |
 | Channel / MCP connection | `agent/channels/` or `agent/connections/` | config/dependency gate, auth, isolated probe | channels/connections |
@@ -27,12 +27,13 @@ health evidence, side effects, idempotency, a disposable fixture, and where disc
 
 ## Adding a provider
 
-Use [`provider.ts.txt`](../examples/extensions/provider.ts.txt) as the minimal config shape, then add
-the validated entry to `agent/provider.ts`. Provider config belongs there, not in `install.sh` or the
-CLI. Missing required config must fail the feature's readiness check before the first user turn.
+Use [`provider.ts.txt`](../examples/extensions/provider.ts.txt) as the minimal config shape, add its
+role/default metadata to `scripts/lib/model-catalog.mjs`, resolve it in `scripts/lib/model-profile.mjs`,
+then add the wire adapter to `agent/provider.ts`. Provider config belongs in those owners, not in
+`install.sh` or the CLI. Missing required config must fail readiness before the first user turn.
 Static keys remain in `.env`; OAuth artifacts remain private runtime files. Add generate/stream
-reasoning coverage and one disposable replica turn. A provider addition changes the reviewed
-capability snapshot but does not require an installer-core change.
+reasoning coverage, an independent vision-role fixture and one disposable replica turn. A provider
+addition changes the reviewed capability snapshot but does not require an installer-core change.
 
 ## Adding a tool
 

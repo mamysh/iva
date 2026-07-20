@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { defaultChecker, PortSelector } from "./lib/ports.mjs";
 import { authFilePath, readAuth, runDeviceCodeLogin, runBrowserLogin, listCodexModels } from "./lib/codex-oauth.mjs";
+import { resolveModelRoles } from "./lib/model-profile.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = join(ROOT, ".env");
@@ -132,10 +133,11 @@ async function writeEnv(out) {
   const order = [
     "AGENT_LANGUAGE",
     "MODEL_PROVIDER",
+    "VISION_PROVIDER", "THINKING_EFFORT",
     "OLLAMA_API_KEY", "OLLAMA_MODEL", "OLLAMA_VISION_MODEL", "OLLAMA_CONTEXT_WINDOW",
-    "OPENCODE_API_KEY", "OPENCODE_MODEL", "OPENCODE_CONTEXT_WINDOW",
-    "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_CONTEXT_WINDOW",
-    "CODEX_MODEL", "CODEX_CONTEXT_WINDOW",
+    "OPENCODE_API_KEY", "OPENCODE_MODEL", "OPENCODE_VISION_MODEL", "OPENCODE_CONTEXT_WINDOW",
+    "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_VISION_MODEL", "OPENROUTER_CONTEXT_WINDOW",
+    "CODEX_MODEL", "CODEX_VISION_MODEL", "CODEX_CONTEXT_WINDOW",
     "TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_USERNAME", "TELEGRAM_WEBHOOK_SECRET_TOKEN",
     "TELEGRAM_ALLOWED_USER_IDS", "TELEGRAM_DIGEST_CHAT_ID",
     "DEEPGRAM_API_KEY", "DEEPGRAM_LANGUAGE",
@@ -635,15 +637,17 @@ async function main() {
   const localHost = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/i.test(out.ASSISTANT_HOST || "");
   out.ASSISTANT_HOST = !out.ASSISTANT_HOST || localHost ? `http://127.0.0.1:${out.IVA_PORT}` : out.ASSISTANT_HOST;
 
+  // Resolve before writing so an invalid explicit VISION_PROVIDER cannot leave a broken .env.
+  const resolvedModels = resolveModelRoles(out);
+
   // ── Write .env ────────────────────────────────────────────────────
   await writeEnv(out);
 
-  const chosenModel =
-    { opencode: out.OPENCODE_MODEL, openrouter: out.OPENROUTER_MODEL, codex: out.CODEX_MODEL }[provider] || out.OLLAMA_MODEL;
   console.log();
   hr();
   console.log(`${C.g}${C.b}  ✓ ${t("Done — everything written to .env", "Готово — всё записано в .env")}${C.x}`);
-  console.log(`  ${t("Provider", "Провайдер")}: ${provider} · ${t("Model", "Модель")}: ${C.g}${chosenModel}${C.x} · Deepgram: ${out.DEEPGRAM_LANGUAGE} · ${t("Bot", "Бот")}: ${C.g}@${out.TELEGRAM_BOT_USERNAME}${C.x}`);
+  console.log(`  ${t("Text", "Текст")}: ${resolvedModels.text.provider}/${C.g}${resolvedModels.text.model}${C.x} · ${t("Vision", "Зрение")}: ${resolvedModels.vision.provider}/${C.g}${resolvedModels.vision.model}${C.x}`);
+  console.log(`  Deepgram: ${out.DEEPGRAM_LANGUAGE} · ${t("Bot", "Бот")}: ${C.g}@${out.TELEGRAM_BOT_USERNAME}${C.x}`);
   console.log(`  ${t("Access", "Доступ")}: ${out.TELEGRAM_ALLOWED_USER_IDS} · TZ: ${out.ASSISTANT_TIMEZONE} · vault: ${out.ASSISTANT_VAULT_DIR} · ${t("lang", "язык")}: ${out.AGENT_LANGUAGE}`);
   hr();
   rl.close();

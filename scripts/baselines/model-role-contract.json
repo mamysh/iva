@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "roles": {
+    "text": {
+      "providerSelector": "MODEL_PROVIDER",
+      "providerDefault": "ollama",
+      "configurationSource": "scripts/lib/model-profile.mjs"
+    },
+    "vision": {
+      "providerSelector": "VISION_PROVIDER",
+      "defaultFollowsRole": "text",
+      "configurationSource": "scripts/lib/model-profile.mjs"
+    },
+    "effort": {
+      "selector": "THINKING_EFFORT",
+      "supportedProviders": ["codex"]
+    }
+  },
+  "providers": {
+    "codex": {
+      "textModelSelector": "CODEX_MODEL",
+      "textDefault": "gpt-5.5",
+      "textSelection": "authenticated-inventory",
+      "toolCalling": "required",
+      "visionModelSelector": "CODEX_VISION_MODEL",
+      "visionDefault": "text-model",
+      "visionSelection": "configured-text-fallback",
+      "liveInventory": true
+    },
+    "ollama": {
+      "textModelSelector": "OLLAMA_MODEL",
+      "textDefault": "deepseek-v4-pro",
+      "textSelection": "authenticated-inventory",
+      "toolCalling": "required",
+      "visionModelSelector": "OLLAMA_VISION_MODEL",
+      "visionDefault": "minimax-m3",
+      "visionSelection": "configured-default",
+      "liveInventory": true
+    },
+    "opencode": {
+      "textModelSelector": "OPENCODE_MODEL",
+      "textDefault": "deepseek-v4-pro",
+      "textSelection": "curated-static",
+      "toolCalling": "required",
+      "visionModelSelector": "OPENCODE_VISION_MODEL",
+      "visionDefault": "gemini-3-flash",
+      "visionSelection": "configured-default",
+      "liveInventory": false
+    },
+    "openrouter": {
+      "textModelSelector": "OPENROUTER_MODEL",
+      "textDefault": "openai/gpt-5.1",
+      "textSelection": "manual-live-probe",
+      "toolCalling": "required",
+      "visionModelSelector": "OPENROUTER_VISION_MODEL",
+      "visionDefault": "google/gemini-2.5-flash",
+      "visionSelection": "configured-default",
+      "liveInventory": false
+    }
+  }
+}

@@ -12,11 +12,17 @@ No rebuild. Swapping a model, key or provider is edit → restart.
 
 ## Model provider
 
-Four providers. Pick one with `MODEL_PROVIDER` and fill only that block. `ollama`/`opencode`/`openrouter` are OpenAI-compatible API keys; `codex` rides your OpenAI (ChatGPT) subscription via OAuth — no key. Prices and full model lists: [providers.md](./providers.md).
+Four providers are available. `MODEL_PROVIDER` selects text; optional `VISION_PROVIDER` can select a
+different already-configured provider for images. Fill the text provider block and, only when vision
+uses another provider, that provider's credentials/model fields too. `ollama`/`opencode`/`openrouter`
+use OpenAI-compatible API keys; `codex` rides your OpenAI (ChatGPT) subscription via OAuth. Prices and
+full model lists: [providers.md](./providers.md).
 
 | Variable | Default | Notes |
 |---|---|---|
 | `MODEL_PROVIDER` | `ollama` | `ollama` (Ollama Cloud), `opencode` (OpenCode Zen), `openrouter` (OpenRouter) or `codex` (OpenAI ChatGPT subscription). |
+| `VISION_PROVIDER` | `MODEL_PROVIDER` | Optional independent provider for image description/OCR. It must already have credentials or Codex OAuth configured. Unset preserves the legacy same-provider route. |
+| `THINKING_EFFORT` | *(unset)* | Text reasoning effort: `minimal`, `low`, `medium` or `high`. Currently applied only to Codex; it never changes vision. |
 | `OLLAMA_API_KEY` | — | Key from ollama.com. |
 | `OLLAMA_MODEL` | `deepseek-v4-pro` | Any model on your Ollama Cloud plan. |
 | `OLLAMA_VISION_MODEL` | `minimax-m3` | Multimodal model used for images. When omitted, vision stays on MiniMax M3; set an override only for an intentional replacement. |
@@ -24,11 +30,14 @@ Four providers. Pick one with `MODEL_PROVIDER` and fill only that block. `ollama
 | `OLLAMA_CONTEXT_WINDOW` | `131072` | See warning below. |
 | `OPENCODE_API_KEY` | — | Key from opencode.ai/auth. |
 | `OPENCODE_MODEL` | `opencode-go/deepseek-v4-pro` | Any Zen Go model. |
+| `OPENCODE_VISION_MODEL` | `gemini-3-flash` | OpenCode model used when the resolved vision provider is `opencode`. |
 | `OPENCODE_CONTEXT_WINDOW` | `131072` | Same warning. |
 | `OPENROUTER_API_KEY` | — | Key from [openrouter.ai/keys](https://openrouter.ai/keys) (starts with `sk-or-`). |
 | `OPENROUTER_MODEL` | `openai/gpt-5.1` | The model **slug** from [openrouter.ai/models](https://openrouter.ai/models), form `vendor/model` (e.g. `anthropic/claude-sonnet-4.5`). `iva config` sends a live test request so a wrong slug can't slip through. |
+| `OPENROUTER_VISION_MODEL` | `google/gemini-2.5-flash` | Multimodal OpenRouter slug used when the resolved vision provider is `openrouter`. |
 | `OPENROUTER_CONTEXT_WINDOW` | `131072` | Same warning — set the real window of the model you picked. |
 | `CODEX_MODEL` | `gpt-5.5` | Model from your OpenAI plan. `iva config` lists what your subscription actually exposes. |
+| `CODEX_VISION_MODEL` | `CODEX_MODEL` | Optional Codex vision override; unset keeps the same Codex model for both roles. |
 | `CODEX_CONTEXT_WINDOW` | `272000` | Same warning — set the real window of the model you picked. |
 
 For `codex` there is no API key in `.env`: run `iva login` (device code, headless-friendly) or `iva login --browser`. The OAuth token lives in `data/codex-auth.json` (chmod 600, gitignored) and is auto-refreshed before it expires. Full flow: [providers.md](./providers.md#openai-by-chatgpt-subscription-codex).

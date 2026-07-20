@@ -32,7 +32,9 @@ Public product and operations documentation starts at [`docs/README.md`](docs/RE
 | Concern | Source of truth | Notes |
 |---|---|---|
 | Agent definition | `agent/agent.ts` | Model, context window, compaction and Workflow World selection. |
-| Provider/model configuration | `agent/provider.ts` | Shared by the main agent and vision path. |
+| Model-role configuration | `scripts/lib/model-profile.mjs` + `scripts/lib/model-catalog.mjs` | Resolves independent text/vision roles and text effort with legacy env fallbacks. |
+| Provider runtime adapters | `agent/provider.ts` | Builds text and vision provider clients from the resolved roles. |
+| Model-role compatibility baseline | `scripts/baselines/model-role-contract.json` | Sanitized snapshot of current text/vision coupling and provider capabilities; guarded by `scripts/check-model-role-baseline.mjs`. |
 | Agent behavior | `agent/instructions.md` | Character, rules and tool-selection policy. |
 | Runtime configuration | `.env` | Private and ignored. Generated/updated by `scripts/setup.mjs`. |
 | Workflow profile contract | `scripts/lib/workflow-config.mjs` | Resolves local/PostgreSQL for agent, build, start and CLI. |
@@ -71,6 +73,9 @@ bin/iva.mjs                  Operator CLI and systemd-unit generator
 scripts/                     Install-time, polling, memory and maintenance programs
   setup.mjs                  Interactive .env wizard
   telegram-poll.mjs          Long-poll bridge and out-of-band Telegram commands
+  model-config-probe.mjs     Bounded synthetic text-tool/vision capability probe child
+  lib/model-wizard.mjs       Owner/chat-bound Telegram model picker state and rendering
+  lib/model-config-transaction.mjs  Locked .env apply, agent readiness and rollback
   daily-digest.ts            Digest entry point
   reminders-run.mjs          Short-lived reminder dispatcher
   workflow-smoke.mjs         Seed/resume workflow durability check
@@ -126,12 +131,15 @@ Inspect these files first:
 - `agent/channels/telegram.ts` for the authored Telegram channel, media handling and message gates.
 - `scripts/lib/telegram-update.mjs`, `telegram-format.mjs` and `telegram-send.mjs` for shared transport
   mechanics.
+- `scripts/lib/model-wizard.mjs`, `model-config-transaction.mjs`, `model-probe.mjs` and
+  `model-inventory.mjs` for `/model` and `/think` state, apply and provider boundaries.
 - `agent/lib/security-gate.ts` for deterministic inbound/outbound filtering.
 
 ### Model and provider selection
 
 ```text
 .env
+  -> scripts/lib/model-profile.mjs + scripts/lib/model-catalog.mjs
   -> agent/provider.ts
   -> agent/agent.ts       main text model
   -> agent/vision.ts + agent/lib/vision-provider.mjs
@@ -238,8 +246,8 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | I want to change… | Start with | Also inspect | Minimum verification |
 |---|---|---|---|
 | Agent personality/rules | `agent/instructions.md` | `agent/instructions/*` | typecheck, build, prompt canary |
-| Provider/model behavior | `agent/provider.ts` | `agent/agent.ts`, `agent/vision.ts`, `agent/lib/vision-provider.mjs` | reasoning/vision tests, typecheck, build |
-| Telegram polling/commands | `scripts/telegram-poll.mjs` | `scripts/lib/telegram-*`, channel | Telegram update test, typecheck |
+| Provider/model behavior | `scripts/lib/model-profile.mjs` | catalog, `agent/provider.ts`, `agent/agent.ts`, `agent/vision.ts` | model-role/reasoning/vision tests, typecheck, build |
+| Telegram polling/commands | `scripts/telegram-poll.mjs` | `scripts/lib/telegram-*`, model wizard, channel | Telegram/model wizard tests, typecheck |
 | Telegram media/channel gate | `agent/channels/telegram.ts` | security gate, vision | typecheck, build, media canary |
 | Security filtering | `agent/lib/security-gate.ts` | `agent/skills/security-defense/` | security tests, typecheck |
 | A model tool | `agent/tools/` | instructions and owning data module | focused check, typecheck, build |
