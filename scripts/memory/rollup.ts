@@ -10,7 +10,7 @@ import { Client } from "eve/client";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { sendTelegramHtml } from "../lib/telegram-send.mjs";
-import { CORE_CAP, coreRecoveryAction } from "../lib/memory-guards.mjs";
+import { CORE_CAP, coreRecoveryAction, emotionalMemoryPolicy } from "../lib/memory-guards.mjs";
 import { loadBackgroundSession, saveBackgroundSession } from "../lib/background-session.mjs";
 
 type Period = "daily" | "weekly" | "monthly" | "yearly";
@@ -91,6 +91,7 @@ function buildPrompt(p: Period, now: string): string {
         `Never leave two contradictory CURRENT values; History is append-only, never edited. ` +
         `Tag each fact's certainty with 'confidence:' — EXTRACTED (user stated it directly) or ` +
         `INFERRED (you deduced it). ` +
+        emotionalMemoryPolicy() +
         `First read ${VAULT}/.graph/supersede-candidates.json (the deterministic conflict scan) and ` +
         `resolve every listed same-entity conflict by superseding the stale card. ` +
         `Then assemble a daily-summary for ${yesterday} with the day's topics and MOC links down to the cards ` +
