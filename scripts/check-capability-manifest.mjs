@@ -32,6 +32,8 @@ assert.deepEqual(manifest.controls.telegram.modelConfiguration.commands, ["/mode
 assert.deepEqual(manifest.controls.telegram.modelConfiguration.roles, ["text", "vision", "effort"]);
 assert.equal(manifest.controls.telegram.modelConfiguration.callbackTtlSeconds, 300);
 assert.equal(manifest.controls.telegram.modelConfiguration.restartScope, "iva.service");
+assert.deepEqual(manifest.controls.telegram.delivery.fallbackOrder, ["rich", "html", "plain"]);
+assert.equal(manifest.controls.telegram.delivery.securityBeforeTransport, true);
 assert.ok(manifest.systemd.managedTimers.includes("iva-reminders.timer"));
 assert.ok(manifest.systemd.managedTimers.includes("iva-observe.timer"));
 assert.equal(manifest.extensions.contractVersion, 1);
