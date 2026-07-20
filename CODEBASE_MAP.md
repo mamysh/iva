@@ -77,6 +77,7 @@ scripts/                     Install-time, polling, memory and maintenance progr
   lib/model-wizard.mjs       Owner/chat-bound Telegram model picker state and rendering
   lib/model-config-transaction.mjs  Locked .env apply, agent readiness and rollback
   lib/update-services.mjs    Update stop/restart plan, including an active opt-in userbot
+  lib/telegram-delivery.mjs  Rich → HTML → plain Telegram delivery policy
   daily-digest.ts            Digest entry point
   reminders-run.mjs          Short-lived reminder dispatcher
   workflow-smoke.mjs         Seed/resume workflow durability check

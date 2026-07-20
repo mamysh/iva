@@ -346,5 +346,7 @@ export function needsRichMessage(md) {
   if (/^[ \t]*[-*][ \t]+\[[ xX]\][ \t]+/m.test(s)) return true; // task list
   if (/<details[\s>]/i.test(s)) return true;                    // collapsible
   if (/\$\$[\s\S]+?\$\$/.test(s)) return true;                  // block math
+  const sectionCount = s.split("\n").filter((line) => /^#{2,4}[ \t]+\S/.test(line.trim())).length;
+  if (s.length >= 600 && sectionCount >= 3) return true;         // long structured report
   return false;
 }

@@ -1,10 +1,8 @@
 import { telegramChannel, type TelegramMessageBody } from "eve/channels/telegram";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-// Разметка Telegram — ЕДИНЫЙ источник правды (тот же модуль, что у cron-скриптов).
-// toTelegramHtmlChunks: markdown → массив готовых, сбалансированных HTML-чанков ≤limit
-// (гарантирует длину ПОСЛЕ конвертации). htmlToPlain: декодирующий plain-фолбэк.
-import { toTelegramHtmlChunks, htmlToPlain, needsRichMessage } from "../../scripts/lib/telegram-format.mjs";
+// Единая delivery policy: rich для отчётов, затем проверенные HTML/plain fallback.
+import { deliverTelegramMarkdown } from "../../scripts/lib/telegram-delivery.mjs";
 import { describeImage } from "../vision.js";
 import { sanitizeInbound, scanOutbound } from "../lib/security-gate.js";
 
@@ -251,55 +249,22 @@ export default telegramChannel({
           guard.findings.map((f) => `${f.type}:${f.name}`).join(", "),
         );
       }
-      // toTelegramHtmlChunks режет на чанки И конвертирует, гарантируя длину каждого
-      // чанка ≤4096 ПОСЛЕ конвертации (ручной chunkMarkdown+mdToTelegramHtml мог раздуть
-      // чанк тегами за лимит → 400). Пустые чанки не шлём (Telegram отвергает пустой текст).
-
-      // Rich message (sendRichMessage, Bot API 10.1): таблицы/таск-листы/<details>/формулы
-      // рендерятся нативно — HTML-путь так не умеет. Пробуем rich ТОЛЬКО для них; любая
-      // ошибка (старый Bot API, парс, лимит 32768, RICH_MESSAGE_*) проваливается в HTML-путь
-      // ниже — worst case = сегодняшнее поведение. request() = raw Bot API call, транспорт
-      // JSON, поэтому rich_message шлём объектом. chat_id/thread берём из channel.telegram.
-      if (needsRichMessage(guard.text)) {
-        try {
-          const res = await channel.telegram.request("sendRichMessage", {
+      await deliverTelegramMarkdown({
+        markdown: guard.text,
+        sendRich: (markdown) => channel.telegram.request("sendRichMessage", {
             chat_id: channel.telegram.chatId,
-            rich_message: { markdown: guard.text },
+            rich_message: { markdown },
             ...(channel.telegram.messageThreadId !== undefined
               ? { message_thread_id: channel.telegram.messageThreadId }
               : {}),
-          });
-          if (res.ok) return;
-          console.error(
-            "[telegram] sendRichMessage отвергнут, фолбэк HTML:",
-            res.status,
-            JSON.stringify(res.body).slice(0, 300),
-          );
-        } catch (err) {
-          console.error("[telegram] sendRichMessage упал, фолбэк HTML:", err);
-        }
-      }
-
-      for (const html of toTelegramHtmlChunks(guard.text, 4096)) {
-        if (!html) continue;
-        try {
-          // eve's TelegramMessageBody type omits parse_mode, но рантайм
-          // (normalizeTelegramMessageBody) спредит тело прямо в sendMessage —
-          // поле доходит до Telegram, и от него зависит наш HTML-рендер. Расширяем тип локально.
-          await channel.telegram.post({
+          }),
+        sendHtml: (html) => channel.telegram.post({
             text: html,
             parse_mode: "HTML",
-          } as TelegramMessageBody & { parse_mode: "HTML" });
-        } catch (err) {
-          console.error("[telegram] HTML отвергнут, шлю plain:", err, "| HTML:", html.slice(0, 300));
-          try {
-            // htmlToPlain декодирует сущности (&amp;→&), иначе они утекли бы литералами.
-            await channel.telegram.post(htmlToPlain(html));
-          } catch (e2) {
-            console.error("[telegram] plain-фолбэк тоже упал:", e2);
-          }
-        }
-      }
+          } as TelegramMessageBody & { parse_mode: "HTML" }),
+        sendPlain: (plain) => channel.telegram.post(plain),
+        onFailure: (stage, error) => console.error(`[telegram] ${stage}, fallback продолжается:`, error),
+      });
     },
     // Ход упал (в т.ч. переполнение контекста / HookConflict) — даём пользователю escape.
     async "turn.failed"(_data, channel) {

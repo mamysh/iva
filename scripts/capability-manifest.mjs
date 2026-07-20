@@ -74,6 +74,12 @@ function telegramControlSurface() {
       callbackTtlSeconds: 300,
       restartScope: "iva.service",
     },
+    delivery: {
+      securityBeforeTransport: true,
+      selectorSource: "scripts/lib/telegram-format.mjs",
+      orchestrationSource: "scripts/lib/telegram-delivery.mjs",
+      fallbackOrder: ["rich", "html", "plain"],
+    },
   };
 }
 
