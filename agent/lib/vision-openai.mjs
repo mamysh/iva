@@ -5,6 +5,7 @@ export async function describeImageOpenAICompatible({
   apiKey,
   visionModel,
   prompt,
+  maxOutputTokens,
 }) {
   const b64 = Buffer.from(bytes).toString("base64");
   const res = await fetch(`${baseURL}/chat/completions`, {
@@ -12,7 +13,7 @@ export async function describeImageOpenAICompatible({
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: visionModel,
-      max_tokens: 700,
+      max_tokens: maxOutputTokens ?? 700,
       messages: [
         {
           role: "user",

@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { candidateIdentity, createReleaseReport, nextFixtureVersion, validateReleaseContract } from "./lib/release-contract.mjs";
-import { collectProviderInventory, sanitizedProviderEvidence } from "./lib/release-provider.mjs";
+import {
+  collectProviderInventory,
+  sanitizedProviderEvidence,
+  validateVisionCanaryDescription,
+} from "./lib/release-provider.mjs";
 import { evaluateSoak } from "./lib/soak-contract.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const contract = validateReleaseContract(JSON.parse(read("scripts/release-contract.json")));
 assert.equal(nextFixtureVersion("0.2.5"), "0.2.6");
 assert.equal(nextFixtureVersion("0.3.0-rc.1"), "0.3.0-rc.2");
+assert.equal(nextFixtureVersion("0.3.0-rc.2"), "0.3.0-rc.3");
 const capabilityManifest = { schemaVersion: 1, product: { name: "iva", version: "0.3.0-rc.1" } };
 const commit = "a".repeat(40);
 const identity = candidateIdentity({
@@ -47,6 +52,8 @@ assert.equal(sanitizedProviderEvidence({
   provider: "ollama", textModel: "text-fixture", visionModel: "vision-fixture", inventory,
   description: "red pixel", commit,
 }).vision.status, "pass");
+assert.equal(validateVisionCanaryDescription("Плакучая ива на чёрном фоне."), "Плакучая ива на чёрном фоне.");
+assert.throws(() => validateVisionCanaryDescription("red pixel"), /tree and black background/);
 assert.throws(() => sanitizedProviderEvidence({
   provider: "ollama", textModel: "text", visionModel: "missing", inventory: { ...inventory, visionModelPresent: false },
   description: "red pixel", commit,
@@ -71,6 +78,7 @@ assert.match(workflow, /run: npm run replica:postgres-update/);
 assert.match(workflow, /run: node scripts\/release-report\.mjs > "\$RUNNER_TEMP\/release-matrix\.json"/);
 assert.doesNotMatch(workflow, /secrets\.|TELEGRAM|ASSISTANT_VAULT/i);
 assert.match(read("scripts/release-provider-canary.mjs"), /RELEASE_LIVE_CANARY !== "1"/);
+assert.match(read("scripts/release-provider-canary.mjs"), /docs\/favicon\.png/);
 assert.match(JSON.parse(read("package.json")).scripts["release:provider"], /--env-file-if-exists=\.env/);
 assert.match(read("scripts/clean-install-smoke.mjs"), /update did not exercise an N-1 to N version transition/);
 

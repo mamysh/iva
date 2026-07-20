@@ -18,9 +18,9 @@ const PROVIDERS = {
     apiKey: process.env.OLLAMA_API_KEY,
     textModel: process.env.OLLAMA_MODEL ?? "deepseek-v4-pro",
     contextWindow: Number(process.env.OLLAMA_CONTEXT_WINDOW ?? 131072),
-    // Отдельный override позволяет пережить retire cloud-модели без обновления кода.
-    // `gemma4:31b` проверяется по авторизованному Ollama /models во время release-диагностики.
-    visionModel: process.env.OLLAMA_VISION_MODEL ?? "gemma4:31b",
+    // MiniMax M3 — постоянный мультимодальный default. Override нужен только для осознанной замены;
+    // отсутствие настройки не должно незаметно возвращать vision на другую модель.
+    visionModel: process.env.OLLAMA_VISION_MODEL ?? "minimax-m3",
   },
   opencode: {
     baseURL: "https://opencode.ai/zen/go/v1",

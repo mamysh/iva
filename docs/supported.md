@@ -18,7 +18,7 @@ and the capability manifest hash is recorded in the report.
 ## Provider status
 
 Iva has four provider routes: Ollama Cloud, OpenCode Zen, OpenRouter and OpenAI through Codex OAuth.
-A stable release requires a bounded live vision canary on a disposable one-pixel image and an
+A stable release requires a bounded live vision canary on a deterministic 256×256 image and an
 authenticated model inventory check where that provider exposes one. The canary records model names,
 counts and response length only; it never records credentials or the returned description.
 

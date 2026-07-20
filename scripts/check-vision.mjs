@@ -36,10 +36,12 @@ try {
     providerName: "ollama",
     providerConfig,
     prompt: "describe fixture",
+    maxOutputTokens: 80,
   });
 
   assert.equal(description, "красный квадрат");
-  assert.equal(requestBody.model, "gemma4:31b");
+  assert.equal(requestBody.model, "minimax-m3");
+  assert.equal(requestBody.max_tokens, 80);
   assert.equal(requestBody.messages[0].content[1].type, "image_url");
   assert.match(requestBody.messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
 } finally {

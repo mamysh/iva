@@ -1,5 +1,18 @@
 const MODEL_KEYS = ["model", "slug", "id", "name"];
 
+export const VISION_CANARY_PROMPT =
+  "Одним коротким предложением назови главный объект и цвет фона. Без вступления и дополнительных деталей.";
+
+export function validateVisionCanaryDescription(description) {
+  const value = String(description || "").trim();
+  const namesTree = /(?:\b(?:willow|tree)\b|ив[аы]|дерев)/iu.test(value);
+  const namesBlack = /(?:\bblack\b|ч[её]рн)/iu.test(value);
+  if (!namesTree || !namesBlack) {
+    throw new Error("vision canary did not identify both the tree and black background");
+  }
+  return value;
+}
+
 function modelIds(payload) {
   const roots = Array.isArray(payload) ? payload : [payload?.data, payload?.models, payload?.model_presets];
   const values = roots.filter(Array.isArray).flat().map((item) => {

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.3] - 2026-07-20
+
+- Restore `minimax-m3` as the Ollama vision default and replace the non-representative one-pixel
+  release probe with one bounded semantic check against the deterministic 256×256 willow fixture.
+
 ## [0.3.0-rc.2] - 2026-07-17
 
 - Fixed the authenticated release canary so it uses the packaged agent's shared vision path without
@@ -30,6 +35,7 @@ soak and fresh-owner acceptance pass.
 - 🧪 **Personal Telegram MCP (beta)** — optional QR onboarding for a personal account, disabled by default in this fork and restricted to read-only exposure unless explicitly reviewed.
 
 [Unreleased]: https://github.com/mamysh/iva/compare/1e6e90a7d43544f33ef26bdfe0b145038ab879fb...main
+[0.3.0-rc.3]: https://github.com/mamysh/iva/compare/v0.3.0-rc.2...v0.3.0-rc.3
 [0.3.0-rc.2]: https://github.com/mamysh/iva/compare/v0.3.0-rc.1...v0.3.0-rc.2
 [0.3.0-rc.1]: https://github.com/mamysh/iva/compare/v0.2.5...v0.3.0-rc.1
 [0.2.5]: https://github.com/smixs/iva/releases/tag/v0.2.5
