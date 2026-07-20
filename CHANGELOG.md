@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.4] - 2026-07-20
+
+- Preserve systemd execution history across ordinary Iva restarts and updates by leaving unchanged
+  generated units untouched and skipping unnecessary daemon reloads. This prevents false stale
+  memory-maintenance and vault-backup warnings after deployment.
+
 ## [0.3.0-rc.3] - 2026-07-20
 
 - Restore `minimax-m3` as the Ollama vision default and replace the non-representative one-pixel
@@ -35,6 +41,7 @@ soak and fresh-owner acceptance pass.
 - 🧪 **Personal Telegram MCP (beta)** — optional QR onboarding for a personal account, disabled by default in this fork and restricted to read-only exposure unless explicitly reviewed.
 
 [Unreleased]: https://github.com/mamysh/iva/compare/1e6e90a7d43544f33ef26bdfe0b145038ab879fb...main
+[0.3.0-rc.4]: https://github.com/mamysh/iva/compare/v0.3.0-rc.3...v0.3.0-rc.4
 [0.3.0-rc.3]: https://github.com/mamysh/iva/compare/v0.3.0-rc.2...v0.3.0-rc.3
 [0.3.0-rc.2]: https://github.com/mamysh/iva/compare/v0.3.0-rc.1...v0.3.0-rc.2
 [0.3.0-rc.1]: https://github.com/mamysh/iva/compare/v0.2.5...v0.3.0-rc.1

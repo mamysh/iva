@@ -146,10 +146,18 @@ function ivaServiceBody() {
   ].join("\n");
 }
 
-// Writes iva.service + all deploy/iva-*.{service,timer} with placeholder substitution. daemon-reload.
+function writeUnitIfChanged(path, body) {
+  if (existsSync(path) && readFileSync(path, "utf8") === body) return false;
+  writeFileSync(path, body);
+  return true;
+}
+
+// Writes iva.service + all deploy/iva-*.{service,timer} with placeholder substitution.
+// Avoid touching identical units: reloading rewritten inactive oneshots makes systemd forget their
+// last successful execution timestamps, which in turn creates false doctor/backup warnings.
 function writeUnits() {
   mkdirSync(UNIT_DIR, { recursive: true });
-  writeFileSync(join(UNIT_DIR, "iva.service"), ivaServiceBody());
+  let changed = writeUnitIfChanged(join(UNIT_DIR, "iva.service"), ivaServiceBody());
   const written = ["iva.service"];
   const deploy = join(ROOT, "deploy");
   for (const f of readdirSync(deploy)) {
@@ -158,10 +166,10 @@ function writeUnits() {
       .replaceAll("__PROJECT_DIR__", ROOT)
       .replaceAll("__NODE_BIN__", NODE)
       .replaceAll("__PYTHON_BIN__", VENV_PY);
-    writeFileSync(join(UNIT_DIR, f), tpl);
+    changed = writeUnitIfChanged(join(UNIT_DIR, f), tpl) || changed;
     written.push(f);
   }
-  if (hasSystemd()) scQ("daemon-reload");
+  if (changed && hasSystemd()) scQ("daemon-reload");
   return written;
 }
 
