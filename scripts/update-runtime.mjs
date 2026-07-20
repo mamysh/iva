@@ -8,6 +8,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMigrationPlan, createUpdatePreflight, runUpdateTransaction } from "./lib/update-contract.mjs";
 import { resolveRuntimeWorkflowProfile } from "./lib/workflow-runtime.mjs";
+import { UPDATE_USERBOT_SERVICE, updateServicePlan } from "./lib/update-services.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const UPDATE_DIR = join(ROOT, ".iva-update");
@@ -173,11 +174,15 @@ function serviceActive(name) {
   return command("systemctl", ["--user", "is-active", "--quiet", name]).code === 0;
 }
 
-function restartManagedServices() {
+function stopManagedServices(plan) {
+  for (const services of plan.stopGroups) must("systemctl", ["--user", "stop", ...services], { inherit: true });
+}
+
+function restartManagedServices(plan) {
   must(process.execPath, ["bin/iva.mjs", "_install-units"], { inherit: true });
   must("systemctl", ["--user", "restart", ...SERVICES], { inherit: true });
-  if (serviceActive("iva-telegram-userbot.service")) {
-    must("systemctl", ["--user", "restart", "iva-telegram-userbot.service"], { inherit: true });
+  if (plan.restartUserbot) {
+    must("systemctl", ["--user", "restart", UPDATE_USERBOT_SERVICE], { inherit: true });
   }
 }
 
@@ -284,6 +289,7 @@ export async function performUpdate({ force = false, log = console.log } = {}) {
 
   let writersStopped = false;
   let servicesStopped = false;
+  const servicePlan = updateServicePlan(serviceActive(UPDATE_USERBOT_SERVICE));
   const previousOutput = join(PREVIOUS_DIR, "output");
   const previousModules = join(PREVIOUS_DIR, "node_modules");
   const failedOutput = join(UPDATE_DIR, "failed-output");
@@ -317,14 +323,16 @@ export async function performUpdate({ force = false, log = console.log } = {}) {
     },
     createBackup: async () => {
       if (profile.backend === "local" && !writersStopped && serviceActive("iva.service")) {
-        must("systemctl", ["--user", "stop", "iva.service"], { inherit: true });
+        stopManagedServices(servicePlan);
+        servicesStopped = true;
         writersStopped = true;
       }
       return createWorkflowBackup(profile.backend, env, targetCommit);
     },
     applyMigration: async (migration) => {
       if (!writersStopped && serviceActive("iva.service")) {
-        must("systemctl", ["--user", "stop", "iva.service"], { inherit: true });
+        stopManagedServices(servicePlan);
+        servicesStopped = true;
         writersStopped = true;
       }
       must(migration.command[0], migration.command.slice(1), { cwd: STAGING_DIR, env, inherit: true });
@@ -334,7 +342,7 @@ export async function performUpdate({ force = false, log = console.log } = {}) {
     },
     restoreBackup: async (backup) => restoreWorkflowBackup(backup, env),
     activate: async () => {
-      must("systemctl", ["--user", "stop", ...SERVICES], { inherit: true });
+      stopManagedServices(servicePlan);
       servicesStopped = true;
       writersStopped = true;
       rmSync(PREVIOUS_DIR, { recursive: true, force: true });
@@ -348,29 +356,29 @@ export async function performUpdate({ force = false, log = console.log } = {}) {
         moveIfPresent(join(STAGING_DIR, "node_modules"), join(ROOT, "node_modules"));
       } catch (error) {
         restoreActivation();
-        restartManagedServices();
+        restartManagedServices(servicePlan);
         servicesStopped = false;
         writersStopped = false;
         throw error;
       }
     },
-    restart: async () => { restartManagedServices(); servicesStopped = false; writersStopped = false; },
+    restart: async () => { restartManagedServices(servicePlan); servicesStopped = false; writersStopped = false; },
     readiness: async () => doctorReady(),
     commit: async () => writePrivateJson(join(DATA_DIR, "update-state.json"), {
       schemaVersion: 1, status: "updated", previousCommit: currentCommit, currentCommit: targetCommit,
       profile: profile.backend, migrationVersion: migrationPlan.targetVersion, completedAt: new Date().toISOString(),
     }),
     rollbackActivation: async () => {
-      must("systemctl", ["--user", "stop", ...SERVICES], { inherit: true });
+      stopManagedServices(servicePlan);
       servicesStopped = true;
       writersStopped = true;
       restoreActivation();
     },
-    restartPrevious: async () => { restartManagedServices(); servicesStopped = false; writersStopped = false; },
+    restartPrevious: async () => { restartManagedServices(servicePlan); servicesStopped = false; writersStopped = false; },
     previousReadiness: async () => doctorReady(),
     cleanup: async () => {
       removeStagingWorktree();
-      if (servicesStopped) restartManagedServices();
+      if (servicesStopped) restartManagedServices(servicePlan);
       else if (writersStopped) command("systemctl", ["--user", "restart", "iva.service"], { inherit: true });
     },
   };
