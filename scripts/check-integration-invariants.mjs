@@ -35,12 +35,16 @@ assert.match(read("deploy/iva-observe.service"), /Type=oneshot/);
 assert.match(read("deploy/iva-observe.timer"), /OnCalendar=hourly/);
 
 const updateRuntime = read("scripts/update-runtime.mjs");
+const updateServices = read("scripts/lib/update-services.mjs");
 assert.match(updateRuntime, /worktree", "add", "--detach"/);
 assert.match(updateRuntime, /npm\(\["test"\]/);
 assert.match(updateRuntime, /rollbackActivation/);
 assert.match(updateRuntime, /doctor", "--json"/);
 assert.match(updateRuntime, /profile\.backend === "local" \? "local" : profile\.world/);
 assert.match(updateRuntime, /PATH: `\$\{NODE_BIN_DIR\}:\$\{process\.env\.PATH \|\| ""\}`/);
+assert.match(updateRuntime, /stopManagedServices\(servicePlan\)/);
+assert.match(updateServices, /\["iva-telegram-poll\.service", \.\.\.\(userbotActive \? \[UPDATE_USERBOT_SERVICE\] : \[\]\)\]/);
+assert.match(updateServices, /\["iva\.service"\]/);
 assert.doesNotMatch(updateRuntime, /@googleworkspace\/cli@latest/);
 
 const backupRuntime = read("scripts/backup-runtime.mjs");

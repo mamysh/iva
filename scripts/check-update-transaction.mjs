@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { createMigrationPlan, createUpdatePreflight, runUpdateTransaction } from "./lib/update-contract.mjs";
+import { updateServicePlan } from "./lib/update-services.mjs";
+
+assert.deepEqual(updateServicePlan(false), {
+  stopGroups: [["iva-telegram-poll.service"], ["iva.service"]],
+  restartUserbot: false,
+});
+assert.deepEqual(updateServicePlan(true), {
+  stopGroups: [["iva-telegram-poll.service", "iva-telegram-userbot.service"], ["iva.service"]],
+  restartUserbot: true,
+});
 
 const manifest = (migrationVersion, migrations = []) => ({ schemaVersion: 1, migrationVersion, migrations });
 const baseline = manifest(0);
