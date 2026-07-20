@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "product": {
     "name": "iva",
-    "version": "0.3.0-rc.2"
+    "version": "0.3.0-rc.3"
   },
   "agent": {
     "source": "agent/agent.ts",

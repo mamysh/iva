@@ -11,4 +11,5 @@ export function describeImageWithProvider(options: {
   };
   makeCodexModel?: (model?: string) => unknown;
   prompt?: string;
+  maxOutputTokens?: number;
 }): Promise<string>;

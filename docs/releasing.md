@@ -40,7 +40,8 @@ RELEASE_LIVE_CANARY=1 npm run release:provider -- --json
 ```
 
 Run it for every provider route claimed by the release. It fetches the authenticated model inventory
-where available and sends a generated one-pixel PNG through the real vision path. Store only its
+where available and sends the deterministic 256×256 willow fixture through the real vision path. The
+bounded response must identify both the tree and its black background. Store only its
 sanitized JSON output with the release evidence. Never put API keys or Codex OAuth files in CI
 artifacts.
 

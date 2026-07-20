@@ -13,11 +13,13 @@ export async function describeImageWithProvider({
   providerConfig,
   makeCodexModel,
   prompt = VISION_PROMPT,
+  maxOutputTokens,
 }) {
   if (providerName === "codex") {
     if (typeof makeCodexModel !== "function") throw new Error("Codex vision requires a model factory");
     const result = streamText({
       model: makeCodexModel(providerConfig.visionModel),
+      ...(maxOutputTokens ? { maxOutputTokens } : {}),
       messages: [
         {
           role: "user",
@@ -35,5 +37,5 @@ export async function describeImageWithProvider({
 
   const { baseURL, apiKey, visionModel } = providerConfig;
   if (!apiKey || !visionModel) return "";
-  return describeImageOpenAICompatible({ bytes, mimeType, baseURL, apiKey, visionModel, prompt });
+  return describeImageOpenAICompatible({ bytes, mimeType, baseURL, apiKey, visionModel, prompt, maxOutputTokens });
 }

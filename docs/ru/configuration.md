@@ -22,7 +22,7 @@ iva restart
 | `MODEL_PROVIDER` | `ollama` | `ollama` (Ollama Cloud), `opencode` (OpenCode Zen), `openrouter` (OpenRouter) или `codex` (подписка OpenAI ChatGPT). |
 | `OLLAMA_API_KEY` | — | Ключ с ollama.com. |
 | `OLLAMA_MODEL` | `deepseek-v4-pro` | Любая модель вашего тарифа Ollama Cloud. |
-| `OLLAMA_VISION_MODEL` | `gemma4:31b` | Мультимодальная модель для изображений. Её можно сменить, если Ollama снимет дефолтную cloud-модель. |
+| `OLLAMA_VISION_MODEL` | `minimax-m3` | Мультимодальная модель для изображений. При отсутствии настройки vision остаётся на MiniMax M3; override задаётся только для осознанной замены. |
 | `OLLAMA_CONTEXT_WINDOW` | `131072` | См. предупреждение ниже. |
 | `OPENCODE_API_KEY` | — | Ключ с opencode.ai/auth. |
 | `OPENCODE_MODEL` | `opencode-go/deepseek-v4-pro` | Любая модель Zen Go. |
