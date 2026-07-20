@@ -1,9 +1,9 @@
 # PRD: аккуратная интеграция upstream-возможностей 1–8 в Iva
 
-**Статус:** Ready for implementation planning  
-**Дата:** 2026-07-20  
-**Локальный baseline:** `77da983` (`0.3.0-rc.4`)  
-**Upstream baseline:** `2def9d1` (`0.2.5`)  
+**Статус:** Ready for implementation planning
+**Дата:** 2026-07-20
+**Локальный baseline:** `77da983` (`0.3.0-rc.4`)
+**Upstream baseline:** `2def9d1` (`0.2.5`)
 **Область:** runtime dependencies, управление text/vision-моделями, bash safety, memory safety,
 update UX/safety, уведомления об обновлениях, update channels и rich reports
 
@@ -855,4 +855,3 @@ does not alter vision».
 - `CODEBASE_MAP.md`, configuration/CLI/deploy/testing docs и capability snapshot соответствуют
   реализованной ответственности;
 - production не использовался для automated verification и не был изменён без отдельного разрешения.
-
