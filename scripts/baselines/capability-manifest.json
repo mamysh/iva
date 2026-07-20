@@ -17,7 +17,68 @@
       ],
       "textModelSource": "agent/agent.ts",
       "visionModelSource": "agent/vision.ts",
-      "configurationSource": "agent/provider.ts"
+      "configurationSource": "agent/provider.ts",
+      "roleContractSource": "scripts/baselines/model-role-contract.json",
+      "roleContract": {
+        "schemaVersion": 1,
+        "roles": {
+          "text": {
+            "providerSelector": "MODEL_PROVIDER",
+            "configurationSource": "agent/provider.ts"
+          },
+          "vision": {
+            "providerSelector": null,
+            "followsRole": "text",
+            "configurationSource": "agent/provider.ts"
+          },
+          "effort": {
+            "selector": null,
+            "supportedProviders": []
+          }
+        },
+        "providers": {
+          "codex": {
+            "textModelSelector": "CODEX_MODEL",
+            "textDefault": "gpt-5.5",
+            "textSelection": "authenticated-inventory",
+            "toolCalling": "required",
+            "visionModelSelector": null,
+            "visionDefault": "text-model",
+            "visionSelection": "text-model",
+            "liveInventory": true
+          },
+          "ollama": {
+            "textModelSelector": "OLLAMA_MODEL",
+            "textDefault": "deepseek-v4-pro",
+            "textSelection": "authenticated-inventory",
+            "toolCalling": "required",
+            "visionModelSelector": "OLLAMA_VISION_MODEL",
+            "visionDefault": "minimax-m3",
+            "visionSelection": "configured-default",
+            "liveInventory": true
+          },
+          "opencode": {
+            "textModelSelector": "OPENCODE_MODEL",
+            "textDefault": "deepseek-v4-pro",
+            "textSelection": "curated-static",
+            "toolCalling": "required",
+            "visionModelSelector": null,
+            "visionDefault": "gemini-3-flash",
+            "visionSelection": "fixed-default",
+            "liveInventory": false
+          },
+          "openrouter": {
+            "textModelSelector": "OPENROUTER_MODEL",
+            "textDefault": "openai/gpt-5.1",
+            "textSelection": "manual-live-probe",
+            "toolCalling": "required",
+            "visionModelSelector": null,
+            "visionDefault": "google/gemini-2.5-flash",
+            "visionSelection": "fixed-default",
+            "liveInventory": false
+          }
+        }
+      }
     },
     "capabilities": {
       "tools": [

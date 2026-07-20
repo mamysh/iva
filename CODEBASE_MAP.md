@@ -33,6 +33,7 @@ Public product and operations documentation starts at [`docs/README.md`](docs/RE
 |---|---|---|
 | Agent definition | `agent/agent.ts` | Model, context window, compaction and Workflow World selection. |
 | Provider/model configuration | `agent/provider.ts` | Shared by the main agent and vision path. |
+| Model-role compatibility baseline | `scripts/baselines/model-role-contract.json` | Sanitized snapshot of current text/vision coupling and provider capabilities; guarded by `scripts/check-model-role-baseline.mjs`. |
 | Agent behavior | `agent/instructions.md` | Character, rules and tool-selection policy. |
 | Runtime configuration | `.env` | Private and ignored. Generated/updated by `scripts/setup.mjs`. |
 | Workflow profile contract | `scripts/lib/workflow-config.mjs` | Resolves local/PostgreSQL for agent, build, start and CLI. |
