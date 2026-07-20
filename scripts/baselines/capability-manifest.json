@@ -17,23 +17,27 @@
       ],
       "textModelSource": "agent/agent.ts",
       "visionModelSource": "agent/vision.ts",
-      "configurationSource": "agent/provider.ts",
+      "configurationSource": "scripts/lib/model-profile.mjs",
+      "runtimeAdapterSource": "agent/provider.ts",
       "roleContractSource": "scripts/baselines/model-role-contract.json",
       "roleContract": {
         "schemaVersion": 1,
         "roles": {
           "text": {
             "providerSelector": "MODEL_PROVIDER",
-            "configurationSource": "agent/provider.ts"
+            "providerDefault": "ollama",
+            "configurationSource": "scripts/lib/model-profile.mjs"
           },
           "vision": {
-            "providerSelector": null,
-            "followsRole": "text",
-            "configurationSource": "agent/provider.ts"
+            "providerSelector": "VISION_PROVIDER",
+            "defaultFollowsRole": "text",
+            "configurationSource": "scripts/lib/model-profile.mjs"
           },
           "effort": {
-            "selector": null,
-            "supportedProviders": []
+            "selector": "THINKING_EFFORT",
+            "supportedProviders": [
+              "codex"
+            ]
           }
         },
         "providers": {
@@ -42,9 +46,9 @@
             "textDefault": "gpt-5.5",
             "textSelection": "authenticated-inventory",
             "toolCalling": "required",
-            "visionModelSelector": null,
+            "visionModelSelector": "CODEX_VISION_MODEL",
             "visionDefault": "text-model",
-            "visionSelection": "text-model",
+            "visionSelection": "configured-text-fallback",
             "liveInventory": true
           },
           "ollama": {
@@ -62,9 +66,9 @@
             "textDefault": "deepseek-v4-pro",
             "textSelection": "curated-static",
             "toolCalling": "required",
-            "visionModelSelector": null,
+            "visionModelSelector": "OPENCODE_VISION_MODEL",
             "visionDefault": "gemini-3-flash",
-            "visionSelection": "fixed-default",
+            "visionSelection": "configured-default",
             "liveInventory": false
           },
           "openrouter": {
@@ -72,9 +76,9 @@
             "textDefault": "openai/gpt-5.1",
             "textSelection": "manual-live-probe",
             "toolCalling": "required",
-            "visionModelSelector": null,
+            "visionModelSelector": "OPENROUTER_VISION_MODEL",
             "visionDefault": "google/gemini-2.5-flash",
-            "visionSelection": "fixed-default",
+            "visionSelection": "configured-default",
             "liveInventory": false
           }
         }

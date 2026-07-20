@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 
 import { Client } from "eve/client";
 import { evaluateInstallReadiness, INSTALL_SERVICES } from "./lib/install-readiness.mjs";
+import { providerAccessConfigured } from "./lib/model-catalog.mjs";
+import { resolveModelRoles } from "./lib/model-profile.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const jsonMode = process.argv.includes("--json");
@@ -32,9 +34,14 @@ function configured() {
     "TELEGRAM_ALLOWED_USER_IDS",
   ];
   if (!required.every((key) => Boolean((process.env[key] || "").trim()))) return false;
-  if (provider !== "codex") return true;
   const dataDir = process.env.ASSISTANT_DATA_DIR || "data";
-  return existsSync(join(isAbsolute(dataDir) ? dataDir : join(ROOT, dataDir), "codex-auth.json"));
+  const codexAuthenticated = existsSync(join(isAbsolute(dataDir) ? dataDir : join(ROOT, dataDir), "codex-auth.json"));
+  if (!providerAccessConfigured(provider, process.env, { codexAuthenticated })) return false;
+  try {
+    return providerAccessConfigured(resolveModelRoles(process.env).vision.provider, process.env, { codexAuthenticated });
+  } catch {
+    return false;
+  }
 }
 
 async function waitForHealth(host, timeoutMs = 60_000) {

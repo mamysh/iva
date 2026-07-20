@@ -49,8 +49,8 @@ assert.equal(manifest.storage.lifecycle.doctorSchemaVersion, 1);
 assert.equal(manifest.storage.lifecycle.observabilitySchemaVersion, 1);
 assert.equal(manifest.storage.lifecycle.observabilityRetentionSamples, 744);
 assert.equal(manifest.storage.lifecycle.purgeCommand, null);
-assert.equal(manifest.agent.providerRoute.roleContract.roles.vision.followsRole, "text");
-assert.equal(manifest.agent.providerRoute.roleContract.roles.effort.selector, null);
+assert.equal(manifest.agent.providerRoute.roleContract.roles.vision.defaultFollowsRole, "text");
+assert.equal(manifest.agent.providerRoute.roleContract.roles.effort.selector, "THINKING_EFFORT");
 assert.deepEqual(
   Object.keys(manifest.agent.providerRoute.roleContract.providers).sort(),
   ["codex", "ollama", "opencode", "openrouter"],

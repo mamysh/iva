@@ -18,7 +18,7 @@ export async function describeImageWithProvider({
   if (providerName === "codex") {
     if (typeof makeCodexModel !== "function") throw new Error("Codex vision requires a model factory");
     const result = streamText({
-      model: makeCodexModel(providerConfig.visionModel),
+      model: makeCodexModel(providerConfig.visionModel, "vision"),
       ...(maxOutputTokens ? { maxOutputTokens } : {}),
       messages: [
         {

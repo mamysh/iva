@@ -15,30 +15,37 @@ if (process.env.RELEASE_LIVE_CANARY !== "1") {
   throw new Error("live provider canary requires RELEASE_LIVE_CANARY=1 and explicit owner authorization");
 }
 
-const { providerConfig, providerName, makeCodexModel } = await import("../agent/provider.ts");
+const {
+  providerConfig,
+  providerName,
+  visionProviderConfig,
+  visionProviderName,
+  makeCodexModel,
+} = await import("../agent/provider.ts");
 const { describeImageWithProvider } = await import("../agent/lib/vision-provider.mjs");
 const png = readFileSync(new URL("../docs/favicon.png", import.meta.url));
 const inventory = await collectProviderInventory({
-  provider: providerName,
-  baseURL: providerConfig.baseURL,
-  apiKey: providerConfig.apiKey,
-  visionModel: providerConfig.visionModel,
+  provider: visionProviderName,
+  baseURL: visionProviderConfig.baseURL,
+  apiKey: visionProviderConfig.apiKey,
+  visionModel: visionProviderConfig.visionModel,
   codexModels: () => listCodexModels({ dataDir: process.env.ASSISTANT_DATA_DIR || "data" }),
 });
 const description = await describeImageWithProvider({
   bytes: png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
   mimeType: "image/png",
-  providerName,
-  providerConfig,
+  providerName: visionProviderName,
+  providerConfig: visionProviderConfig,
   makeCodexModel,
   prompt: VISION_CANARY_PROMPT,
   maxOutputTokens: 80,
 });
 validateVisionCanaryDescription(description);
 const evidence = sanitizedProviderEvidence({
-  provider: providerName,
+  textProvider: providerName,
+  visionProvider: visionProviderName,
   textModel: providerConfig.textModel,
-  visionModel: providerConfig.visionModel,
+  visionModel: visionProviderConfig.visionModel,
   inventory,
   description,
   commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),

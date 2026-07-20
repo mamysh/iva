@@ -1,14 +1,15 @@
 import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { CODEX_BASE_URL, codexAuthHeaders } from "../scripts/lib/codex-oauth.mjs";
+import { resolveModelRoles } from "../scripts/lib/model-profile.mjs";
 
 type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 
-// Единый источник конфигурации провайдера модели (выбор раз при старте через MODEL_PROVIDER).
+// Runtime adapter for the resolved text and vision roles from scripts/lib/model-profile.mjs.
 // ollama/opencode/openrouter — OpenAI-совместимы (chat/completions, статичный ключ из .env).
 // codex — личная подписка OpenAI (ChatGPT): Responses API + OAuth-токен (data/codex-auth.json,
-// `iva login`). Здесь же зашита vision-модель провайдера — её зовёт agent/vision.ts.
-const PROVIDER = process.env.MODEL_PROVIDER ?? "ollama";
+// `iva login`). Text and vision can use different configured providers without sharing model IDs.
+export const modelRoles = resolveModelRoles(process.env);
 
 const PROVIDERS = {
   ollama: {
@@ -16,43 +17,46 @@ const PROVIDERS = {
     // replica harness. The default remains Ollama Cloud.
     baseURL: process.env.OLLAMA_BASE_URL ?? "https://ollama.com/v1",
     apiKey: process.env.OLLAMA_API_KEY,
-    textModel: process.env.OLLAMA_MODEL ?? "deepseek-v4-pro",
-    contextWindow: Number(process.env.OLLAMA_CONTEXT_WINDOW ?? 131072),
+    textModel: modelRoles.profiles.ollama.textModel,
+    contextWindow: modelRoles.profiles.ollama.contextWindow,
     // MiniMax M3 — постоянный мультимодальный default. Override нужен только для осознанной замены;
     // отсутствие настройки не должно незаметно возвращать vision на другую модель.
-    visionModel: process.env.OLLAMA_VISION_MODEL ?? "minimax-m3",
+    visionModel: modelRoles.profiles.ollama.visionModel,
   },
   opencode: {
     baseURL: "https://opencode.ai/zen/go/v1",
     apiKey: process.env.OPENCODE_API_KEY,
     // Эндпоинт ждёт bare-ID — срезаем внутренний UI-префикс "opencode-go/" из дефолта и старых .env.
-    textModel: (process.env.OPENCODE_MODEL ?? "deepseek-v4-pro").replace(/^opencode-go\//, ""),
-    contextWindow: Number(process.env.OPENCODE_CONTEXT_WINDOW ?? 131072),
-    visionModel: "gemini-3-flash",
+    textModel: modelRoles.profiles.opencode.textModel,
+    contextWindow: modelRoles.profiles.opencode.contextWindow,
+    visionModel: modelRoles.profiles.opencode.visionModel,
   },
   openrouter: {
     baseURL: "https://openrouter.ai/api/v1",
     apiKey: process.env.OPENROUTER_API_KEY,
     // Слаг модели вида vendor/model (напр. anthropic/claude-sonnet-4.5) — задаётся мастером.
     // Дефолт — лишь заглушка на случай ручного .env; мастер всегда перезапишет живой проверкой.
-    textModel: process.env.OPENROUTER_MODEL ?? "openai/gpt-5.1",
-    contextWindow: Number(process.env.OPENROUTER_CONTEXT_WINDOW ?? 131072),
+    textModel: modelRoles.profiles.openrouter.textModel,
+    contextWindow: modelRoles.profiles.openrouter.contextWindow,
     // Дешёвая гарантированно-мультимодальная модель для картинок (как gemini-3-flash у opencode):
     // vision работает независимо от выбранной текстовой модели (та может быть text-only).
-    visionModel: "google/gemini-2.5-flash",
+    visionModel: modelRoles.profiles.openrouter.visionModel,
   },
   codex: {
     baseURL: CODEX_BASE_URL,
     apiKey: undefined, // авторизация — OAuth-токен подписки, не статичный ключ (см. codexFetch)
-    textModel: process.env.CODEX_MODEL ?? "gpt-5.5",
-    contextWindow: Number(process.env.CODEX_CONTEXT_WINDOW ?? 272000),
+    textModel: modelRoles.profiles.codex.textModel,
+    contextWindow: modelRoles.profiles.codex.contextWindow,
     // gpt-5* мультимодальны — картинки идут через ту же подписку (см. agent/vision.ts).
-    visionModel: process.env.CODEX_MODEL ?? "gpt-5.5",
+    visionModel: modelRoles.profiles.codex.visionModel,
   },
 } as const;
 
-export const providerName = PROVIDER;
-export const providerConfig = PROVIDERS[PROVIDER as keyof typeof PROVIDERS] ?? PROVIDERS.ollama;
+export const providerName = modelRoles.text.provider;
+export const providerConfig = PROVIDERS[providerName];
+export const visionProviderName = modelRoles.vision.provider;
+export const visionProviderConfig = PROVIDERS[visionProviderName];
+export const thinkingEffort = modelRoles.effort.effective;
 
 // --- Codex (подписка ChatGPT): Responses API через @ai-sdk/openai ----------------------------
 // Кастомный fetch: перед КАЖДЫМ запросом подставляет свежий Bearer + ChatGPT-Account-ID
@@ -84,27 +88,33 @@ const codexFetch: typeof fetch = async (input, init) => {
   return fetch(input, { ...init, headers, body });
 };
 
-// Форсит store:false на этапе СБОРКИ тела (не пост-фактум в codexFetch). Без этого @ai-sdk/openai
+// Форсит store:false и optional text reasoning effort на этапе СБОРКИ тела. Без store:false @ai-sdk/openai
 // берёт store:true по умолчанию и реплеит прошлые ответы ассистента как item_reference (голая
 // ссылка на msg_-item, без контента); codexFetch затем ставит store:false — и stateless-бэкенд
 // подписки не находит item → сессия падает со второго запроса ("Item ... not found. Items are not
 // persisted when store is set to false"). store:false заставляет SDK инлайнить историю целиком.
-const forceStoreFalse: LanguageModelMiddleware = {
-  async transformParams({ params }) {
-    return {
-      ...params,
-      providerOptions: {
-        ...params.providerOptions,
-        openai: { ...params.providerOptions?.openai, store: false },
-      },
-    };
-  },
-};
+export function codexRequestOptions(role: "text" | "vision", effort = thinkingEffort) {
+  return { store: false, ...(role === "text" && effort ? { reasoningEffort: effort } : {}) };
+}
+
+function codexProviderOptions(role: "text" | "vision"): LanguageModelMiddleware {
+  return {
+    async transformParams({ params }) {
+      return {
+        ...params,
+        providerOptions: {
+          ...params.providerOptions,
+          openai: { ...params.providerOptions?.openai, ...codexRequestOptions(role) },
+        },
+      };
+    },
+  };
+}
 
 /** Строит Codex-модель (Responses API подписки). Общая для agent.ts и vision.ts. */
-export function makeCodexModel(model: string = providerConfig.textModel) {
+export function makeCodexModel(model: string = providerConfig.textModel, role: "text" | "vision" = "text") {
   const openai = createOpenAI({ baseURL: CODEX_BASE_URL, apiKey: "chatgpt-subscription", fetch: codexFetch });
-  return wrapLanguageModel({ model: openai.responses(model), middleware: forceStoreFalse });
+  return wrapLanguageModel({ model: openai.responses(model), middleware: codexProviderOptions(role) });
 }
 
 // --- Анти-InvalidPrompt: срезаем reasoning из вывода модели ---------------------------------

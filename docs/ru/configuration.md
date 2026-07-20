@@ -15,22 +15,31 @@ iva restart
 
 ## Провайдер модели
 
-Четыре провайдера. Выберите один через `MODEL_PROVIDER` и заполните только его блок. `ollama`/`opencode`/`openrouter` — API-ключ (OpenAI-совместимы); `codex` — личная подписка OpenAI (ChatGPT) по OAuth, без ключа. Цены и полные списки моделей: [providers.md](providers.md).
+Доступны четыре провайдера. `MODEL_PROVIDER` выбирает текстовую модель; опциональный
+`VISION_PROVIDER` может выбрать другой уже настроенный провайдер для изображений. Заполните блок
+текстового провайдера и, только если vision использует другой, его credentials и model fields.
+`ollama`/`opencode`/`openrouter` работают по API-ключу; `codex` — через личную подписку OpenAI
+(ChatGPT) по OAuth. Цены и списки моделей: [providers.md](providers.md).
 
 | Переменная | По умолчанию | Заметки |
 |---|---|---|
 | `MODEL_PROVIDER` | `ollama` | `ollama` (Ollama Cloud), `opencode` (OpenCode Zen), `openrouter` (OpenRouter) или `codex` (подписка OpenAI ChatGPT). |
+| `VISION_PROVIDER` | `MODEL_PROVIDER` | Опциональный отдельный провайдер для описания изображений/OCR. Его credentials или Codex OAuth должны быть уже настроены. |
+| `THINKING_EFFORT` | *(не задан)* | Глубина reasoning текста: `minimal`, `low`, `medium` или `high`. Сейчас применяется только к Codex и не влияет на vision. |
 | `OLLAMA_API_KEY` | — | Ключ с ollama.com. |
 | `OLLAMA_MODEL` | `deepseek-v4-pro` | Любая модель вашего тарифа Ollama Cloud. |
 | `OLLAMA_VISION_MODEL` | `minimax-m3` | Мультимодальная модель для изображений. При отсутствии настройки vision остаётся на MiniMax M3; override задаётся только для осознанной замены. |
 | `OLLAMA_CONTEXT_WINDOW` | `131072` | См. предупреждение ниже. |
 | `OPENCODE_API_KEY` | — | Ключ с opencode.ai/auth. |
 | `OPENCODE_MODEL` | `opencode-go/deepseek-v4-pro` | Любая модель Zen Go. |
+| `OPENCODE_VISION_MODEL` | `gemini-3-flash` | Vision-модель OpenCode. |
 | `OPENCODE_CONTEXT_WINDOW` | `131072` | То же предупреждение. |
 | `OPENROUTER_API_KEY` | — | Ключ с [openrouter.ai/keys](https://openrouter.ai/keys) (начинается с `sk-or-`). |
 | `OPENROUTER_MODEL` | `openai/gpt-5.1` | **Слаг** модели с [openrouter.ai/models](https://openrouter.ai/models), вид `vendor/model` (напр. `anthropic/claude-sonnet-4.5`). `iva config` шлёт живой тест-запрос, чтобы кривой слаг не проскочил. |
+| `OPENROUTER_VISION_MODEL` | `google/gemini-2.5-flash` | Мультимодальная модель OpenRouter для vision-роли. |
 | `OPENROUTER_CONTEXT_WINDOW` | `131072` | То же предупреждение — впишите реальное окно выбранной модели. |
 | `CODEX_MODEL` | `gpt-5.5` | Модель вашего тарифа OpenAI. `iva config` покажет реальный список подписки. |
+| `CODEX_VISION_MODEL` | `CODEX_MODEL` | Опциональный vision override; пусто означает ту же Codex-модель. |
 | `CODEX_CONTEXT_WINDOW` | `272000` | То же предупреждение — впишите реальное окно выбранной модели. |
 
 Для `codex` ключа в `.env` нет: выполните `iva login` (по ссылке+коду, годится для headless-VPS) или `iva login --browser`. OAuth-токен лежит в `data/codex-auth.json` (chmod 600, в gitignore) и автоматически обновляется до истечения. Полный сценарий: [providers.md](providers.md).

@@ -20,6 +20,8 @@ The first three are plain API keys; the last rides your personal OpenAI subscrip
 
 ```bash
 MODEL_PROVIDER=opencode   # or ollama / openrouter / codex, then `iva restart`
+# Optional: keep text on one configured provider and send images through another.
+VISION_PROVIDER=ollama
 ```
 
 Start with the provider that works for your region and budget. Keys, model pick and context-window settings live in [configuration.md](configuration.md).
@@ -49,7 +51,10 @@ Set `OPENROUTER_CONTEXT_WINDOW` to the model's real window. Vision runs through 
 
 ## Vision
 
-Attachments are never inlined into the model request. A photo lands in the vault, the agent gets its file path, and the provider's own vision model writes the description — OCR plus visual detail — into the daily transcript. Same key as the text model, no extra subscription.
+Attachments are never inlined into the text-model request. A photo lands in the vault and the resolved
+vision role writes OCR plus visual detail into the daily transcript. By default vision inherits
+`MODEL_PROVIDER`, preserving the original one-provider setup. Set `VISION_PROVIDER` only when another
+provider is already configured; no automatic paid-provider fallback occurs.
 
 ## VPS sizing
 

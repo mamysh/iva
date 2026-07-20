@@ -32,7 +32,8 @@ Public product and operations documentation starts at [`docs/README.md`](docs/RE
 | Concern | Source of truth | Notes |
 |---|---|---|
 | Agent definition | `agent/agent.ts` | Model, context window, compaction and Workflow World selection. |
-| Provider/model configuration | `agent/provider.ts` | Shared by the main agent and vision path. |
+| Model-role configuration | `scripts/lib/model-profile.mjs` + `scripts/lib/model-catalog.mjs` | Resolves independent text/vision roles and text effort with legacy env fallbacks. |
+| Provider runtime adapters | `agent/provider.ts` | Builds text and vision provider clients from the resolved roles. |
 | Model-role compatibility baseline | `scripts/baselines/model-role-contract.json` | Sanitized snapshot of current text/vision coupling and provider capabilities; guarded by `scripts/check-model-role-baseline.mjs`. |
 | Agent behavior | `agent/instructions.md` | Character, rules and tool-selection policy. |
 | Runtime configuration | `.env` | Private and ignored. Generated/updated by `scripts/setup.mjs`. |
@@ -133,6 +134,7 @@ Inspect these files first:
 
 ```text
 .env
+  -> scripts/lib/model-profile.mjs + scripts/lib/model-catalog.mjs
   -> agent/provider.ts
   -> agent/agent.ts       main text model
   -> agent/vision.ts + agent/lib/vision-provider.mjs
@@ -239,7 +241,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | I want to change… | Start with | Also inspect | Minimum verification |
 |---|---|---|---|
 | Agent personality/rules | `agent/instructions.md` | `agent/instructions/*` | typecheck, build, prompt canary |
-| Provider/model behavior | `agent/provider.ts` | `agent/agent.ts`, `agent/vision.ts`, `agent/lib/vision-provider.mjs` | reasoning/vision tests, typecheck, build |
+| Provider/model behavior | `scripts/lib/model-profile.mjs` | catalog, `agent/provider.ts`, `agent/agent.ts`, `agent/vision.ts` | model-role/reasoning/vision tests, typecheck, build |
 | Telegram polling/commands | `scripts/telegram-poll.mjs` | `scripts/lib/telegram-*`, channel | Telegram update test, typecheck |
 | Telegram media/channel gate | `agent/channels/telegram.ts` | security gate, vision | typecheck, build, media canary |
 | Security filtering | `agent/lib/security-gate.ts` | `agent/skills/security-defense/` | security tests, typecheck |

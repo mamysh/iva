@@ -40,19 +40,18 @@ function subagentNames() {
 }
 
 function providerRoute() {
-  const source = read("agent/provider.ts");
   const roleContract = readJson("scripts/baselines/model-role-contract.json");
-  const defaultProvider = source.match(/process\.env\.MODEL_PROVIDER \?\? "([^"]+)"/)?.[1];
-  const providerBlock = source.match(/const PROVIDERS = \{([\s\S]*?)\n\} as const;/)?.[1] ?? "";
-  const providers = [...providerBlock.matchAll(/^  ([a-z0-9-]+): \{$/gm)].map((match) => match[1]).sort(byName);
-  if (!defaultProvider || providers.length === 0) throw new Error("Cannot derive provider route from agent/provider.ts");
+  const defaultProvider = roleContract.roles?.text?.providerDefault;
+  const providers = Object.keys(roleContract.providers ?? {}).sort(byName);
+  if (!defaultProvider || providers.length === 0) throw new Error("Cannot derive provider route from model role contract");
   return {
     selector: "MODEL_PROVIDER",
     default: defaultProvider,
     providers,
     textModelSource: "agent/agent.ts",
     visionModelSource: "agent/vision.ts",
-    configurationSource: "agent/provider.ts",
+    configurationSource: "scripts/lib/model-profile.mjs",
+    runtimeAdapterSource: "agent/provider.ts",
     roleContractSource: "scripts/baselines/model-role-contract.json",
     roleContract,
   };

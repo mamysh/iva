@@ -3,6 +3,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { resolveModelRoles } from "./lib/model-profile.mjs";
+import { providerAccessConfigured } from "./lib/model-catalog.mjs";
 
 const contractPath = new URL("./baselines/model-role-contract.json", import.meta.url);
 const providerUrl = new URL("../agent/provider.ts", import.meta.url).href;
@@ -10,19 +12,23 @@ const contract = JSON.parse(readFileSync(contractPath, "utf8"));
 
 assert.equal(contract.schemaVersion, 1);
 assert.equal(contract.roles.text.providerSelector, "MODEL_PROVIDER");
-assert.equal(contract.roles.vision.providerSelector, null);
-assert.equal(contract.roles.vision.followsRole, "text");
-assert.equal(contract.roles.effort.selector, null);
-assert.deepEqual(contract.roles.effort.supportedProviders, []);
+assert.equal(contract.roles.text.providerDefault, "ollama");
+assert.equal(contract.roles.vision.providerSelector, "VISION_PROVIDER");
+assert.equal(contract.roles.vision.defaultFollowsRole, "text");
+assert.equal(contract.roles.effort.selector, "THINKING_EFFORT");
+assert.deepEqual(contract.roles.effort.supportedProviders, ["codex"]);
 assert.deepEqual(Object.keys(contract.providers).sort(), ["codex", "ollama", "opencode", "openrouter"]);
 
 const probe = `
-  const { providerName, providerConfig } = await import(${JSON.stringify(providerUrl)});
+  const { providerName, providerConfig, visionProviderName, visionProviderConfig, thinkingEffort } =
+    await import(${JSON.stringify(providerUrl)});
   process.stdout.write(JSON.stringify({
     providerName,
     textModel: providerConfig.textModel,
-    visionModel: providerConfig.visionModel,
+    visionProviderName,
+    visionModel: visionProviderConfig.visionModel,
     contextWindow: providerConfig.contextWindow,
+    thinkingEffort,
   }));
 `;
 
@@ -46,6 +52,7 @@ const fixtures = [
     expected: {
       providerName: "ollama",
       textModel: "deepseek-v4-pro",
+      visionProviderName: "ollama",
       visionModel: "minimax-m3",
       contextWindow: 131072,
     },
@@ -61,6 +68,7 @@ const fixtures = [
     expected: {
       providerName: "ollama",
       textModel: "fixture-text",
+      visionProviderName: "ollama",
       visionModel: "fixture-vision",
       contextWindow: 65536,
     },
@@ -75,6 +83,7 @@ const fixtures = [
     expected: {
       providerName: "opencode",
       textModel: "fixture-text",
+      visionProviderName: "opencode",
       visionModel: "gemini-3-flash",
       contextWindow: 98304,
     },
@@ -89,6 +98,7 @@ const fixtures = [
     expected: {
       providerName: "openrouter",
       textModel: "fixture/text",
+      visionProviderName: "openrouter",
       visionModel: "google/gemini-2.5-flash",
       contextWindow: 114688,
     },
@@ -103,8 +113,27 @@ const fixtures = [
     expected: {
       providerName: "codex",
       textModel: "fixture-codex",
+      visionProviderName: "codex",
       visionModel: "fixture-codex",
       contextWindow: 196608,
+    },
+  },
+  {
+    name: "independent Codex text and Ollama vision roles",
+    env: {
+      MODEL_PROVIDER: "codex",
+      CODEX_MODEL: "fixture-codex-text",
+      VISION_PROVIDER: "ollama",
+      OLLAMA_VISION_MODEL: "fixture-ollama-vision",
+      THINKING_EFFORT: "high",
+    },
+    expected: {
+      providerName: "codex",
+      textModel: "fixture-codex-text",
+      visionProviderName: "ollama",
+      visionModel: "fixture-ollama-vision",
+      contextWindow: 272000,
+      thinkingEffort: "high",
     },
   },
 ];
@@ -112,6 +141,16 @@ const fixtures = [
 for (const fixture of fixtures) {
   assert.deepEqual(resolveFixture(fixture.env), fixture.expected, fixture.name);
 }
+
+const unsupportedEffort = resolveModelRoles({ MODEL_PROVIDER: "ollama", THINKING_EFFORT: "high" });
+assert.equal(unsupportedEffort.effort.requested, "high");
+assert.equal(unsupportedEffort.effort.effective, undefined);
+assert.deepEqual(unsupportedEffort.effort.supported, []);
+assert.throws(() => resolveModelRoles({ VISION_PROVIDER: "unknown" }), /Unsupported VISION_PROVIDER/);
+assert.equal(providerAccessConfigured("ollama", { OLLAMA_API_KEY: "fixture" }), true);
+assert.equal(providerAccessConfigured("ollama", {}), false);
+assert.equal(providerAccessConfigured("codex", {}, { codexAuthenticated: true }), true);
+assert.equal(providerAccessConfigured("codex", {}, { codexAuthenticated: false }), false);
 
 for (const [provider, capability] of Object.entries(contract.providers)) {
   assert.equal(capability.toolCalling, "required", `${provider}: Iva requires tool calling`);

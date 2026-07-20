@@ -49,14 +49,19 @@ const inventory = await collectProviderInventory({
   fetchImpl: async () => ({ ok: true, json: async () => ({ data: [{ id: "text-fixture" }, { id: "vision-fixture" }] }) }),
 });
 assert.deepEqual(inventory, { available: true, reason: null, modelCount: 2, visionModelPresent: true });
-assert.equal(sanitizedProviderEvidence({
-  provider: "ollama", textModel: "text-fixture", visionModel: "vision-fixture", inventory,
-  description: "red pixel", commit,
-}).vision.status, "pass");
+const providerEvidence = sanitizedProviderEvidence({
+  textProvider: "codex", visionProvider: "ollama", textModel: "text-fixture", visionModel: "vision-fixture",
+  inventory, description: "red pixel", commit,
+});
+assert.equal(providerEvidence.schemaVersion, 2);
+assert.deepEqual(providerEvidence.text, { provider: "codex", model: "text-fixture" });
+assert.equal(providerEvidence.vision.provider, "ollama");
+assert.equal(providerEvidence.vision.status, "pass");
 assert.equal(validateVisionCanaryDescription("Плакучая ива на чёрном фоне."), "Плакучая ива на чёрном фоне.");
 assert.throws(() => validateVisionCanaryDescription("red pixel"), /tree and black background/);
 assert.throws(() => sanitizedProviderEvidence({
-  provider: "ollama", textModel: "text", visionModel: "missing", inventory: { ...inventory, visionModelPresent: false },
+  textProvider: "codex", visionProvider: "ollama", textModel: "text", visionModel: "missing",
+  inventory: { ...inventory, visionModelPresent: false },
   description: "red pixel", commit,
 }), /absent from authenticated inventory/);
 
