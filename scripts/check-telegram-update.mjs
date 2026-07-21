@@ -8,11 +8,14 @@ assert(CONTROL_COMMANDS.includes("/model"));
 assert(CONTROL_COMMANDS.includes("/think"));
 assert.equal(parseUpdateAction("iva_update:do"), "do");
 assert.equal(parseUpdateAction("iva_update:skip"), "skip");
+assert.equal(parseUpdateAction("iva_update:later"), "later");
+assert.equal(parseUpdateAction("iva_update:view"), "view");
 assert.equal(parseUpdateAction("iva_update:delete_everything"), null);
 assert.equal(packageVersion('{"version":"0.2.5"}'), "0.2.5");
 assert.equal(packageVersion("not-json"), null);
 
 const poll = readFileSync(new URL("./telegram-poll.mjs", import.meta.url), "utf8");
+const scheduledCheck = readFileSync(new URL("./update-check.mjs", import.meta.url), "utf8");
 assert.match(poll, /cq\.data\.startsWith\("iva_model:"\)/);
 assert.match(poll, /modelWizard\.open\(cmd === "\/think" \? "think" : "model"/);
 assert.match(poll, /setMyCommands/);
@@ -27,6 +30,11 @@ assert.ok(updateCallback >= 0 && updateOwnerGate > updateCallback && createUpdat
 assert.match(poll, /--telegram-job=\$\{jobId\}/);
 assert.doesNotMatch(poll, /--telegram-(?:chat|message)/, "Telegram identifiers must not be exposed in the process list");
 assert.match(poll, /renderUpdateProgress\("configuration", locale\)/);
+assert.match(poll, /handleUpdateView/);
+assert.match(poll, /updateOfferKeyboard/);
+assert.match(scheduledCheck, /acquireLock\(dataDir, \{ source: "notification" \}\)/);
+assert.match(scheduledCheck, /finally \{[\s\S]*releaseLock\(lock\)/);
+assert.doesNotMatch(scheduledCheck, /performUpdate|systemd-run/, "scheduled check must never start an update transaction");
 
 function fakeGit({ local = "local", remote = "remote", behind = "0", ahead = "0", localVer = "0.2.5", remoteVer = "0.2.5", fail } = {}) {
   return async (...args) => {

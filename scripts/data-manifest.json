@@ -146,6 +146,17 @@
       "lossTolerance": "accepted; a stale request is retried explicitly"
     },
     {
+      "id": "deployment.update-notification-state",
+      "path": "${ASSISTANT_DATA_DIR}/update-notification-state.json",
+      "type": "file",
+      "classification": { "secret": false, "personal": false, "derived": true },
+      "required": false,
+      "backupMethod": "exclude-and-rebuild",
+      "restoreOrder": 91,
+      "retention": "latest checked and notified target commits",
+      "lossTolerance": "accepted; the current target may be notified once again after restore"
+    },
+    {
       "id": "application.other-private-state",
       "path": "${ASSISTANT_DATA_DIR}/**",
       "type": "directory",

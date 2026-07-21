@@ -11,7 +11,7 @@ const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_DIR_MODE = 0o700;
 const DATA_EXCLUDES = new Set([
   "backups", ".reminders.lock", "update.lock", "update.lock.recovery", "update-jobs",
-  "health-metrics.jsonl", "health-alert-state.json", "workflow-health.json",
+  "update-notification-state.json", "health-metrics.jsonl", "health-alert-state.json", "workflow-health.json",
 ]);
 const VAULT_EXCLUDES = new Set([".index", ".graph"]);
 
@@ -64,7 +64,7 @@ function secretStateFiles(root, env) {
   const dataDir = statePath(root, env.ASSISTANT_DATA_DIR, "data");
   const files = [
     join(root, ".env"), join(root, "deploy/iva-workflow.environment"), join(dataDir, "reminders.json"),
-    join(dataDir, "codex-auth.json"), join(dataDir, "update-channel.json"),
+    join(dataDir, "codex-auth.json"), join(dataDir, "update-channel.json"), join(dataDir, "update-notification-state.json"),
   ];
   if (existsSync(dataDir)) {
     for (const entry of readdirSync(dataDir, { withFileTypes: true })) {

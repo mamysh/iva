@@ -55,6 +55,7 @@ iva restart
 | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | — | Общий секрет между long-poll-мостом и локальным вебхуком. Любая длинная случайная строка. |
 | `TELEGRAM_ALLOWED_USER_IDS` | *(пусто)* | Числовые ID пользователей через запятую — кому разрешено говорить с Iva. |
 | `TELEGRAM_DIGEST_CHAT_ID` | — | Чат, куда приходят утренний дайджест и ночные отчёты памяти. Обычно ваш собственный chat ID. |
+| `IVA_UPDATE_CHECK_ENABLED` | `false` | Opt-in ежедневная read-only проверка private-канала `origin/main`. Одно предложение на target commit; автоматической установки нет. Удобнее включать через `iva update-check on|off`. |
 
 Список разрешённых работает по принципу **fail-closed: пустой список — Iva не отвечает никому.** Мастер сам подхватывает ваш ID, как только вы напишете боту; или спросите у [@userinfobot](https://t.me/userinfobot). Почему fail-closed важен: [security.md](./security.md).
 
@@ -92,7 +93,7 @@ iva restart
 | Переменная | По умолчанию | Заметки |
 |---|---|---|
 | `AGENT_LANGUAGE` | `ru` | `en` или `ru`. Язык ответов Iva, локаль дат и какой сид CORE.md берёт `init-vault`. |
-| `ASSISTANT_TIMEZONE` | `Asia/Almaty` | Имя из базы IANA. Задаёт даты дневных транскриптов, 5 ночных таймеров памяти и дату/время, которые Iva видит на каждом ходе. Экспортируется как `TZ`. |
+| `ASSISTANT_TIMEZONE` | `Asia/Almaty` | Имя из базы IANA. Задаёт даты дневных транскриптов, 5 ночных таймеров памяти, опциональный update-check и дату/время, которые Iva видит на каждом ходе. Экспортируется как `TZ`. |
 | `ASSISTANT_VAULT_DIR` | `vault` | Живая память: отдельный приватный git-репозиторий, открывается в Obsidian. |
 | `ASSISTANT_DATA_DIR` | `data` | Данные рантайма: `tasks.json`, `reminders.json`, лог токенов `usage.jsonl`. |
 | `IVA_PORT` | `8723` | Порт локального eve-сервера. Меняйте через `iva config`: systemd-unit прописывает порт буквально ([deploy.md](deploy.md)). |

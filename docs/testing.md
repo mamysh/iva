@@ -42,6 +42,7 @@ This gate currently proves:
 - Telegram HTML formatting, delivery request, and plain-text fallback;
 - the structural capability baseline from `npm run manifest`;
 - the doctor schema, severity/exit-code contract, blocking fault matrix, one-screen output and support-bundle redaction;
+- opt-in update notification state privacy, per-target SHA deduplication, timezone-aware unit generation and owner-gated buttons;
 - bounded 31-day health history, 7-day baseline gate, Workflow growth projection and alert cooldown/deduplication;
 - extension config/dependency fail-closed behavior, managed background ownership and optional removal safety;
 - the update preflight/migration contract, broken-build isolation and readiness rollback order;

@@ -227,17 +227,44 @@ else if (action === "stop") stop();
 set -euo pipefail
 if [ "\${1:-}" = --user ]; then shift; fi
 action="\${1:-}"; shift || true
+enabled_dir="\${IVA_FIXTURE_STATE}/enabled"
+mkdir -p "$enabled_dir"
 case "$action" in
   show-environment|daemon-reload|reset-failed) exit 0 ;;
-  enable) exit 0 ;;
+  enable)
+    [ "\${1:-}" = --now ] && shift
+    for unit in "$@"; do touch "$enabled_dir/$unit"; done
+    ;;
+  disable)
+    [ "\${1:-}" = --now ] && shift
+    for unit in "$@"; do rm -f "$enabled_dir/$unit"; done
+    ;;
   restart) for unit in "$@"; do "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" restart "$unit"; done ;;
-  start) for unit in "$@"; do "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" start "$unit"; done ;;
+  start)
+    for unit in "$@"; do
+      [ "$unit" = iva-update-check.service ] && continue
+      "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" start "$unit"
+    done
+    ;;
   stop) for unit in "$@"; do "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" stop "$unit"; done ;;
   is-active)
     [ "\${1:-}" = --quiet ] && shift
-    "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" status "\${1:-}"
+    if "\${IVA_FIXTURE_NODE}" "\${IVA_FIXTURE_CONTROL}" status "\${1:-}"; then
+      echo active
+      exit 0
+    fi
+    echo inactive
+    exit 3
     ;;
-  is-enabled) exit 0 ;;
+  is-enabled)
+    [ "\${1:-}" = --quiet ] && shift
+    if [ -f "$enabled_dir/\${1:-}" ]; then
+      echo enabled
+      exit 0
+    fi
+    echo disabled
+    exit 1
+    ;;
   show) echo 0 ;;
   *) exit 0 ;;
 esac
@@ -392,6 +419,14 @@ try {
   await writeFile(join(app, "deploy", "iva-workflow.environment"), workflowEnvironment, { mode: 0o600 });
 
   await runInstaller();
+  const updateTimerEnabledPath = join(processState, "enabled", "iva-update-check.timer");
+  assert.equal(existsSync(updateTimerEnabledPath), false, "clean install enabled the opt-in update timer");
+  const enableUpdateCheck = await runFixtureCli(["update-check", "on"]);
+  assert.equal(enableUpdateCheck.code, 0, enableUpdateCheck.output);
+  assert.equal(existsSync(updateTimerEnabledPath), true, "iva update-check on did not enable its timer");
+  const disableUpdateCheck = await runFixtureCli(["update-check", "off"]);
+  assert.equal(disableUpdateCheck.code, 0, disableUpdateCheck.output);
+  assert.equal(existsSync(updateTimerEnabledPath), false, "iva update-check off did not disable its timer");
   const updateChannelPath = join(sandbox, "data", "update-channel.json");
   const expectedUpdateChannel = { schemaVersion: 1, remote: "origin", branch: "main" };
   assert.deepEqual(JSON.parse(await readFile(updateChannelPath, "utf8")), expectedUpdateChannel);

@@ -18,9 +18,9 @@ const ENV = { ...process.env, PATH: `${NODE_DIR}:${process.env.PATH || ""}` };
 const CORE_SERVICES = ["iva.service", "iva-telegram-poll.service"];
 const OPTIONAL_SERVICES = ["iva-telegram-userbot.service"];
 const JOB_SERVICES = ["daily", "weekly", "monthly", "yearly", "doctor"].map((name) => `iva-memory-${name}.service`)
-  .concat("iva-reminders.service", "iva-observe.service");
+  .concat("iva-reminders.service", "iva-observe.service", "iva-update-check.service");
 const TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((name) => `iva-memory-${name}.timer`)
-  .concat("iva-reminders.timer", "iva-observe.timer");
+  .concat("iva-reminders.timer", "iva-observe.timer", "iva-update-check.timer");
 const WRITER_UNITS = [...TIMERS, ...CORE_SERVICES, ...OPTIONAL_SERVICES, ...JOB_SERVICES];
 
 function command(program, args, { inherit = false, cwd = ROOT, env = ENV, timeout = 20 * 60_000 } = {}) {

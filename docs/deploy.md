@@ -1,7 +1,8 @@
 # Deploy
 
 The default self-host profile runs on one VPS as two systemd user services and seven timers. `install.sh`
-sets them up ([install](./install.md)); the optional userbot adds a third service only when explicitly enabled.
+sets them up ([install](./install.md)); the optional userbot adds a third service, and opt-in update
+notifications add an eighth timer, only when explicitly enabled.
 
 ## Transport: long polling
 
@@ -44,6 +45,7 @@ Note: `getUpdates` — which the setup wizard uses to discover your user ID — 
 | `iva-memory-doctor.timer` | 05:00 nightly | schema/health/decay/MOC checks + vault `git push` |
 | `iva-reminders.timer` | every 5 minutes | short-lived reminder dispatcher; sends due reminders without calling the workflow |
 | `iva-observe.timer` | hourly | bounded health/capacity counters and deduplicated actionable alerts |
+| `iva-update-check.timer` | daily at 10:00 in `ASSISTANT_TIMEZONE` | opt-in read-only `origin/main` comparison and one Telegram offer per target commit |
 
 Timers fire in the server's **local time** and carry `Persistent=true`, so a run missed during downtime fires after reboot. Set the server clock to match your `.env`:
 
@@ -75,6 +77,14 @@ opaque private job id, not chat identifiers or bot credentials. That process sur
 restart and edits the original offer through configuration, target, dependencies, tests/build,
 storage, activation and readiness. Normally no extra messages are created; if Telegram can no longer
 edit the original, only the final result is sent once as a fallback.
+
+Daily update notifications are disabled by default. Enable them with `iva update-check on` (or
+`IVA_UPDATE_CHECK_ENABLED=true` plus `iva restart`). The timer fetches and compares only the persistent
+`origin/main` channel, stores a private SHA dedup record, and sends **View / Update / Later** buttons.
+It never starts `iva update`; only the owner-gated Telegram **Update** callback can do that. A network,
+remote or Telegram outage leaves the agent and polling readiness untouched and is retried later. The
+read-only check shares the update lock, so it cannot race Git inspection or dedup state with a CLI or
+Telegram update transaction.
 
 One thing that trips people up: eve has a `defineSchedule` API, but on self-host it never fires — it only becomes a cron job on Vercel. That is the whole reason memory runs on systemd timers.
 

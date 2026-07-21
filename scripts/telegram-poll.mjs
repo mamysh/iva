@@ -27,6 +27,9 @@ import { resolveUpdateChannel } from "./lib/update-channel.mjs";
 import {
   createTelegramUpdateJob, removeTelegramUpdateJob, renderUpdateProgress,
 } from "./lib/update-progress.mjs";
+import {
+  normalizeUpdateChanges, renderUpdateOffer, updateLocale, updateOfferKeyboard,
+} from "./lib/update-notification.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const NODE = process.execPath;
@@ -287,22 +290,49 @@ async function handleUpdateCheck(chatId) {
     await reply(chatId, `You're on the latest version (v${info.localVer ?? "?"}, ${info.local.slice(0, 7)}).`);
     return;
   }
-  const bump =
-    info.remoteVer && info.remoteVer !== info.localVer
-      ? `v${info.localVer ?? "?"} → v${info.remoteVer}`
-      : `${info.local.slice(0, 7)} → ${info.remote.slice(0, 7)}`;
   await tg("sendMessage", {
     chat_id: chatId,
-    text: info.rewritten
-      ? `🆕 Deployment history changed: ${bump}. The transactional updater will verify and replace the old commit.\nUpdate now?`
-      : `🆕 Update available: ${bump} (${info.behind} new commit${info.behind === 1 ? "" : "s"}).\nUpdate now?`,
-    reply_markup: {
-      inline_keyboard: [[
-        { text: "⬆️ Update", callback_data: "iva_update:do" },
-        { text: "Skip", callback_data: "iva_update:skip" },
-      ]],
-    },
+    text: renderUpdateOffer(info, { locale: updateLocale(process.env) }),
+    reply_markup: updateOfferKeyboard({ locale: updateLocale(process.env) }),
   });
+}
+
+async function handleUpdateView(chatId, messageId) {
+  const locale = updateLocale(process.env);
+  let info;
+  try {
+    info = await checkDeploymentUpdate(git, resolveDeploymentUpdateChannel());
+    if (!info.hasUpdate) {
+      await tg("editMessageText", {
+        chat_id: chatId, message_id: messageId,
+        text: locale === "ru"
+          ? `Уже установлена последняя target-версия (${info.local.slice(0, 7)}).`
+          : `You're already on the latest target (${info.local.slice(0, 7)}).`,
+      });
+      return;
+    }
+    let changes = [];
+    try {
+      changes = normalizeUpdateChanges(await git(
+        "log", "--format=%h %s", "--max-count=5", `HEAD..${info.channel}`,
+      ));
+    } catch (error) {
+      log("update change list unavailable:", error.message);
+    }
+    await tg("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: renderUpdateOffer(info, { locale, detailed: true, changes }),
+      reply_markup: updateOfferKeyboard({ locale }),
+    });
+  } catch (error) {
+    await tg("editMessageText", {
+      chat_id: chatId, message_id: messageId,
+      text: locale === "ru"
+        ? "Не удалось посмотреть обновление. Ничего не установлено; повтори через /update."
+        : "Couldn't inspect the update. Nothing was installed; retry with /update.",
+    });
+  }
 }
 
 // Inline-button taps for the /update flow. Handled by the bridge; never delivered to eve.
@@ -313,18 +343,28 @@ async function handleUpdateCallback(cq) {
   try { await tg("answerCallbackQuery", { callback_query_id: cq.id }); } // clear the button spinner
   catch (error) { log("update callback acknowledgement failed:", error.message); }
   if (ALLOWED.size === 0 || !ALLOWED.has(from)) return true; // swallow untrusted taps
+  const locale = updateLocale(process.env);
   const action = parseUpdateAction(cq.data);
   if (!action) {
-    await tg("editMessageText", { chat_id: chatId, message_id: messageId, text: "Update action is invalid or expired." });
+    await tg("editMessageText", {
+      chat_id: chatId, message_id: messageId,
+      text: locale === "ru" ? "Действие обновления недействительно или устарело." : "Update action is invalid or expired.",
+    });
     return true;
   }
-  if (action === "skip") {
-    await tg("editMessageText", { chat_id: chatId, message_id: messageId, text: "Update skipped." });
+  if (action === "skip" || action === "later") {
+    await tg("editMessageText", {
+      chat_id: chatId, message_id: messageId,
+      text: locale === "ru" ? "Обновление отложено. Новый target commit будет предложен отдельно." : "Update postponed. A different target commit may be offered later.",
+    });
+    return true;
+  }
+  if (action === "view") {
+    await handleUpdateView(chatId, messageId);
     return true;
   }
   // Persist only an opaque run id in argv. The private job file carries the Telegram
   // target so the detached updater can keep editing this message while the bridge restarts.
-  const locale = /(^|[-_])ru($|[-_])/i.test(process.env.AGENT_LANGUAGE || process.env.LANG || "") ? "ru" : "en";
   let updateJob;
   try {
     updateJob = createTelegramUpdateJob(DATA_PATH, { chatId, messageId, locale });

@@ -12,6 +12,9 @@ assert.match(cli, /const TIMERS = \[\.\.\.MEMORY_TIMERS, "iva-reminders\.timer",
 assert.match(cli, /if \(scQ\("is-enabled", timer\)\.out !== "enabled"\) sc\("enable", "--now", timer\)/);
 assert.match(cli, /EnvironmentFile=-\$\{WORKFLOW_ENV_PATH\}/);
 assert.match(cli, /replaceAll\("__PYTHON_BIN__", VENV_PY\)/);
+assert.match(cli, /replaceAll\("__ASSISTANT_TIMEZONE__", timezone\)/);
+assert.match(cli, /const UPDATE_CHECK_TIMER = "iva-update-check\.timer"/);
+assert.match(cli, /syncUpdateCheckTimer/);
 assert.match(cli, /scripts\/doctor\.mjs/);
 assert.match(cli, /args\.includes\("--json"\)/);
 
@@ -33,6 +36,8 @@ assert.match(metrics, /ALERT_BASELINE_MS = 7 \* 24/);
 assert.match(metrics, /ALERT_COOLDOWN_MS = 24 \* 60/);
 assert.match(read("deploy/iva-observe.service"), /Type=oneshot/);
 assert.match(read("deploy/iva-observe.timer"), /OnCalendar=hourly/);
+assert.match(read("deploy/iva-update-check.service"), /scripts\/update-check\.mjs/);
+assert.match(read("deploy/iva-update-check.timer"), /OnCalendar=\*-\*-\* 10:00:00 __ASSISTANT_TIMEZONE__/);
 
 const updateRuntime = read("scripts/update-runtime.mjs");
 const updateServices = read("scripts/lib/update-services.mjs");
@@ -54,6 +59,8 @@ assert.match(backupRuntime, /verifyPortableBackup/);
 assert.match(backupRuntime, /Services remain stopped|services remain stopped/i);
 assert.match(backupRuntime, /iva-observe\.service/);
 assert.match(backupRuntime, /iva-observe\.timer/);
+assert.match(backupRuntime, /iva-update-check\.service/);
+assert.match(backupRuntime, /iva-update-check\.timer/);
 const portableBackup = read("scripts/lib/portable-backup.mjs");
 assert.match(portableBackup, /pg_dump/);
 assert.match(portableBackup, /pg_restore/);
