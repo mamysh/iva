@@ -126,6 +126,10 @@ function bumpFixtureVersion(author) {
     const target = join(author, path);
     writeFileSync(target, readFileSync(target, "utf8").replaceAll(`\"softwareVersion\": \"${currentVersion}\"`, `\"softwareVersion\": \"${nextVersion}\"`));
   }
+  for (const path of ["README.md", "README.ru.md"]) {
+    const target = join(author, path);
+    writeFileSync(target, readFileSync(target, "utf8").replaceAll(currentVersion, nextVersion));
+  }
   const manifestPath = join(author, "scripts/baselines/capability-manifest.json");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   manifest.product.version = nextVersion;
