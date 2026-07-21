@@ -60,6 +60,7 @@ assert.match(install, /install-state\.jsonl/);
 assert.match(install, /chmod 600 "\$INSTALL_STATE_FILE"/);
 assert.match(install, /chmod 600 \.env/);
 assert.match(install, /chmod 600 deploy\/iva-workflow\.environment/);
+assert.match(install, /scripts\/init-update-channel\.mjs "\$BRANCH"/);
 assert.match(setup, /chmod\(ENV_PATH, 0o600\)/);
 assert.match(oauth, /writeFileSync\(tmp, JSON\.stringify\(auth, null, 2\), \{ mode: 0o600 \}\)/);
 assert.match(oauth, /chmodSync\(tmp, 0o600\)/);

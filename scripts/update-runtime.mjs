@@ -7,6 +7,7 @@ import {
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMigrationPlan, createUpdatePreflight, runUpdateTransaction } from "./lib/update-contract.mjs";
+import { resolveUpdateChannel, updateChannelRef } from "./lib/update-channel.mjs";
 import { resolveRuntimeWorkflowProfile } from "./lib/workflow-runtime.mjs";
 import { UPDATE_USERBOT_SERVICE, updateServicePlan } from "./lib/update-services.mjs";
 
@@ -243,13 +244,24 @@ function moveIfPresent(source, target) {
 export async function performUpdate({ force = false, log = console.log } = {}) {
   const env = readEnvironment();
   const currentCommit = git(["rev-parse", "HEAD"]);
-  const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]) || "main";
+  let channelInfo;
+  try {
+    channelInfo = resolveUpdateChannel({ dataDir: DATA_DIR, runGit: (args) => command("git", args), requireCheckout: true });
+  } catch (error) {
+    return { outcome: "rolled_back", reason: error.message, currentCommit };
+  }
+  const { remote, branch } = channelInfo.channel;
+  const targetRef = updateChannelRef(channelInfo.channel);
   const dirty = command("git", ["status", "--porcelain", "--untracked-files=no"]).out;
   if (dirty) return { outcome: "rolled_back", reason: "tracked working tree changes block update", currentCommit };
-  const fetch = command("git", ["fetch", "--prune", "origin", branch]);
-  if (fetch.code !== 0) return { outcome: "rolled_back", reason: "git fetch failed", currentCommit };
-  const targetCommit = git(["rev-parse", `origin/${branch}`]);
-  if (currentCommit === targetCommit && !force) return { outcome: "current", currentCommit, targetCommit };
+  const fetch = command("git", ["fetch", "--prune", remote, branch]);
+  if (fetch.code !== 0) return { outcome: "rolled_back", reason: `update channel ${targetRef} is unavailable`, currentCommit, channel: targetRef };
+  const targetResult = command("git", ["rev-parse", targetRef]);
+  if (targetResult.code !== 0 || !targetResult.out) {
+    return { outcome: "rolled_back", reason: `update channel ${targetRef} has no fetched branch`, currentCommit, channel: targetRef };
+  }
+  const targetCommit = targetResult.out;
+  if (currentCommit === targetCommit && !force) return { outcome: "current", currentCommit, targetCommit, channel: targetRef };
   if (command("sh", ["-c", "command -v systemctl >/dev/null"]).code !== 0) {
     return { outcome: "rolled_back", reason: "systemd is required for transactional activation", currentCommit, targetCommit };
   }
@@ -384,5 +396,5 @@ export async function performUpdate({ force = false, log = console.log } = {}) {
   };
 
   const result = await runUpdateTransaction({ preflight, migrationPlan, actions });
-  return { ...result, preflight, currentCommit, targetCommit };
+  return { ...result, preflight, currentCommit, targetCommit, channel: targetRef };
 }

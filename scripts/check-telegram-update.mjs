@@ -25,7 +25,6 @@ function fakeGit({ local = "local", remote = "remote", behind = "0", ahead = "0"
   return async (...args) => {
     const key = args.join(" ");
     if (fail && key.startsWith(fail)) throw new Error(`git failed: ${key}`);
-    if (key === "rev-parse --abbrev-ref HEAD") return "main";
     if (key === "fetch --prune origin main") return "";
     if (key === "rev-parse HEAD") return local;
     if (key === "rev-parse origin/main") return remote;
@@ -37,12 +36,15 @@ function fakeGit({ local = "local", remote = "remote", behind = "0", ahead = "0"
   };
 }
 
-assert.equal((await checkDeploymentUpdate(fakeGit({ local: "same", remote: "same" }))).hasUpdate, false);
-assert.equal((await checkDeploymentUpdate(fakeGit({ local: "ahead", remote: "old", behind: "0", ahead: "2" }))).rewritten, true);
-assert.equal((await checkDeploymentUpdate(fakeGit({ local: "ahead", remote: "old", behind: "0", ahead: "2" }))).hasUpdate, true);
-assert.equal((await checkDeploymentUpdate(fakeGit({ local: "old", remote: "new", behind: "2" }))).hasUpdate, true);
-await assert.rejects(checkDeploymentUpdate(fakeGit({ fail: "fetch" })), /git failed/);
-await assert.rejects(checkDeploymentUpdate(fakeGit({ behind: "" })), /invalid git behind count/);
-await assert.rejects(checkDeploymentUpdate(fakeGit({ ahead: "" })), /invalid git ahead count/);
+const channel = { remote: "origin", branch: "main" };
+assert.equal((await checkDeploymentUpdate(fakeGit({ local: "same", remote: "same" }), channel)).hasUpdate, false);
+assert.equal((await checkDeploymentUpdate(fakeGit({ local: "ahead", remote: "old", behind: "0", ahead: "2" }), channel)).rewritten, true);
+assert.equal((await checkDeploymentUpdate(fakeGit({ local: "ahead", remote: "old", behind: "0", ahead: "2" }), channel)).hasUpdate, true);
+assert.equal((await checkDeploymentUpdate(fakeGit({ local: "old", remote: "new", behind: "2" }), channel)).hasUpdate, true);
+await assert.rejects(checkDeploymentUpdate(fakeGit({ fail: "fetch" }), channel), /git failed/);
+await assert.rejects(checkDeploymentUpdate(fakeGit({ fail: "rev-parse origin\/main" }), channel), /git failed/);
+await assert.rejects(checkDeploymentUpdate(fakeGit({ behind: "" }), channel), /invalid git behind count/);
+await assert.rejects(checkDeploymentUpdate(fakeGit({ ahead: "" }), channel), /invalid git ahead count/);
+await assert.rejects(checkDeploymentUpdate(fakeGit(), { remote: "upstream", branch: "main" }), /only origin\/main/);
 
 console.log("telegram update checks passed");

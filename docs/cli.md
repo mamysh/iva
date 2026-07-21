@@ -28,7 +28,14 @@ only allowlisted model keys to `.env`, restarts `iva.service`, waits for stable 
 the exact previous configuration if readiness fails. Picker callbacks are opaque, owner/chat-bound and
 expire after five minutes.
 
-`/update` compares your install with its deployment repository, `origin/<current-branch>`. If a newer version exists it replies with the version bump and two buttons — **⬆️ Update** and **Skip**. Update pulls the reviewed fork branch, rebuilds and restarts Iva in its own detached scope (so the restart of the bridge can't kill the update mid-flight), then reports ✅ or ❌ back in the chat. Nothing happens until you tap. Changes from the source `smixs/iva` repository are integrated into this deployment repository separately before they can reach production.
+`/update` compares your install with its explicit private update channel. The first release allows only
+`origin/main`; a temporary checkout cannot silently change it, and `upstream/main` is never a production
+channel. Legacy installs are pinned only when their factual tracking branch is already `origin/main`.
+If a newer version exists, Iva replies with the version bump and two buttons — **⬆️ Update** and
+**Skip**. Update pulls the reviewed fork branch, rebuilds and restarts Iva in its own detached scope
+(so the restart of the bridge can't kill the update mid-flight), then reports ✅ or ❌ back in the
+chat. Nothing happens until you tap. Changes from the source `smixs/iva` repository are integrated
+into this deployment repository separately before they can reach production.
 
 ### /usage variants
 
@@ -55,7 +62,7 @@ The installer puts `iva` in `~/.local/bin`. Commands that touch systemd need a L
 | `iva config` | The 5-step setup wizard, then offers a restart to apply |
 | `iva login [--browser]` | Sign in to an OpenAI (ChatGPT) subscription for `MODEL_PROVIDER=codex`. Default is device code (a link + one-time code, works on a headless VPS); `--browser` runs the local PKCE flow. Token → `data/codex-auth.json` (chmod 600) |
 | `iva doctor [--json]` | Layered health check for configuration, build/profile, services, Workflow storage, Telegram, provider, memory, backups and capacity. The human command applies only safe service/build repairs; `--json` returns a sanitized support/CI report without auto-repair |
-| `iva status` | Concise hourly baseline: service RSS/restarts, Workflow size/growth and queue, oldest active run, recent successful jobs/backup, disk/inodes and swap |
+| `iva status` | Explicit sanitized update channel plus a concise hourly baseline: service RSS/restarts, Workflow size/growth and queue, oldest active run, recent successful jobs/backup, disk/inodes and swap |
 | `iva restart` | Process lifecycle only: regenerate units and restart agent + bridge without changing durable workflow state |
 | `iva recover` | Stop the agent, repair interrupted steps, abandon only interrupted child turns, restart and re-enqueue durable work; refuses to mutate state when storage is unavailable |
 | `iva reset` | With confirmation, cancel every active workflow session and restart the agent; preserve terminal history, storage, vault, tasks and reminders |

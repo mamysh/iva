@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { resolveRuntimeWorkflowProfile } from "../scripts/lib/workflow-runtime.mjs";
+import { resolveUpdateChannel, updateChannelRef } from "../scripts/lib/update-channel.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = join(ROOT, ".env");
@@ -405,6 +406,12 @@ function cmdDoctor(args) {
 function cmdStatus() {
   const { profile } = resolveRuntimeWorkflowProfile(ROOT);
   console.log(`Workflow: ${profile.label}`);
+  try {
+    const info = resolveUpdateChannel({ dataDir: dataDirAbs(), runGit: (args) => cap("git", args) });
+    console.log(`Update channel: ${updateChannelRef(info.channel)}${info.migrated ? " (legacy install pinned)" : ""}`);
+  } catch (error) {
+    console.log(`Update channel: blocked (${error.message})`);
+  }
   run(NODE, ["scripts/observe.mjs", "status"]);
   requireSystemd();
   console.log(`Services: agent ${scQ("is-active", SERVICES[0]).out || "unknown"} · Telegram ${scQ("is-active", SERVICES[1]).out || "unknown"}`);

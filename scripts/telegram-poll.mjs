@@ -10,7 +10,7 @@
 // The channel/agent are unchanged. Webhook and polling are mutually exclusive → deleteWebhook on start.
 import { chmod, readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "eve/client";
@@ -23,6 +23,7 @@ import { ModelWizard } from "./lib/model-wizard.mjs";
 import { applyModelSelection } from "./lib/model-config-transaction.mjs";
 import { runBoundedModelProbe } from "./lib/model-probe.mjs";
 import { listConfiguredModels } from "./lib/model-inventory.mjs";
+import { resolveUpdateChannel } from "./lib/update-channel.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const NODE = process.execPath;
@@ -239,6 +240,21 @@ function git(...args) {
   );
 }
 
+function resolveDeploymentUpdateChannel() {
+  return resolveUpdateChannel({
+    dataDir: DATA_PATH,
+    requireCheckout: true,
+    runGit: (args) => {
+      const result = spawnSync("git", ["-C", ROOT, ...args], { encoding: "utf8", timeout: 10_000 });
+      return {
+        code: result.status ?? 1,
+        out: String(result.stdout || "").trim(),
+        err: String(result.stderr || "").trim(),
+      };
+    },
+  }).channel;
+}
+
 // Run `iva update` in its OWN transient systemd scope, so it survives the restart of
 // THIS bridge (restartServices restarts iva-telegram-poll too — a plain child would be
 // killed with us). --collect GC's the unit after exit. notifyTelegram (reads .env) posts
@@ -259,7 +275,7 @@ async function handleUpdateCheck(chatId) {
   await reply(chatId, "Checking for updates…");
   let info;
   try {
-    info = await checkDeploymentUpdate(git);
+    info = await checkDeploymentUpdate(git, resolveDeploymentUpdateChannel());
   } catch (e) {
     await reply(chatId, "Couldn't check for updates: " + e.message);
     return;
