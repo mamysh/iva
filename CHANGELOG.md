@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.5] - 2026-07-22
+
 - Upgrade the runtime to Eve 0.24.4 and stable AI SDK 7 packages without changing text/vision model
   roles. Local Workflow state migrates atomically to `.eve/.workflow-data` with verified backup,
   legacy rollback preservation and idempotent N−1→N update coverage. Transactional updates rebuild
@@ -51,7 +53,8 @@ soak and fresh-owner acceptance pass.
 - ⬆️ **Self-update from Telegram** — `/update` checks the reviewed deployment branch and installs only after explicit confirmation.
 - 🧪 **Personal Telegram MCP (beta)** — optional QR onboarding for a personal account, disabled by default in this fork and restricted to read-only exposure unless explicitly reviewed.
 
-[Unreleased]: https://github.com/mamysh/iva/compare/1e6e90a7d43544f33ef26bdfe0b145038ab879fb...main
+[Unreleased]: https://github.com/mamysh/iva/compare/v0.3.0-rc.5...main
+[0.3.0-rc.5]: https://github.com/mamysh/iva/compare/v0.3.0-rc.4...v0.3.0-rc.5
 [0.3.0-rc.4]: https://github.com/mamysh/iva/compare/v0.3.0-rc.3...v0.3.0-rc.4
 [0.3.0-rc.3]: https://github.com/mamysh/iva/compare/v0.3.0-rc.2...v0.3.0-rc.3
 [0.3.0-rc.2]: https://github.com/mamysh/iva/compare/v0.3.0-rc.1...v0.3.0-rc.2

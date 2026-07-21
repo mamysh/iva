@@ -15,10 +15,10 @@ readiness gate.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.4/install.sh | BRANCH=v0.3.0-rc.4 bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.5/install.sh | BRANCH=v0.3.0-rc.5 bash
 ```
 
-This installs the exact tested RC4. General users should wait for the stable-channel command in the
+This installs the exact RC5 candidate tag. Its release evidence is still being collected. General users should wait for the stable-channel command in the
 `v0.3.0` release notes; `main` is a moving development channel.
 
 The first question is your language — English or Russian — before anything touches the system. Input is read from `/dev/tty`, so the wizard stays interactive even piped through `curl`. If there's no terminal at all (Docker, CI), setup is skipped and the script prints how to run it later.
@@ -54,7 +54,7 @@ Re-running the same command later is safe: it reuses the existing checkout, fast
 Flags pass through the pipe with `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.4/install.sh | BRANCH=v0.3.0-rc.4 bash -s -- --skip-setup
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.5/install.sh | BRANCH=v0.3.0-rc.5 bash -s -- --skip-setup
 ```
 
 | Option | Effect |
@@ -63,7 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.4/install.sh |
 | `--non-interactive` | no questions at all — defaults only, wizard skipped |
 | `-h`, `--help` | show the built-in help and exit |
 | `REPO_URL=…` | install from a fork (default `https://github.com/mamysh/iva.git`) |
-| `BRANCH=…` | install a branch or tag (`v0.3.0-rc.4` for the current tested candidate) |
+| `BRANCH=…` | install a branch or tag (`v0.3.0-rc.5` for the current candidate) |
 | `INSTALL_DIR=…` | where the code goes (default `~/iva`) |
 
 The last three are environment variables, read by the script at startup.
