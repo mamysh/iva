@@ -29,6 +29,7 @@ import {
   selectPostgresSocketDirectory,
 } from "./lib/postgres-profile.mjs";
 import { resolveRuntimeWorkflowProfile } from "./lib/workflow-runtime.mjs";
+import { inspectLocalWorkflowState } from "./lib/local-workflow-state.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = join(ROOT, ".env");
@@ -304,7 +305,7 @@ async function enable({ serviceAcceptance = true } = {}) {
 
   const originalProfile = resolveRuntimeWorkflowProfile(ROOT).profile.backend;
   const originalEnvironment = snapshotProfileEnvironment();
-  const localStateExisted = existsSync(join(ROOT, ".workflow-data"));
+  const localStateBefore = inspectLocalWorkflowState(ROOT);
   let profileWritten = false;
   const smokeState = join("/tmp", `iva-workflow-smoke-${process.getuid?.() ?? "user"}.json`);
   try {
@@ -326,8 +327,10 @@ async function enable({ serviceAcceptance = true } = {}) {
     systemctl("restart");
     await waitForHealth(env);
     runSmoke("resume", smokeState, env);
-    if (!localStateExisted && existsSync(join(ROOT, ".workflow-data"))) {
-      throw new Error("PostgreSQL profile started but local .workflow-data was created");
+    const localStateAfter = inspectLocalWorkflowState(ROOT);
+    if ((!localStateBefore.legacyExists && localStateAfter.legacyExists) ||
+        (!localStateBefore.currentExists && localStateAfter.currentExists)) {
+      throw new Error("PostgreSQL profile started but local Workflow state was created");
     }
     console.log("PostgreSQL workflow profile enabled: bootstrap, readiness and restart/resume passed");
   } catch (error) {

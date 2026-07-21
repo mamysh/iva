@@ -5,6 +5,7 @@ import {
   renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { localWorkflowDataPath } from "./local-workflow-state.mjs";
 
 export const BACKUP_SCHEMA_VERSION = 1;
 const PRIVATE_FILE_MODE = 0o600;
@@ -232,7 +233,7 @@ export function createPortableBackup({
   if (!existsSync(join(appRoot, ".env"))) throw new Error("portable backup blocked: .env is missing");
   const dataDir = statePath(appRoot, env.ASSISTANT_DATA_DIR, "data");
   const vaultDir = statePath(appRoot, env.ASSISTANT_VAULT_DIR, "vault");
-  const workflowDir = statePath(appRoot, env.WORKFLOW_LOCAL_DATA_DIR, ".workflow-data");
+  const workflowDir = localWorkflowDataPath(appRoot);
   if (!existsSync(vaultDir)) throw new Error("portable backup blocked: live vault is missing");
   const privacy = auditPrivateState({ root: appRoot, environment: env });
   if (!privacy.ok) throw new Error("portable backup blocked: one or more secret state files are group/world accessible");
@@ -306,7 +307,7 @@ export function restorePortableBackup({
   };
   const dataDir = statePath(appRoot, restoredEnv.ASSISTANT_DATA_DIR, "data");
   const vaultDir = statePath(appRoot, restoredEnv.ASSISTANT_VAULT_DIR, "vault");
-  const workflowDir = statePath(appRoot, restoredEnv.WORKFLOW_LOCAL_DATA_DIR, ".workflow-data");
+  const workflowDir = localWorkflowDataPath(appRoot);
   if (!existsSync(join(appRoot, "package.json"))) throw new Error("portable restore target must be an installed Iva root");
   const targets = [dataDir, vaultDir, ...(metadata.source.profile === "local" ? [workflowDir] : [])]
     .map((path) => resolve(path));

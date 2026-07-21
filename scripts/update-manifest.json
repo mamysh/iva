@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "migrationVersion": 1,
+  "migrationVersion": 2,
   "migrations": [
     {
       "version": 1,
@@ -9,6 +9,14 @@
       "command": null,
       "backup": "none",
       "failureStrategy": "forward-compatible"
+    },
+    {
+      "version": 2,
+      "id": "eve-local-workflow-state-layout",
+      "profiles": ["local"],
+      "command": ["node", "scripts/migrate-local-workflow-state.mjs", "--root", "../.."],
+      "backup": "workflow",
+      "failureStrategy": "restore"
     }
   ]
 }

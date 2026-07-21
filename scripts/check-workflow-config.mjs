@@ -12,10 +12,12 @@ import {
   workflowAgentOptions,
 } from "./lib/workflow-config.mjs";
 import { resolveRuntimeWorkflowProfile } from "./lib/workflow-runtime.mjs";
+import { LOCAL_WORKFLOW_DATA_RELATIVE_PATH } from "./lib/local-workflow-state.mjs";
 
 const local = resolveWorkflowProfile({});
 assert.equal(local.backend, "local");
 assert.equal(local.world, LOCAL_WORKFLOW_WORLD);
+assert.equal(local.dataLocation, LOCAL_WORKFLOW_DATA_RELATIVE_PATH);
 assert.equal(resolveWorkflowProfile({ WORKFLOW_TARGET_WORLD: "local" }).backend, "local");
 assert.equal(resolveWorkflowProfile({ WORKFLOW_TARGET_WORLD: POSTGRES_WORKFLOW_WORLD }).backend, "postgres");
 assert.throws(() => resolveWorkflowProfile({ WORKFLOW_TARGET_WORLD: "postgres" }), /Unsupported WORKFLOW_TARGET_WORLD/);

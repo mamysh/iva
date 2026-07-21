@@ -90,7 +90,12 @@ One thing that trips people up: eve has a `defineSchedule` API, but on self-host
 
 ## Workflow backend
 
-Default installs use eve's local file-backed workflow state in `.workflow-data`. That is the lightest setup and needs no database. Long-running self-host installs can opt into the official PostgreSQL Workflow World instead:
+Default installs use eve's local file-backed workflow state in `.eve/.workflow-data`. That is the
+lightest setup and needs no database. The transactional updater copies legacy `.workflow-data` into
+the new location while writers are stopped, verifies the copy, activates it atomically and keeps the
+legacy directory for rollback. Portable backup includes only `.eve/.workflow-data`, not Eve build
+artifacts or caches. Long-running self-host installs can opt into the official PostgreSQL Workflow
+World instead:
 
 ```bash
 iva workflow-postgres enable

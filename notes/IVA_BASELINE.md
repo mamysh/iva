@@ -70,7 +70,7 @@ observability stages; it must be reproduced on Ubuntu/Node 24 before assigning s
 | Measurement | State | Fixture/procedure |
 |---|---|---|
 | Idle CPU and RSS | release baseline captured | clean Ubuntu fixture, local profile; longer soak belongs to stage 8 |
-| `.workflow-data` after 1/10/100 turns | release baseline captured | local profile with deterministic mock-provider turns |
+| `.workflow-data` after 1/10/100 turns | release baseline captured | historical Eve 0.11 local profile; Stage 8 moves future samples to `.eve/.workflow-data` |
 | Start and first-response time | release baseline captured | mock provider for infrastructure timing; live-provider canary recorded separately |
 | Build duration | release baseline captured | clean dependency cache on the Ubuntu fixture |
 

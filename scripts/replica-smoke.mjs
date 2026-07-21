@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "eve/client";
 import { Pool } from "pg";
 import { startMockOpenAiServer } from "./lib/mock-openai-server.mjs";
+import { LOCAL_WORKFLOW_DATA_RELATIVE_PATH, inspectLocalWorkflowState } from "./lib/local-workflow-state.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const baselineMode = process.argv.includes("--baseline");
@@ -399,7 +400,6 @@ async function portableRestoreCanary(port) {
   const targetEnvironment = {
     ASSISTANT_DATA_DIR: join(targetRoot, "data"),
     ASSISTANT_VAULT_DIR: join(targetRoot, "vault"),
-    WORKFLOW_LOCAL_DATA_DIR: join(targetRoot, ".workflow-data"),
   };
   let restoreDatabase;
   try {
@@ -425,7 +425,7 @@ async function portableRestoreCanary(port) {
         assert.equal(restoredRuns.rows[0].count, sourceRuns, "PostgreSQL restore lost durable workflow runs");
       } finally { await pool.end(); }
     } else {
-      assert.ok(existsSync(join(targetRoot, ".workflow-data")), "local restore did not recreate workflow state");
+      assert.ok(existsSync(join(targetRoot, LOCAL_WORKFLOW_DATA_RELATIVE_PATH)), "local restore did not recreate workflow state");
     }
   } finally {
     if (restoreDatabase) await dropRestoreDatabase(restoreDatabase.database);
@@ -519,7 +519,7 @@ try {
       assert.equal(result.message.trim(), "REPLICA_OK");
       assert.ok(mock.requests.length > requestCount, `turn ${turn} did not reach the mock provider`);
       if (turn === 1) firstResponseMs = Math.round(performance.now() - turnStarted);
-      if ([1, 10, 100].includes(turn)) sizes[String(turn)] = await directorySize(join(replica, ".workflow-data"));
+      if ([1, 10, 100].includes(turn)) sizes[String(turn)] = await directorySize(join(replica, LOCAL_WORKFLOW_DATA_RELATIVE_PATH));
       if (turn % 10 === 0 && turn < 100) {
         await stopEve(eve);
         eve = await startEve(port);
@@ -677,7 +677,10 @@ try {
   assert.equal(resume.message.trim(), marker);
 
   assert.ok(mock.requests.length >= 5);
-  if (postgresMode) assert.equal(existsSync(join(replica, ".workflow-data")), false, "PostgreSQL profile wrote local workflow state");
+  if (postgresMode) {
+    const localState = inspectLocalWorkflowState(replica);
+    assert.equal(localState.legacyExists || localState.currentExists, false, "PostgreSQL profile wrote local workflow state");
+  }
   if (jsonMode) {
     console.log(JSON.stringify({
       ok: true,

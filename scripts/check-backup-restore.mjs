@@ -60,7 +60,8 @@ try {
   privateFile(join(source, "vault/cards/canary-fact.md"), "---\nname: Restore fact\nstatus: active\nconfidence: HIGH\n---\nThe restore phrase is amber orchard 731.\n");
   privateFile(join(source, "vault/.index/embeddings.json"), '{"derived":true}\n');
   privateFile(join(source, "vault/.graph/links.json"), '{"derived":true}\n');
-  privateFile(join(source, ".workflow-data/session-marker.json"), '{"session":"durable-local-session"}\n');
+  privateFile(join(source, ".eve/.workflow-data/session-marker.json"), '{"session":"durable-local-session"}\n');
+  privateFile(join(source, ".eve/builds/generated-artifact.json"), '{"derived":true}\n');
 
   chmodSync(join(source, "data/codex-auth.json"), 0o644);
   assert.equal(auditPrivateState({ root: source }).ok, false, "permission audit missed a world-readable OAuth artifact");
@@ -84,6 +85,7 @@ try {
   assert.ok(verified.files.some((file) => file.path === "payload/data/tasks.json"));
   assert.ok(verified.files.some((file) => file.path === "payload/data/telegram-userbot.session"));
   assert.ok(verified.files.some((file) => file.path === "payload/workflow/local/session-marker.json"));
+  assert.ok(verified.files.every((file) => !file.path.includes("generated-artifact")), "derived .eve data entered the backup");
   assert.ok(verified.files.every((file) => !file.path.includes("/backups/")));
   assert.ok(verified.files.every((file) => !/health-metrics|health-alert-state|workflow-health/.test(file.path)));
   assert.ok(verified.files.every((file) => !/update\.lock|update-jobs/.test(file.path)));
@@ -100,7 +102,7 @@ try {
   assert.equal(restored.profile, "local");
   assert.equal(callTaskTool(join(target, "data"), { action: "list", includeDone: true }).tasks[0].text, "restored task");
   assert.equal((await loadReminders(join(target, "data/reminders.json")))[0].text, "restored reminder");
-  assert.equal(readFileSync(join(target, ".workflow-data/session-marker.json"), "utf8"), '{"session":"durable-local-session"}\n');
+  assert.equal(readFileSync(join(target, ".eve/.workflow-data/session-marker.json"), "utf8"), '{"session":"durable-local-session"}\n');
   assert.ok(existsSync(join(target, "data/telegram-userbot.session")), "full backup must restore opt-in session state");
   assert.ok(!existsSync(join(target, "vault/.index")) && !existsSync(join(target, "vault/.graph")), "derived indexes must be rebuilt");
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Upgrade the runtime to Eve 0.24.4 and stable AI SDK 7 packages without changing text/vision model
+  roles. Local Workflow state migrates atomically to `.eve/.workflow-data` with verified backup,
+  legacy rollback preservation and idempotent N−1→N update coverage. Transactional updates rebuild
+  Eve in the active source root after staging proof so restarts never depend on a removed worktree.
 - Add opt-in daily `origin/main` update notifications with private per-commit deduplication,
   timezone-aware systemd scheduling and owner-gated **View / Update / Later** Telegram buttons. The
   timer never installs code automatically.

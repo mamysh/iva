@@ -34,4 +34,10 @@ for (const id of [
   "deployment.update-runtime-state",
 ]) assert.ok(ids.has(id), `data manifest is missing ${id}`);
 
+const localWorkflow = manifest.entries.find(({ id }) => id === "workflow.local");
+const generatedRuntime = manifest.entries.find(({ id }) => id === "runtime.generated");
+assert.equal(localWorkflow.path, "${IVA_ROOT}/.eve/.workflow-data/**");
+assert.match(generatedRuntime.path, /excluding \.eve\/\.workflow-data/);
+assert.ok(ids.has("workflow.local-legacy-rollback"));
+
 console.log("data manifest checks passed");

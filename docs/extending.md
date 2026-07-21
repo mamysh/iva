@@ -128,7 +128,7 @@ What Iva knows about *you* is memory, not code — that's `CORE.md` in the vault
 ## Local development
 
 ```bash
-npm ci        # postinstall applies patches/eve+0.11.10.patch
+npm ci        # postinstall applies patches/eve+0.24.4.patch
 npm run dev   # eve dev TUI, server on http://127.0.0.1:2000
 npm exec -- eve dev --no-ui --logs all   # headless
 ```
@@ -145,5 +145,5 @@ console.log((await res.result()).message);
 Two gotchas:
 
 - ⚠️ **Schedule crash** — `eve dev` crashes if a schedule handler in `agent/` imports another authored module (a channel, for instance). That's why the repo ships no `agent/schedules/*.ts`: on a VPS `defineSchedule` never fires anyway, systemd timers do that job ([deploy.md](./deploy.md)).
-- 🩹 **patch-package** — `patches/eve+0.11.10.patch` makes deterministic model-call errors (invalid prompt, unknown tool) fail fast instead of retrying forever.
+- 🩹 **patch-package** — `patches/eve+0.24.4.patch` makes deterministic model-call errors (invalid prompt, unknown tool) fail fast instead of retrying forever; `scripts/check-eve-model-call-error.mjs` owns the regression contract.
 - 🧪 **Eve bumps** — run `npm test`, `npm run typecheck` and `npm run build` after changing `eve`; the tests include a deterministic model-error check and workflow backend config checks.

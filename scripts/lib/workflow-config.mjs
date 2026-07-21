@@ -1,3 +1,5 @@
+import { LOCAL_WORKFLOW_DATA_RELATIVE_PATH } from "./local-workflow-state.mjs";
+
 export const WORKFLOW_PROFILE_CONTRACT_VERSION = 1;
 export const POSTGRES_WORKFLOW_WORLD = "@workflow/world-postgres";
 export const LOCAL_WORKFLOW_WORLD = "@workflow/world-local";
@@ -28,7 +30,7 @@ export function resolveWorkflowProfile(env = process.env) {
       world: LOCAL_WORKFLOW_WORLD,
       agentWorld: undefined,
       buildTimePackage: LOCAL_WORKFLOW_WORLD,
-      dataLocation: ".workflow-data",
+      dataLocation: LOCAL_WORKFLOW_DATA_RELATIVE_PATH,
       schemaStatus: "embedded; managed by the local Workflow world",
     };
   }

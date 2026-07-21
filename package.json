@@ -35,16 +35,17 @@
     "release:soak": "node scripts/release-soak.mjs",
     "verify:pr": "npm test && npm run typecheck && npm run build",
     "typecheck": "tsgo",
-    "test": "node scripts/check-reasoning-strip.mjs && node scripts/check-vision.mjs && node scripts/check-model-role-baseline.mjs && node scripts/lib/env-file.test.mjs && node scripts/lib/model-config-transaction.test.mjs && node scripts/lib/model-wizard.test.mjs && node scripts/lib/model-probe.test.mjs && node scripts/lib/model-inventory.test.mjs && node scripts/lib/telegram-rich.test.mjs && node scripts/lib/telegram-delivery.test.mjs && node scripts/lib/systemd-history.test.mjs && node scripts/lib/update-progress.test.mjs && node scripts/lib/update-notification.test.mjs && node scripts/check-rich-report-policy.mjs && node scripts/check-model-config-probe.mjs && node scripts/check-bash-cwd.mjs && node scripts/check-workflow-config.mjs && node scripts/check-postgres-profile.mjs && node scripts/check-runtime-recovery.mjs && node scripts/check-systemd-unit-write.mjs && node scripts/check-doctor-contract.mjs && node scripts/check-health-metrics.mjs && node scripts/check-extension-contracts.mjs && node scripts/check-release-contract.mjs && node scripts/check-update-transaction.mjs && node scripts/check-update-channel.mjs && node scripts/check-data-manifest.mjs && node scripts/check-backup-restore.mjs && node scripts/check-reminders-store.mjs && node scripts/check-telegram-update.mjs && node scripts/check-memory-guards.mjs && node scripts/check-integration-invariants.mjs && node scripts/check-capability-manifest.mjs && node scripts/check-core-canaries.mjs && node scripts/check-install-readiness.mjs && node scripts/check-test-policy.mjs && node scripts/check-public-docs.mjs",
+    "test": "node scripts/check-eve-model-call-error.mjs && node scripts/check-reasoning-strip.mjs && node scripts/check-vision.mjs && node scripts/check-model-role-baseline.mjs && node scripts/lib/env-file.test.mjs && node scripts/lib/model-config-transaction.test.mjs && node scripts/lib/model-wizard.test.mjs && node scripts/lib/model-probe.test.mjs && node scripts/lib/model-inventory.test.mjs && node scripts/lib/local-workflow-state.test.mjs && node scripts/lib/telegram-rich.test.mjs && node scripts/lib/telegram-delivery.test.mjs && node scripts/lib/systemd-history.test.mjs && node scripts/lib/update-progress.test.mjs && node scripts/lib/update-notification.test.mjs && node scripts/check-rich-report-policy.mjs && node scripts/check-model-config-probe.mjs && node scripts/check-bash-cwd.mjs && node scripts/check-workflow-config.mjs && node scripts/check-postgres-profile.mjs && node scripts/check-runtime-recovery.mjs && node scripts/check-systemd-unit-write.mjs && node scripts/check-doctor-contract.mjs && node scripts/check-health-metrics.mjs && node scripts/check-extension-contracts.mjs && node scripts/check-release-contract.mjs && node scripts/check-update-transaction.mjs && node scripts/check-update-channel.mjs && node scripts/check-data-manifest.mjs && node scripts/check-backup-restore.mjs && node scripts/check-reminders-store.mjs && node scripts/check-telegram-update.mjs && node scripts/check-memory-guards.mjs && node scripts/check-integration-invariants.mjs && node scripts/check-capability-manifest.mjs && node scripts/check-core-canaries.mjs && node scripts/check-install-readiness.mjs && node scripts/check-test-policy.mjs && node scripts/check-public-docs.mjs",
     "postinstall": "patch-package"
   },
   "dependencies": {
-    "@ai-sdk/openai": "4.0.0-beta.76",
-    "@ai-sdk/openai-compatible": "^3.0.0-beta.57",
+    "@ai-sdk/openai": "4.0.15",
+    "@ai-sdk/openai-compatible": "3.0.11",
     "@vercel/connect": "0.2.2",
+    "@workflow/world-local": "5.0.0-beta.28",
     "@workflow/world-postgres": "5.0.0-beta.23",
-    "ai": "7.0.0-beta.178",
-    "eve": "0.11.10",
+    "ai": "7.0.29",
+    "eve": "0.24.4",
     "just-bash": "^3.0.1",
     "pg": "8.20.0",
     "zod": "4.4.3"
@@ -55,10 +56,10 @@
     "patch-package": "^8.0.1"
   },
   "overrides": {
-    "ai": "7.0.0-beta.178"
+    "ai": "7.0.29"
   },
   "resolutions": {
-    "ai": "7.0.0-beta.178"
+    "ai": "7.0.29"
   },
   "engines": {
     "node": "24.x"
