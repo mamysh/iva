@@ -51,6 +51,13 @@ From Telegram, `/restart` restarts only the agent process. `/new`, `/clear` and 
 
 Both services use a bounded systemd restart policy: five starts in five minutes, then cooldown instead of an endless restart loop.
 
+### Daily update offer did not arrive
+
+Run `iva update-check status`. The feature must say `enabled` and its timer must be enabled. Use
+`iva update-check on` to repair both and trigger one immediate read-only check. The same target commit
+is intentionally notified only once; `iva update-check run` does not resend a successful prior offer.
+Remote or Telegram outages do not affect normal replies and are retried by the next timer run.
+
 ### Disk, inode, swap, or growth warning
 
 Run `iva status`, then `iva doctor`. The summary shows whether Workflow growth is stable and how

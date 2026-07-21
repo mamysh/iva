@@ -35,7 +35,11 @@ try {
 
   installUnits();
   const servicePath = join(unitDir, "iva.service");
+  const updateTimerPath = join(unitDir, "iva-update-check.timer");
   assert.equal(existsSync(servicePath), true);
+  assert.equal(existsSync(updateTimerPath), true);
+  assert.match(readFileSync(updateTimerPath, "utf8"), /OnCalendar=\*-\*-\* 10:00:00 [A-Za-z0-9_+\/-]+/);
+  assert.doesNotMatch(readFileSync(updateTimerPath, "utf8"), /__ASSISTANT_TIMEZONE__/);
   assert.match(readFileSync(logPath, "utf8"), /--user daemon-reload/);
   const original = readFileSync(servicePath, "utf8");
   const originalMtime = statSync(servicePath, { bigint: true }).mtimeNs;

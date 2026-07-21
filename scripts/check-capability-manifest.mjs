@@ -36,18 +36,24 @@ assert.deepEqual(manifest.controls.telegram.delivery.fallbackOrder, ["rich", "ht
 assert.equal(manifest.controls.telegram.delivery.securityBeforeTransport, true);
 assert.ok(manifest.systemd.managedTimers.includes("iva-reminders.timer"));
 assert.ok(manifest.systemd.managedTimers.includes("iva-observe.timer"));
+assert.deepEqual(manifest.systemd.optionalTimers, ["iva-update-check.timer"]);
+assert.ok(!manifest.systemd.defaultTimers.includes("iva-update-check.timer"));
 assert.equal(manifest.extensions.contractVersion, 1);
 assert.deepEqual(manifest.extensions.types, [
   "provider", "tool", "skill", "channel-connection", "hook", "subagent", "background-job-timer", "memory-processor-indexer",
 ]);
 assert.equal(manifest.extensions.backgroundPolicy, "managed-oneshot-only");
-assert.deepEqual(manifest.extensions.optionalFeatures, [{ name: "telegram-userbot", status: "beta", activation: "iva userbot setup" }]);
+assert.deepEqual(manifest.extensions.optionalFeatures, [
+  { name: "telegram-userbot", status: "beta", activation: "iva userbot setup" },
+  { name: "update-notifications", status: "stable", activation: "iva update-check on" },
+]);
 assert.equal(manifest.storage.defaultProfile, "local");
 assert.ok(manifest.storage.profiles.some(({ name, world }) => name === "postgres" && world === "@workflow/world-postgres"));
 assert.equal(manifest.storage.lifecycle.recoverCommand, "iva recover");
 assert.equal(manifest.storage.lifecycle.updateTransactionSource, "scripts/update-runtime.mjs");
 assert.equal(manifest.storage.lifecycle.updateLockSource, "scripts/lib/update-lock.mjs");
 assert.equal(manifest.storage.lifecycle.updateProgressSource, "scripts/lib/update-progress.mjs");
+assert.equal(manifest.storage.lifecycle.updateNotificationSource, "scripts/lib/update-notification.mjs");
 assert.equal(manifest.storage.lifecycle.backupCommand, "iva backup");
 assert.equal(manifest.storage.lifecycle.restoreCommand, "iva restore <portable-backup-directory>");
 assert.equal(manifest.storage.lifecycle.dataManifest, "scripts/data-manifest.json");

@@ -1,0 +1,11 @@
+[Unit]
+Description=Iva read-only update notification check
+After=network-online.target
+
+[Service]
+Type=oneshot
+RuntimeMaxSec=2min
+WorkingDirectory=__PROJECT_DIR__
+EnvironmentFile=__PROJECT_DIR__/.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=__NODE_BIN__ --env-file=.env scripts/update-check.mjs

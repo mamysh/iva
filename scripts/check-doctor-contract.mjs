@@ -8,6 +8,7 @@ const healthy = {
   configuration: { nodeSupported: true, nodeMajor: 24, required: true, provider: "ollama", search: true, searchProvider: "tavily", memory: true, memoryMode: "hybrid" },
   build: { present: true, profileMatch: true, profile: "postgres" },
   services: { systemd: true, agentActive: true, bridgeActive: true, agentRestarts: 0, bridgeRestarts: 0, health: true, timersReady: true, timersEnabled: 7, timersExpected: 7 },
+  updates: { enabled: false, timerEnabled: false, stateValid: true, lastCheckedAt: null },
   workflow: { backend: "postgres", available: true, schemaCurrent: true, writeRead: true, wedged: 0, runawayGrowth: false, chunks: 10 },
   telegram: { configured: true, bridgeReady: true },
   provider: { configured: true, name: "ollama", lastSuccessAt: recent },
@@ -51,6 +52,13 @@ const degraded = evaluateDoctorSnapshot({
 }, { now });
 assert.equal(degraded.status, "degraded");
 assert.equal(degraded.exitCode, 0);
+
+const updateNotificationsBroken = evaluateDoctorSnapshot({
+  ...healthy,
+  updates: { enabled: true, timerEnabled: false, stateValid: true, lastCheckedAt: null },
+}, { now });
+assert.equal(updateNotificationsBroken.checks.find((item) => item.id === "updates.notifications")?.status, "warn");
+assert.equal(updateNotificationsBroken.exitCode, 0);
 
 const capacityWarnings = evaluateDoctorSnapshot({
   ...healthy,

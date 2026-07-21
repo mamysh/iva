@@ -3,6 +3,7 @@ export const DOCTOR_COMPONENTS = Object.freeze([
   "configuration",
   "build",
   "services",
+  "updates",
   "workflow",
   "telegram",
   "provider",
@@ -106,6 +107,20 @@ export function evaluateDoctorSnapshot(snapshot, { now = Date.now(), fixed = [] 
     failureStatus: "warn", severity: "error", summary: "A service is repeatedly restarting",
     evidence: { agentRestarts: Number(snapshot.services?.agentRestarts || 0), bridgeRestarts: Number(snapshot.services?.bridgeRestarts || 0) },
     fix: fix("manual", "journalctl --user -u iva.service -u iva-telegram-poll.service -n 100"),
+  });
+
+  const updateCheckAge = ageHours(snapshot.updates?.lastCheckedAt, now);
+  add("updates.notifications", "updates", !snapshot.updates?.enabled || (
+    Boolean(snapshot.updates?.timerEnabled) && snapshot.updates?.stateValid !== false
+  ), {
+    failureStatus: "warn", severity: "warning", summary: "Opt-in update notifications are not ready",
+    evidence: {
+      enabled: Boolean(snapshot.updates?.enabled),
+      timerEnabled: Boolean(snapshot.updates?.timerEnabled),
+      stateValid: snapshot.updates?.stateValid !== false,
+      lastCheckAgeHours: updateCheckAge,
+    },
+    fix: fix("automatic", "iva update-check on"),
   });
 
   add("workflow.available", "workflow", Boolean(snapshot.workflow?.available), {

@@ -56,6 +56,7 @@ try {
   privateFile(join(source, "data/workflow-health.json"), '{"derived":true}\n');
   privateFile(join(source, "data/update.lock/owner.json"), '{"derived":true}\n');
   privateFile(join(source, "data/update-jobs/synthetic.json"), '{"derived":true}\n');
+  privateFile(join(source, "data/update-notification-state.json"), '{"schemaVersion":1,"lastCheckedCommit":"aaaaaaaa","lastNotifiedCommit":"aaaaaaaa"}\n');
   privateFile(join(source, "vault/cards/canary-fact.md"), "---\nname: Restore fact\nstatus: active\nconfidence: HIGH\n---\nThe restore phrase is amber orchard 731.\n");
   privateFile(join(source, "vault/.index/embeddings.json"), '{"derived":true}\n');
   privateFile(join(source, "vault/.graph/links.json"), '{"derived":true}\n');
@@ -86,6 +87,7 @@ try {
   assert.ok(verified.files.every((file) => !file.path.includes("/backups/")));
   assert.ok(verified.files.every((file) => !/health-metrics|health-alert-state|workflow-health/.test(file.path)));
   assert.ok(verified.files.every((file) => !/update\.lock|update-jobs/.test(file.path)));
+  assert.ok(verified.files.every((file) => !file.path.includes("update-notification-state.json")));
   assert.ok(verified.files.every((file) => !file.path.includes("/.index/") && !file.path.includes("/.graph/")));
   assert.ok(verified.files.every((file) => !file.path.startsWith("payload/vault/data/")), "vault-only recovery must not imply application-data recovery");
   assertPrivate(backup);

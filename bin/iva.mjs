@@ -13,6 +13,9 @@ import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { resolveRuntimeWorkflowProfile } from "../scripts/lib/workflow-runtime.mjs";
 import { resolveUpdateChannel, updateChannelRef } from "../scripts/lib/update-channel.mjs";
+import {
+  readUpdateNotificationState, repairUpdateNotificationState, updateCheckEnabled,
+} from "../scripts/lib/update-notification.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = join(ROOT, ".env");
@@ -27,6 +30,7 @@ const childEnv = { ...process.env, PATH: `${NODE_BIN_DIR}:${process.env.PATH || 
 const SERVICES = ["iva.service", "iva-telegram-poll.service"];
 const MEMORY_TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((n) => `iva-memory-${n}.timer`);
 const TIMERS = [...MEMORY_TIMERS, "iva-reminders.timer", "iva-observe.timer"];
+const UPDATE_CHECK_TIMER = "iva-update-check.timer";
 
 // Telegram userbot proxy — OPT-IN (not in SERVICES, so `iva update` never tries to start
 // it without API creds). Enabled explicitly via `iva userbot setup`.
@@ -161,12 +165,15 @@ function writeUnits() {
   let changed = writeUnitIfChanged(join(UNIT_DIR, "iva.service"), ivaServiceBody());
   const written = ["iva.service"];
   const deploy = join(ROOT, "deploy");
+  const timezone = String(readEnv().ASSISTANT_TIMEZONE || "UTC").trim();
+  if (!/^[A-Za-z0-9_+\/-]+$/.test(timezone)) throw new Error("ASSISTANT_TIMEZONE is not a safe IANA timezone name");
   for (const f of readdirSync(deploy)) {
     if (!/^iva-.*\.(service|timer)$/.test(f)) continue;
     const tpl = readFileSync(join(deploy, f), "utf8")
       .replaceAll("__PROJECT_DIR__", ROOT)
       .replaceAll("__NODE_BIN__", NODE)
-      .replaceAll("__PYTHON_BIN__", VENV_PY);
+      .replaceAll("__PYTHON_BIN__", VENV_PY)
+      .replaceAll("__ASSISTANT_TIMEZONE__", timezone);
     changed = writeUnitIfChanged(join(UNIT_DIR, f), tpl) || changed;
     written.push(f);
   }
@@ -174,9 +181,25 @@ function writeUnits() {
   return written;
 }
 
+function syncUpdateCheckTimer({ strict = false } = {}) {
+  const enabled = updateCheckEnabled(readEnv());
+  const installed = scQ("is-enabled", UPDATE_CHECK_TIMER).out === "enabled";
+  if (enabled && !installed) {
+    sc("enable", "--now", UPDATE_CHECK_TIMER);
+  } else if (!enabled && installed) {
+    sc("disable", "--now", UPDATE_CHECK_TIMER);
+  }
+  const actual = scQ("is-enabled", UPDATE_CHECK_TIMER).out === "enabled";
+  if (strict && actual !== enabled) {
+    throw new Error(`Could not ${enabled ? "enable" : "disable"} ${UPDATE_CHECK_TIMER}`);
+  }
+  return actual !== installed;
+}
+
 function enableUnits() {
   sc("enable", "--now", ...SERVICES);
   for (const t of TIMERS) sc("enable", "--now", t);
+  syncUpdateCheckTimer();
 }
 
 function removeUnits() {
@@ -221,6 +244,7 @@ function restartServices() {
   for (const timer of TIMERS) {
     if (scQ("is-enabled", timer).out !== "enabled") sc("enable", "--now", timer);
   }
+  syncUpdateCheckTimer();
   sc("restart", ...SERVICES);
 }
 
@@ -422,6 +446,7 @@ function cmdDoctor(args) {
         timerFixed = true;
       }
       if (timerFixed) fixed.push("services.timers");
+      if (syncUpdateCheckTimer()) fixed.push("updates.notifications");
     }
   }
   const result = run(NODE, ["scripts/doctor.mjs", ...(json ? ["--json"] : [])], {
@@ -439,10 +464,58 @@ function cmdStatus() {
   } catch (error) {
     console.log(`Update channel: blocked (${error.message})`);
   }
+  const updateNotificationsEnabled = updateCheckEnabled(readEnv());
+  let lastUpdateCheck = "never";
+  try {
+    const state = readUpdateNotificationState(dataDirAbs());
+    if (state.lastCheckedAt) lastUpdateCheck = state.lastCheckedAt;
+  } catch {
+    lastUpdateCheck = "invalid state";
+  }
+  const updateTimer = hasSystemd() ? (scQ("is-enabled", UPDATE_CHECK_TIMER).out || "disabled") : "unavailable";
+  console.log(`Update notifications: ${updateNotificationsEnabled ? "enabled" : "disabled"} · timer ${updateTimer} · last check ${lastUpdateCheck}`);
   run(NODE, ["scripts/observe.mjs", "status"]);
   requireSystemd();
   console.log(`Services: agent ${scQ("is-active", SERVICES[0]).out || "unknown"} · Telegram ${scQ("is-active", SERVICES[1]).out || "unknown"}`);
   console.log(`Collector: ${scQ("is-enabled", "iva-observe.timer").out || "disabled"}`);
+}
+
+function cmdUpdateCheck(args) {
+  const sub = args[0] || "status";
+  if (!["on", "off", "run", "status"].includes(sub)) {
+    bad("Usage: iva update-check on|off|run|status");
+    process.exit(1);
+  }
+  if (sub === "status") {
+    const configured = updateCheckEnabled(readEnv());
+    const timer = hasSystemd() ? (scQ("is-enabled", UPDATE_CHECK_TIMER).out || "disabled") : "unavailable";
+    let state;
+    try { state = readUpdateNotificationState(dataDirAbs()); } catch { state = null; }
+    console.log(`Update notifications: ${configured ? "enabled" : "disabled"} · timer ${timer}`);
+    console.log(`Last check: ${state?.lastCheckedAt || "never"} · last notified target: ${state?.lastNotifiedCommit?.slice(0, 7) || "none"}`);
+    return;
+  }
+  requireSystemd();
+  writeUnits();
+  if (sub === "on") {
+    writeEnvVars({ IVA_UPDATE_CHECK_ENABLED: "true" });
+    repairUpdateNotificationState(dataDirAbs());
+    syncUpdateCheckTimer({ strict: true });
+    const started = sc("start", "iva-update-check.service");
+    if ((started.status ?? 1) !== 0) throw new Error("Update check service failed to start");
+    ok("Daily update notifications enabled; updates still require a Telegram button confirmation");
+    return;
+  }
+  if (sub === "off") {
+    writeEnvVars({ IVA_UPDATE_CHECK_ENABLED: "false" });
+    syncUpdateCheckTimer({ strict: true });
+    ok("Daily update notifications disabled");
+    return;
+  }
+  const result = run(NODE, ["--env-file=.env", "scripts/update-check.mjs"], {
+    env: { ...childEnv, IVA_UPDATE_CHECK_ENABLED: "true" },
+  });
+  if ((result.status ?? 1) !== 0) process.exit(result.status ?? 1);
 }
 function cmdRestart() {
   requireSystemd();
@@ -633,6 +706,7 @@ ${C.b}Commands:${C.x}
   ${C.c}iva login${C.x} [--browser]  sign in to an OpenAI subscription (ChatGPT) for MODEL_PROVIDER=codex
   ${C.c}iva doctor${C.x}         diagnose and safely auto-repair the install
   ${C.c}iva status${C.x}         concise health, growth and capacity summary
+  ${C.c}iva update-check${C.x} on|off|run|status  opt-in daily update notifications
   ${C.c}iva restart${C.x}        restart the agent and Telegram bridge
   ${C.c}iva recover${C.x}        diagnose and safely restart without deleting workflow state
   ${C.c}iva reset${C.x}          cancel all active workflow sessions (confirmation required)
@@ -692,6 +766,7 @@ function writeEnvVars(vars) {
     raw = re.test(raw) ? raw.replace(re, line) : raw.replace(/\n*$/, "\n") + line + "\n";
   }
   writeFileSync(ENV_PATH, raw);
+  chmodSync(ENV_PATH, 0o600);
 }
 
 // Generate the proxy bearer once, into a 0600 file both sides read at runtime.
@@ -785,6 +860,7 @@ const cmds = {
   login: cmdLogin,
   doctor: cmdDoctor,
   status: cmdStatus,
+  "update-check": cmdUpdateCheck,
   restart: cmdRestart,
   recover: cmdRecover,
   reset: cmdReset,
@@ -803,6 +879,7 @@ const cmds = {
   "-h": cmdHelp,
   // internal subcommand — install.sh delegates unit writing here (DRY)
   "_install-units": () => ok(`systemd units written: ${writeUnits().length}`),
+  "_sync-update-check-timer": () => { requireSystemd(); syncUpdateCheckTimer({ strict: true }); },
 };
 
 const fn = cmds[cmd];

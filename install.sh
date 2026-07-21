@@ -567,8 +567,11 @@ elif prompt_yes_no "$(t "Set up autostart via systemd (service + timers)?" "За
     for t in "$PROJECT_DIR"/deploy/iva-*.timer; do
       [ -e "$t" ] || continue
       tname="$(basename "$t")"
+      [ "$tname" = "iva-update-check.timer" ] && continue
       systemctl --user enable --now "$tname" || warn "$(t "couldn't enable $tname" "не удалось включить $tname")"
     done
+    node "$PROJECT_DIR/bin/iva.mjs" _sync-update-check-timer \
+      || warn "$(t "couldn't synchronize the opt-in update timer" "не удалось синхронизировать opt-in таймер обновлений")"
     ok "$(t "Timers enabled: systemctl --user list-timers" "Таймеры включены: systemctl --user list-timers")"
   fi
   loginctl enable-linger "$USER" >/dev/null 2>&1 || warn "$(t "couldn't enable linger (the service won't start before login)" "не удалось включить linger (сервис не стартует до логина)")"

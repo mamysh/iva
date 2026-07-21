@@ -25,6 +25,8 @@ export function packageVersion(jsonText) {
 export function parseUpdateAction(data) {
   if (data === "iva_update:do") return "do";
   if (data === "iva_update:skip") return "skip";
+  if (data === "iva_update:later") return "later";
+  if (data === "iva_update:view") return "view";
   return null;
 }
 

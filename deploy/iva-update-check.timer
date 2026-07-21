@@ -1,0 +1,13 @@
+[Unit]
+Description=Iva daily opt-in update notification
+
+[Timer]
+OnBootSec=10min
+OnCalendar=*-*-* 10:00:00 __ASSISTANT_TIMEZONE__
+RandomizedDelaySec=30min
+AccuracySec=5min
+Persistent=true
+Unit=iva-update-check.service
+
+[Install]
+WantedBy=timers.target

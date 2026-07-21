@@ -44,6 +44,7 @@ Public product and operations documentation starts at [`docs/README.md`](docs/RE
 | Vault skeleton | `vault-template/` | Copied only when initializing an empty live vault. |
 | Memory search index | live vault `.index/` | Derived and rebuildable, not a source of truth. |
 | Tasks/reminders/usage | `ASSISTANT_DATA_DIR` (`data/` by default) | Private and ignored application data. |
+| Update notification dedup | `scripts/lib/update-notification.mjs` + private `ASSISTANT_DATA_DIR/update-notification-state.json` | Derived per-target state; excluded from portable backup. |
 | Data inventory and portable backup | `scripts/data-manifest.json` + `scripts/lib/portable-backup.mjs` | Sanitized catalog plus checksum/restore contract; operational writer control is in `scripts/backup-runtime.mjs`. |
 | Extension contracts | `scripts/extension-contracts.json` + `scripts/lib/extension-contracts.mjs` | Static validation metadata, not a plugin loader; inert examples live in `examples/extensions/`. |
 | Release contract | `scripts/release-contract.json` + `scripts/lib/release-contract.mjs` | Immutable tag identity, required matrix scenarios, supported platforms and soak thresholds. |
@@ -73,6 +74,7 @@ bin/iva.mjs                  Operator CLI and systemd-unit generator
 scripts/                     Install-time, polling, memory and maintenance programs
   setup.mjs                  Interactive .env wizard
   telegram-poll.mjs          Long-poll bridge and out-of-band Telegram commands
+  update-check.mjs           Opt-in read-only origin/main comparison and Telegram update offer
   model-config-probe.mjs     Bounded synthetic text-tool/vision capability probe child
   lib/model-wizard.mjs       Owner/chat-bound Telegram model picker state and rendering
   lib/model-config-transaction.mjs  Locked .env apply, agent readiness and rollback
@@ -80,6 +82,7 @@ scripts/                     Install-time, polling, memory and maintenance progr
   lib/update-channel.mjs     Allowlisted origin/main state and safe legacy tracking migration
   lib/update-lock.mjs        Atomic cross-entrypoint update lock with dead-owner recovery
   lib/update-progress.mjs    Private Telegram run handoff and single-message phase reporter
+  lib/update-notification.mjs Private SHA dedup state and View/Update/Later offer rendering
   lib/telegram-delivery.mjs  Rich → HTML → plain Telegram delivery policy
   daily-digest.ts            Digest entry point
   reminders-run.mjs          Short-lived reminder dispatcher
@@ -238,6 +241,12 @@ Telegram update button
   -> scripts/lib/update-progress.mjs edits the original message through every phase
   -> at most one final fallback message if Telegram can no longer edit the original
 
+iva-update-check.timer (opt-in)
+  -> scripts/update-check.mjs fetches/compares the persistent origin/main channel only
+  -> scripts/lib/update-notification.mjs deduplicates by target commit in private derived state
+  -> Telegram View rechecks and lists bounded commit subjects
+  -> Telegram Update enters the existing owner-gated transactional flow; timer never installs code
+
 iva backup / iva restore
   -> bin/iva.mjs
   -> scripts/backup-runtime.mjs stops every managed writer
@@ -282,6 +291,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | Workflow backend | `scripts/lib/workflow-config.mjs` | agent, package versions, smoke script | config test, both builds, restart/resume |
 | PostgreSQL profile | `scripts/postgres-profile.mjs` + `scripts/lib/postgres-profile.mjs` | deploy examples, upstream package migrations | config test, real PostgreSQL bootstrap + smoke |
 | Update behavior | `scripts/update-runtime.mjs` + `scripts/lib/update-contract.mjs` | persistent channel resolver, CLI, Telegram update, migration manifest | channel/update contracts, clean-install build/readiness rollback fixture |
+| Update notifications | `scripts/update-check.mjs` + `scripts/lib/update-notification.mjs` | persistent channel, Telegram callbacks, generated opt-in timer, doctor/status | notification SHA dedup test, Telegram/update channel tests, unit writer, both replicas |
 | Backup, restore, server moves | `scripts/data-manifest.json` + `scripts/lib/portable-backup.mjs` | backup runtime, CLI, data docs, both Workflow profiles | manifest/restore contract, both disposable replicas, clean-host drill |
 | Health metrics and capacity | `scripts/lib/health-metrics.mjs` + `scripts/observe.mjs` | doctor, status, Workflow health, observe timer | health metrics contract, doctor contract, both disposable replicas |
 | Extension contract or example | `scripts/extension-contracts.json` + `examples/extensions/` | extending docs, security, capability manifest | extension contract test, capability diff, relevant behavior canary |
@@ -305,6 +315,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | `check-update-transaction.mjs` | Preflight, sequential migration, backup/restore and activation rollback ordering for both profiles. |
 | `check-update-channel.mjs` | Persistent origin/main state, safe legacy tracking migration and checkout isolation. |
 | `lib/update-progress.test.mjs` | Cross-entrypoint lock ownership/recovery and Telegram single-message/fallback behavior. |
+| `lib/update-notification.test.mjs` | Explicit opt-in, private atomic state, per-target SHA dedup and notification button contract. |
 | `check-reminders-store.mjs` | Reminder persistence and scheduling behavior. |
 | `check-telegram-update.mjs` | Out-of-band Telegram update flow. |
 | `check-memory-guards.mjs` | CORE and vault failure guards. |

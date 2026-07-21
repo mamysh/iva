@@ -32,10 +32,16 @@ expire after five minutes.
 `origin/main`; a temporary checkout cannot silently change it, and `upstream/main` is never a production
 channel. Legacy installs are pinned only when their factual tracking branch is already `origin/main`.
 If a newer version exists, Iva replies with the version bump and two buttons — **⬆️ Update** and
-**Skip**. Update pulls the reviewed fork branch, rebuilds and restarts Iva in its own detached scope
+**Later**. Update pulls the reviewed fork branch, rebuilds and restarts Iva in its own detached scope
 (so the restart of the bridge can't kill the update mid-flight), then reports ✅ or ❌ back in the
 chat. Nothing happens until you tap. Changes from the source `smixs/iva` repository are integrated
 into this deployment repository separately before they can reach production.
+
+Daily offers are opt-in: `iva update-check on` enables a timezone-aware systemd timer. A new target
+commit is offered once with **View / Update / Later** buttons. **View** lists up to five fetched commit
+subjects, **Update** enters the same transactional flow as `/update`, and **Later** only closes the
+offer. The timer never installs code. `iva update-check off` disables it; `run` performs one manual
+check and `status` shows the private dedup state without chat IDs or credentials.
 
 ### /usage variants
 
@@ -63,6 +69,7 @@ The installer puts `iva` in `~/.local/bin`. Commands that touch systemd need a L
 | `iva login [--browser]` | Sign in to an OpenAI (ChatGPT) subscription for `MODEL_PROVIDER=codex`. Default is device code (a link + one-time code, works on a headless VPS); `--browser` runs the local PKCE flow. Token → `data/codex-auth.json` (chmod 600) |
 | `iva doctor [--json]` | Layered health check for configuration, build/profile, services, Workflow storage, Telegram, provider, memory, backups and capacity. The human command applies only safe service/build repairs; `--json` returns a sanitized support/CI report without auto-repair |
 | `iva status` | Explicit sanitized update channel plus a concise hourly baseline: service RSS/restarts, Workflow size/growth and queue, oldest active run, recent successful jobs/backup, disk/inodes and swap |
+| `iva update-check on\|off\|run\|status` | Enable/disable the opt-in daily update offer, run one read-only check, or show its timer/dedup status. It never installs an update without the Telegram confirmation button. |
 | `iva restart` | Process lifecycle only: regenerate units and restart agent + bridge without changing durable workflow state |
 | `iva recover` | Stop the agent, repair interrupted steps, abandon only interrupted child turns, restart and re-enqueue durable work; refuses to mutate state when storage is unavailable |
 | `iva reset` | With confirmation, cancel every active workflow session and restart the agent; preserve terminal history, storage, vault, tasks and reminders |

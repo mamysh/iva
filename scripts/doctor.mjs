@@ -14,12 +14,14 @@ import { providerAccessConfigured } from "./lib/model-catalog.mjs";
 import { resolveModelRoles } from "./lib/model-profile.mjs";
 import { readEntries } from "./lib/usage.mjs";
 import { lastSuccessfulUnitRun } from "./lib/systemd-history.mjs";
+import { readUpdateNotificationState, updateCheckEnabled } from "./lib/update-notification.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = join(ROOT, ".env");
 const PROFILE_ENV_PATH = join(ROOT, "deploy/iva-workflow.environment");
 const SERVICES = ["iva.service", "iva-telegram-poll.service"];
 const TIMERS = ["daily", "weekly", "monthly", "yearly", "doctor"].map((name) => `iva-memory-${name}.timer`).concat("iva-reminders.timer", "iva-observe.timer");
+const UPDATE_CHECK_TIMER = "iva-update-check.timer";
 const json = process.argv.includes("--json");
 
 function readEnvFile(path) {
@@ -216,6 +218,12 @@ const systemd = command("systemctl", ["--user", "show-environment"]).code === 0;
 const agent = serviceSnapshot(systemd, SERVICES[0]);
 const bridge = serviceSnapshot(systemd, SERVICES[1]);
 const timersEnabled = systemd ? TIMERS.filter((name) => command("systemctl", ["--user", "is-enabled", "--quiet", name]).code === 0).length : 0;
+const updateNotificationsEnabled = updateCheckEnabled(env);
+const updateNotificationTimerEnabled = systemd && command("systemctl", ["--user", "is-enabled", "--quiet", UPDATE_CHECK_TIMER]).code === 0;
+let updateNotificationStateValid = true;
+let updateNotificationLastCheckedAt = null;
+try { updateNotificationLastCheckedAt = readUpdateNotificationState(dataDir).lastCheckedAt; }
+catch { updateNotificationStateValid = false; }
 const workflow = await workflowSnapshot();
 const usage = readEntries(dataDir);
 const providerLastSuccess = [...usage].reverse().find((entry) => !entry.error)?.ts || null;
@@ -235,6 +243,12 @@ const report = evaluateDoctorSnapshot({
   services: {
     systemd, agentActive: agent.active, bridgeActive: bridge.active, agentRestarts: agent.restarts, bridgeRestarts: bridge.restarts,
     health: await healthOk(), timersReady: timersEnabled === TIMERS.length, timersEnabled, timersExpected: TIMERS.length,
+  },
+  updates: {
+    enabled: updateNotificationsEnabled,
+    timerEnabled: updateNotificationTimerEnabled,
+    stateValid: updateNotificationStateValid,
+    lastCheckedAt: updateNotificationLastCheckedAt,
   },
   workflow,
   telegram: { configured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_ALLOWED_USER_IDS), bridgeReady: bridge.active },

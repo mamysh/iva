@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Add opt-in daily `origin/main` update notifications with private per-commit deduplication,
+  timezone-aware systemd scheduling and owner-gated **View / Update / Later** Telegram buttons. The
+  timer never installs code automatically.
 - Prepare the public project surface for outside adopters: honest RC/stable installation guidance,
   complete English/Russian owner documentation, security and contribution policies, and bilingual
   issue templates.

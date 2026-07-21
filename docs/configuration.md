@@ -53,6 +53,7 @@ For `codex` there is no API key in `.env`: run `iva login` (device code, headles
 | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | — | Shared secret between the long-poll bridge and the local webhook. Any long random string. |
 | `TELEGRAM_ALLOWED_USER_IDS` | *(empty)* | Comma-separated numeric user IDs allowed to talk to Iva. |
 | `TELEGRAM_DIGEST_CHAT_ID` | — | Chat that receives the morning digest and nightly memory reports. Usually your own chat ID. |
+| `IVA_UPDATE_CHECK_ENABLED` | `false` | Opt-in daily read-only check of the private `origin/main` update channel. Sends one Telegram offer per target commit; never installs automatically. Prefer `iva update-check on|off` over manual editing. |
 
 The allowlist is **fail-closed: empty means Iva answers nobody.** The wizard auto-discovers your ID the moment you message the bot; or ask [@userinfobot](https://t.me/userinfobot). Why fail-closed matters: [security.md](./security.md).
 
@@ -99,7 +100,7 @@ The nightly doctor builds the hybrid index; to build it now, run `node --env-fil
 | Variable | Default | Notes |
 |---|---|---|
 | `AGENT_LANGUAGE` | `ru` | `en` or `ru`. Sets Iva's reply language, date locale, and which CORE.md seed `init-vault` uses. |
-| `ASSISTANT_TIMEZONE` | `Asia/Almaty` | IANA name. Sets daily-transcript dates, the 5 nightly memory timers, and the date/time Iva sees each turn. Exported as `TZ`. |
+| `ASSISTANT_TIMEZONE` | `Asia/Almaty` | IANA name. Sets daily-transcript dates, the 5 nightly memory timers, the optional update-check timer, and the date/time Iva sees each turn. Exported as `TZ`. |
 | `ASSISTANT_VAULT_DIR` | `vault` | The live memory: a separate private git repo, opens in Obsidian. |
 | `ASSISTANT_DATA_DIR` | `data` | Runtime data: `tasks.json`, `reminders.json`, token log `usage.jsonl`. |
 | `IVA_PORT` | `8723` | Local eve server port. Deliberately unfashionable — 3000/8000/8080 are usually taken on a stock VPS by docker and friends. Change it via `iva config`, not by hand: the systemd unit pins the port literally and must match ([deploy.md](./deploy.md)). |

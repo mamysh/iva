@@ -90,6 +90,7 @@ function systemdCapabilities() {
     .map((entry) => entry.name)
     .sort(byName);
   const timerTemplates = templates.filter((name) => name.endsWith(".timer"));
+  const optionalTimers = timerTemplates.filter((name) => name === "iva-update-check.timer");
   const serviceTemplates = templates.filter((name) => name.endsWith(".service"));
   const oneshotServices = serviceTemplates
     .filter((name) => read(repoPath(join(deploy, name))).includes("Type=oneshot"))
@@ -100,6 +101,8 @@ function systemdCapabilities() {
   return {
     managedServices: coreServices.sort(byName),
     managedTimers: timerTemplates,
+    defaultTimers: timerTemplates.filter((name) => !optionalTimers.includes(name)),
+    optionalTimers,
     timerTriggeredServices: oneshotServices,
     optionalServices: serviceTemplates
       .filter((name) => !coreServices.includes(name) && !oneshotServices.includes(name))
@@ -147,7 +150,10 @@ export function createCapabilityManifest() {
       types: extensionContracts.types.map(({ id }) => id),
       examples: extensionContracts.types.map(({ example }) => example),
       backgroundPolicy: "managed-oneshot-only",
-      optionalFeatures: [{ name: "telegram-userbot", status: "beta", activation: "iva userbot setup" }],
+      optionalFeatures: [
+        { name: "telegram-userbot", status: "beta", activation: "iva userbot setup" },
+        { name: "update-notifications", status: "stable", activation: "iva update-check on" },
+      ],
     },
     storage: {
       contractVersion: 1,
@@ -166,6 +172,8 @@ export function createCapabilityManifest() {
         updateTransactionSource: "scripts/update-runtime.mjs",
         updateLockSource: "scripts/lib/update-lock.mjs",
         updateProgressSource: "scripts/lib/update-progress.mjs",
+        updateNotificationSource: "scripts/lib/update-notification.mjs",
+        updateNotificationState: "${ASSISTANT_DATA_DIR}/update-notification-state.json",
         updateMigrationManifest: "scripts/update-manifest.json",
         backupCommand: "iva backup",
         restoreCommand: "iva restore <portable-backup-directory>",
