@@ -164,6 +164,8 @@ export function createCapabilityManifest() {
       lifecycle: {
         updateCommand: "iva update",
         updateTransactionSource: "scripts/update-runtime.mjs",
+        updateLockSource: "scripts/lib/update-lock.mjs",
+        updateProgressSource: "scripts/lib/update-progress.mjs",
         updateMigrationManifest: "scripts/update-manifest.json",
         backupCommand: "iva backup",
         restoreCommand: "iva restore <portable-backup-directory>",

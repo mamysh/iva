@@ -7,6 +7,7 @@ import {
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMigrationPlan, createUpdatePreflight, runUpdateTransaction } from "./lib/update-contract.mjs";
+import { acquireUpdateLock, releaseUpdateLock } from "./lib/update-lock.mjs";
 import { resolveUpdateChannel, updateChannelRef } from "./lib/update-channel.mjs";
 import { resolveRuntimeWorkflowProfile } from "./lib/workflow-runtime.mjs";
 import { UPDATE_USERBOT_SERVICE, updateServicePlan } from "./lib/update-services.mjs";
@@ -241,9 +242,15 @@ function moveIfPresent(source, target) {
   renameSync(source, target);
 }
 
-export async function performUpdate({ force = false, log = console.log } = {}) {
+async function reportProgress(onProgress, phase) {
+  if (typeof onProgress !== "function") return;
+  try { await onProgress(phase); } catch {}
+}
+
+async function performUpdateUnlocked({ force = false, log = console.log, onProgress } = {}) {
   const env = readEnvironment();
   const currentCommit = git(["rev-parse", "HEAD"]);
+  await reportProgress(onProgress, "configuration");
   let channelInfo;
   try {
     channelInfo = resolveUpdateChannel({ dataDir: DATA_DIR, runGit: (args) => command("git", args), requireCheckout: true });
@@ -254,6 +261,7 @@ export async function performUpdate({ force = false, log = console.log } = {}) {
   const targetRef = updateChannelRef(channelInfo.channel);
   const dirty = command("git", ["status", "--porcelain", "--untracked-files=no"]).out;
   if (dirty) return { outcome: "rolled_back", reason: "tracked working tree changes block update", currentCommit };
+  await reportProgress(onProgress, "target");
   const fetch = command("git", ["fetch", "--prune", remote, branch]);
   if (fetch.code !== 0) return { outcome: "rolled_back", reason: `update channel ${targetRef} is unavailable`, currentCommit, channel: targetRef };
   const targetResult = command("git", ["rev-parse", targetRef]);
@@ -326,10 +334,13 @@ export async function performUpdate({ force = false, log = console.log } = {}) {
       rmSync(failedModules, { recursive: true, force: true });
       mkdirSync(UPDATE_DIR, { recursive: true });
       git(["worktree", "add", "--detach", STAGING_DIR, targetCommit]);
+      await reportProgress(onProgress, "dependencies");
       npm(["ci"], { cwd: STAGING_DIR, env: stageEnv, inherit: true });
+      await reportProgress(onProgress, "verification");
       npm(["test"], { cwd: STAGING_DIR, env: stageEnv, inherit: true });
       npm(["run", "typecheck"], { cwd: STAGING_DIR, env: stageEnv, inherit: true });
       npm(["run", "build"], { cwd: STAGING_DIR, env: stageEnv, inherit: true });
+      await reportProgress(onProgress, "storage");
       must(process.execPath, ["scripts/start.mjs", "--check-profile"], { cwd: STAGING_DIR, env: stageEnv, inherit: true });
       snapshotConfiguration();
     },
@@ -354,6 +365,7 @@ export async function performUpdate({ force = false, log = console.log } = {}) {
     },
     restoreBackup: async (backup) => restoreWorkflowBackup(backup, env),
     activate: async () => {
+      await reportProgress(onProgress, "activation");
       stopManagedServices(servicePlan);
       servicesStopped = true;
       writersStopped = true;
@@ -375,7 +387,10 @@ export async function performUpdate({ force = false, log = console.log } = {}) {
       }
     },
     restart: async () => { restartManagedServices(servicePlan); servicesStopped = false; writersStopped = false; },
-    readiness: async () => doctorReady(),
+    readiness: async () => {
+      await reportProgress(onProgress, "readiness");
+      return doctorReady();
+    },
     commit: async () => writePrivateJson(join(DATA_DIR, "update-state.json"), {
       schemaVersion: 1, status: "updated", previousCommit: currentCommit, currentCommit: targetCommit,
       profile: profile.backend, migrationVersion: migrationPlan.targetVersion, completedAt: new Date().toISOString(),
@@ -397,4 +412,14 @@ export async function performUpdate({ force = false, log = console.log } = {}) {
 
   const result = await runUpdateTransaction({ preflight, migrationPlan, actions });
   return { ...result, preflight, currentCommit, targetCommit, channel: targetRef };
+}
+
+export async function performUpdate({ force = false, log = console.log, onProgress, lockSource = "cli" } = {}) {
+  const lock = acquireUpdateLock(DATA_DIR, { source: lockSource });
+  if (!lock.ok) return { outcome: "blocked", reason: "another update is already running" };
+  try {
+    return await performUpdateUnlocked({ force, log, onProgress });
+  } finally {
+    releaseUpdateLock(lock);
+  }
 }

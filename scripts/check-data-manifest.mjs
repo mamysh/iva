@@ -31,6 +31,7 @@ for (const id of [
   "application.reminders", "application.usage", "authentication.codex-oauth",
   "authentication.telegram-userbot", "observability.bounded-history", "workflow.local", "workflow.postgres", "runtime.generated",
   "deployment.update-channel",
+  "deployment.update-runtime-state",
 ]) assert.ok(ids.has(id), `data manifest is missing ${id}`);
 
 console.log("data manifest checks passed");

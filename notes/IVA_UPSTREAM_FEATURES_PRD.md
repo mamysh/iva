@@ -1,8 +1,8 @@
 # PRD: аккуратная интеграция upstream-возможностей 1–8 в Iva
 
-**Статус:** In implementation — Stages 0–5 complete; Stage 6 PR I active; Stage 7 deferred
-**Дата:** 2026-07-20
-**Локальный baseline:** `77da983` (`0.3.0-rc.4`)
+**Статус:** In implementation — Stages 0–4 complete; Stage 5 PR H active; Stage 6 PR I complete / PR J pending; Stages 7–8 deferred
+**Дата:** 2026-07-21
+**Локальный baseline:** `aa1ed60` (`0.3.0-rc.4`)
 **Upstream baseline:** `2def9d1` (`0.2.5`)
 **Область:** runtime dependencies, управление text/vision-моделями, bash safety, memory safety,
 update UX/safety, уведомления об обновлениях, update channels и rich reports

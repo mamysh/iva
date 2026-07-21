@@ -135,6 +135,17 @@
       "lossTolerance": "accepted only after safe legacy migration from origin/main"
     },
     {
+      "id": "deployment.update-runtime-state",
+      "path": "${ASSISTANT_DATA_DIR}/{update.lock,update.lock.recovery,update-jobs}/**",
+      "type": "file-set",
+      "classification": { "secret": true, "personal": true, "derived": true },
+      "required": false,
+      "backupMethod": "exclude-and-rebuild",
+      "restoreOrder": 90,
+      "retention": "only while an update request is running",
+      "lossTolerance": "accepted; a stale request is retried explicitly"
+    },
+    {
       "id": "application.other-private-state",
       "path": "${ASSISTANT_DATA_DIR}/**",
       "type": "directory",

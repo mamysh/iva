@@ -408,6 +408,7 @@ try {
   }, "broken target build");
   const brokenBuild = await runFixtureCli(["update"]);
   assert.equal(brokenBuild.code, 1, brokenBuild.output);
+  assert.ok(!existsSync(join(sandbox, "data", "update.lock")), "broken build left the update lock behind");
   assert.match(brokenBuild.output, /ROLLED BACK:.*failed/i);
   assert.equal(git(app, ["rev-parse", "HEAD"]), baseline);
   assert.equal(await fileHash(activeOutput), baselineOutputHash, "broken target build changed active output");
@@ -420,6 +421,7 @@ try {
   }, "broken target readiness");
   const brokenReadiness = await runFixtureCli(["update"]);
   assert.equal(brokenReadiness.code, 1, brokenReadiness.output);
+  assert.ok(!existsSync(join(sandbox, "data", "update.lock")), "readiness rollback left the update lock behind");
   assert.match(brokenReadiness.output, /ROLLED BACK: target readiness failed/i);
   assert.equal(git(app, ["rev-parse", "HEAD"]), baseline);
   assert.equal(await fileHash(activeOutput), baselineOutputHash, "readiness rollback did not restore active output");
@@ -434,6 +436,7 @@ try {
   }, "successful target update");
   const successfulUpdate = await runFixtureCli(["update"]);
   assert.equal(successfulUpdate.code, 0, successfulUpdate.output);
+  assert.ok(!existsSync(join(sandbox, "data", "update.lock")), "successful update left the update lock behind");
   assert.match(successfulUpdate.output, /UPDATED:/);
   assert.ok(
     successfulUpdate.output.includes(baselineVersion) && successfulUpdate.output.includes(successfulVersion),

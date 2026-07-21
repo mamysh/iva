@@ -99,6 +99,10 @@ If preflight reports `sequential update required`, the target contains more than
 Deploy the intermediate release first. If it reports backup blocked, install/fix the required
 PostgreSQL dump tools or restore access to local Workflow storage; update will not stop the service.
 
+`Update already in progress` means another CLI, Telegram or scheduled request owns the shared update
+transaction. Do not remove `data/update.lock` while that process is alive; wait for its final result
+and retry `/update`. A dead owner is recovered automatically on the next request.
+
 ### gh not available warnings
 
 Cause: the nightly doctor backs your vault up to a private `iva-vault` GitHub repo through `gh`; unauthenticated `gh` means no off-box backup.

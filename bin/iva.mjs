@@ -311,22 +311,49 @@ async function showTree() {
 // ── commands ───────────────────────────────────────────────────────────────
 async function cmdUpdate(args) {
   const force = args.includes("--force");
+  const telegramJobId = args.find((arg) => arg.startsWith("--telegram-job="))?.slice("--telegram-job=".length) || null;
+  const { createTelegramUpdateReporter, loadTelegramUpdateJob, removeTelegramUpdateJob } = await import("../scripts/lib/update-progress.mjs");
+  const telegramJob = telegramJobId ? loadTelegramUpdateJob(dataDirAbs(), telegramJobId) : null;
+  const reporter = telegramJob ? createTelegramUpdateReporter({
+    token: readEnv().TELEGRAM_BOT_TOKEN,
+    job: telegramJob.job,
+  }) : null;
   await showTree();
   step("Updating Iva…");
   const { performUpdate } = await import("../scripts/update-runtime.mjs");
-  const result = await performUpdate({ force, log: (message) => console.log(message) });
-  if (result.outcome === "current") {
-    ok(`Already up to date (${result.currentCommit.slice(0, 7)}). Nothing to rebuild (--force to force it).`);
-    return;
+  let result;
+  try {
+    try {
+      result = await performUpdate({
+        force,
+        log: (message) => console.log(message),
+        onProgress: (phase) => reporter?.phase(phase),
+        lockSource: telegramJobId ? "telegram" : "cli",
+      });
+    } catch (error) {
+      result = { outcome: "rolled_back", reason: error?.message || String(error) };
+    }
+    await reporter?.complete(result);
+    if (result.outcome === "current") {
+      ok(`Already up to date (${result.currentCommit.slice(0, 7)}). Nothing to rebuild (--force to force it).`);
+      return;
+    }
+    if (result.outcome === "updated") {
+      ok(`UPDATED: ${result.currentCommit.slice(0, 7)} → ${result.targetCommit.slice(0, 7)}`);
+      if (!telegramJobId) await notifyTelegram(`✅ Iva updated: ${result.currentCommit.slice(0, 7)} → ${result.targetCommit.slice(0, 7)}`);
+      return;
+    }
+    if (result.outcome === "blocked") {
+      warn("Update already in progress; this request did not start a second transaction.");
+      process.exitCode = 2;
+      return;
+    }
+    bad(`ROLLED BACK: ${result.reason}. Previous version is active.`);
+    if (!telegramJobId) await notifyTelegram(`↩️ Iva update rolled back: ${result.reason}. Previous version is active.`);
+    process.exitCode = 1;
+  } finally {
+    if (telegramJob) removeTelegramUpdateJob(telegramJob.path);
   }
-  if (result.outcome === "updated") {
-    ok(`UPDATED: ${result.currentCommit.slice(0, 7)} → ${result.targetCommit.slice(0, 7)}`);
-    await notifyTelegram(`✅ Iva updated: ${result.currentCommit.slice(0, 7)} → ${result.targetCommit.slice(0, 7)}`);
-    return;
-  }
-  bad(`ROLLED BACK: ${result.reason}. Previous version is active.`);
-  await notifyTelegram(`↩️ Iva update rolled back: ${result.reason}. Previous version is active.`);
-  process.exit(1);
 }
 
 async function cmdBackup(args) {

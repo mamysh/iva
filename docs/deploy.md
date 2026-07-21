@@ -69,6 +69,13 @@ dependencies only for the restart. A broken target build never touches the activ
 doctor readiness automatically restores the previous commit/output/dependencies. Optional global
 tools such as `gws` are deliberately outside this critical transaction.
 
+CLI, Telegram and future scheduled update entrypoints share one atomic update lock, so only one
+transaction can run at a time. The Telegram button starts a transient systemd process and hands it an
+opaque private job id, not chat identifiers or bot credentials. That process survives the bridge
+restart and edits the original offer through configuration, target, dependencies, tests/build,
+storage, activation and readiness. Normally no extra messages are created; if Telegram can no longer
+edit the original, only the final result is sent once as a fallback.
+
 One thing that trips people up: eve has a `defineSchedule` API, but on self-host it never fires — it only becomes a cron job on Vercel. That is the whole reason memory runs on systemd timers.
 
 ## Workflow backend

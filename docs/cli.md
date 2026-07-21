@@ -56,7 +56,7 @@ The installer puts `iva` in `~/.local/bin`. Commands that touch systemd need a L
 
 | Command | What it does |
 |---|---|
-| `iva update [--force]` | Transactional update: preflight, detached dependency install/tests/typecheck/build/profile canary, required migration backup, atomic activation, restart and doctor readiness. A failed build leaves the active version untouched; failed readiness automatically restores the previous commit/output/dependencies. `--force` repeats the transaction at the current commit |
+| `iva update [--force]` | Transactional update protected by a shared CLI/Telegram lock: preflight, detached dependency install/tests/typecheck/build/profile canary, required migration backup, atomic activation, restart and doctor readiness. A failed build leaves the active version untouched; failed readiness automatically restores the previous commit/output/dependencies. `--force` repeats the transaction at the current commit |
 | `iva backup [directory]` | Briefly stop every writer, create a private portable directory outside the code repository, snapshot the active local/PostgreSQL Workflow backend, checksum every file, verify it, then restore the previously active units |
 | `iva restore <directory> [--yes]` | Verify and restore configuration, vault, app data and Workflow state on an installed host, rebuild and check capabilities. Destructive confirmation is required; services remain stopped to prevent duplicate Telegram polling during a move |
 | `iva config` | The 5-step setup wizard, then offers a restart to apply |
