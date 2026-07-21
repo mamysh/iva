@@ -24,6 +24,9 @@ import { applyModelSelection } from "./lib/model-config-transaction.mjs";
 import { runBoundedModelProbe } from "./lib/model-probe.mjs";
 import { listConfiguredModels } from "./lib/model-inventory.mjs";
 import { resolveUpdateChannel } from "./lib/update-channel.mjs";
+import {
+  createTelegramUpdateJob, removeTelegramUpdateJob, renderUpdateProgress,
+} from "./lib/update-progress.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const NODE = process.execPath;
@@ -257,14 +260,14 @@ function resolveDeploymentUpdateChannel() {
 
 // Run `iva update` in its OWN transient systemd scope, so it survives the restart of
 // THIS bridge (restartServices restarts iva-telegram-poll too — a plain child would be
-// killed with us). --collect GC's the unit after exit. notifyTelegram (reads .env) posts
-// the ✅/❌ result, so no reply plumbing is needed across the restart.
-function launchSelfUpdate() {
+// killed with us). --collect GC's the unit after exit. A private opaque job lets the
+// detached process edit the original Telegram message through the restart.
+function launchSelfUpdate(jobId) {
   const args = [
-    "--user", "--collect", `--unit=iva-self-update-${Date.now()}`,
+    "--user", "--collect", `--unit=iva-self-update-${jobId}`,
     `--working-directory=${ROOT}`,
     `--setenv=PATH=${process.env.PATH || ""}`,
-    NODE, join(ROOT, "bin/iva.mjs"), "update",
+    NODE, join(ROOT, "bin/iva.mjs"), "update", `--telegram-job=${jobId}`,
   ];
   return new Promise((resolve) =>
     execFile("systemd-run", args, (err, out, e) => resolve({ ok: !err, msg: (e || out || "").toString().trim() })),
@@ -307,7 +310,8 @@ async function handleUpdateCallback(cq) {
   const from = String(cq.from?.id ?? "");
   const chatId = cq.message?.chat?.id;
   const messageId = cq.message?.message_id;
-  await tg("answerCallbackQuery", { callback_query_id: cq.id }); // clear the button spinner
+  try { await tg("answerCallbackQuery", { callback_query_id: cq.id }); } // clear the button spinner
+  catch (error) { log("update callback acknowledgement failed:", error.message); }
   if (ALLOWED.size === 0 || !ALLOWED.has(from)) return true; // swallow untrusted taps
   const action = parseUpdateAction(cq.data);
   if (!action) {
@@ -318,14 +322,34 @@ async function handleUpdateCallback(cq) {
     await tg("editMessageText", { chat_id: chatId, message_id: messageId, text: "Update skipped." });
     return true;
   }
-  // action === "do": ack in the message (editMessageText drops the keyboard), then launch detached.
-  await tg("editMessageText", {
-    chat_id: chatId,
-    message_id: messageId,
-    text: "⏳ Updating Iva… the service restarts (~1–2 min). I'll message you when it's back.",
-  });
-  const r = await launchSelfUpdate();
-  if (!r.ok) await reply(chatId, "Couldn't start the update: " + r.msg);
+  // Persist only an opaque run id in argv. The private job file carries the Telegram
+  // target so the detached updater can keep editing this message while the bridge restarts.
+  const locale = /(^|[-_])ru($|[-_])/i.test(process.env.AGENT_LANGUAGE || process.env.LANG || "") ? "ru" : "en";
+  let updateJob;
+  try {
+    updateJob = createTelegramUpdateJob(DATA_PATH, { chatId, messageId, locale });
+  } catch (error) {
+    await tg("editMessageText", { chat_id: chatId, message_id: messageId, text: `Couldn't prepare the update: ${error.message}` });
+    return true;
+  }
+  try {
+    await tg("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: renderUpdateProgress("configuration", locale),
+    });
+  } catch (error) {
+    log("initial update progress edit failed:", error.message);
+  }
+  const r = await launchSelfUpdate(updateJob.id);
+  if (!r.ok) {
+    removeTelegramUpdateJob(updateJob.path);
+    try {
+      await tg("editMessageText", { chat_id: chatId, message_id: messageId, text: "Couldn't start the update: " + r.msg });
+    } catch (error) {
+      log("update launch failure edit failed:", error.message);
+    }
+  }
   return true;
 }
 

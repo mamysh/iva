@@ -78,6 +78,8 @@ scripts/                     Install-time, polling, memory and maintenance progr
   lib/model-config-transaction.mjs  Locked .env apply, agent readiness and rollback
   lib/update-services.mjs    Update stop/restart plan, including an active opt-in userbot
   lib/update-channel.mjs     Allowlisted origin/main state and safe legacy tracking migration
+  lib/update-lock.mjs        Atomic cross-entrypoint update lock with dead-owner recovery
+  lib/update-progress.mjs    Private Telegram run handoff and single-message phase reporter
   lib/telegram-delivery.mjs  Rich → HTML → plain Telegram delivery policy
   daily-digest.ts            Digest entry point
   reminders-run.mjs          Short-lived reminder dispatcher
@@ -222,12 +224,19 @@ install.sh
 
 iva update
   -> bin/iva.mjs
+  -> scripts/lib/update-lock.mjs shared CLI/Telegram/timer transaction lock
   -> scripts/lib/update-channel.mjs private persistent origin/main resolver
   -> scripts/update-runtime.mjs preflight + detached Git worktree
   -> npm ci + tests + typecheck + build + profile canary in staging
   -> scripts/update-manifest.json migration/backup contract
   -> atomic output/dependency activation + regenerated units + restart
   -> iva doctor readiness OR automatic previous-version rollback
+
+Telegram update button
+  -> scripts/telegram-poll.mjs owner gate + private opaque update job
+  -> transient systemd updater survives the bridge restart
+  -> scripts/lib/update-progress.mjs edits the original message through every phase
+  -> at most one final fallback message if Telegram can no longer edit the original
 
 iva backup / iva restore
   -> bin/iva.mjs
@@ -295,6 +304,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | `check-release-contract.mjs` | Immutable candidate identity, required matrix, provider evidence and continuous soak rules. |
 | `check-update-transaction.mjs` | Preflight, sequential migration, backup/restore and activation rollback ordering for both profiles. |
 | `check-update-channel.mjs` | Persistent origin/main state, safe legacy tracking migration and checkout isolation. |
+| `lib/update-progress.test.mjs` | Cross-entrypoint lock ownership/recovery and Telegram single-message/fallback behavior. |
 | `check-reminders-store.mjs` | Reminder persistence and scheduling behavior. |
 | `check-telegram-update.mjs` | Out-of-band Telegram update flow. |
 | `check-memory-guards.mjs` | CORE and vault failure guards. |

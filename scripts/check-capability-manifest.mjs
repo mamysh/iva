@@ -46,6 +46,8 @@ assert.equal(manifest.storage.defaultProfile, "local");
 assert.ok(manifest.storage.profiles.some(({ name, world }) => name === "postgres" && world === "@workflow/world-postgres"));
 assert.equal(manifest.storage.lifecycle.recoverCommand, "iva recover");
 assert.equal(manifest.storage.lifecycle.updateTransactionSource, "scripts/update-runtime.mjs");
+assert.equal(manifest.storage.lifecycle.updateLockSource, "scripts/lib/update-lock.mjs");
+assert.equal(manifest.storage.lifecycle.updateProgressSource, "scripts/lib/update-progress.mjs");
 assert.equal(manifest.storage.lifecycle.backupCommand, "iva backup");
 assert.equal(manifest.storage.lifecycle.restoreCommand, "iva restore <portable-backup-directory>");
 assert.equal(manifest.storage.lifecycle.dataManifest, "scripts/data-manifest.json");

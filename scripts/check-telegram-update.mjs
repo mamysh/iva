@@ -20,6 +20,13 @@ const modelCallback = poll.indexOf('cq.data.startsWith("iva_model:")');
 const modelHandle = poll.indexOf("modelWizard.handle", modelCallback);
 const ownerGate = poll.indexOf("!ALLOWED.has(from)", modelCallback);
 assert.ok(modelCallback >= 0 && ownerGate > modelCallback && modelHandle > ownerGate, "model callback must be owner-gated before wizard state");
+const updateCallback = poll.indexOf("async function handleUpdateCallback");
+const updateOwnerGate = poll.indexOf("!ALLOWED.has(from)", updateCallback);
+const createUpdateJob = poll.indexOf("createTelegramUpdateJob", updateCallback);
+assert.ok(updateCallback >= 0 && updateOwnerGate > updateCallback && createUpdateJob > updateOwnerGate, "update callback must be owner-gated before job state");
+assert.match(poll, /--telegram-job=\$\{jobId\}/);
+assert.doesNotMatch(poll, /--telegram-(?:chat|message)/, "Telegram identifiers must not be exposed in the process list");
+assert.match(poll, /renderUpdateProgress\("configuration", locale\)/);
 
 function fakeGit({ local = "local", remote = "remote", behind = "0", ahead = "0", localVer = "0.2.5", remoteVer = "0.2.5", fail } = {}) {
   return async (...args) => {

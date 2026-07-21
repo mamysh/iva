@@ -9,7 +9,10 @@ import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:p
 export const BACKUP_SCHEMA_VERSION = 1;
 const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_DIR_MODE = 0o700;
-const DATA_EXCLUDES = new Set(["backups", ".reminders.lock", "health-metrics.jsonl", "health-alert-state.json", "workflow-health.json"]);
+const DATA_EXCLUDES = new Set([
+  "backups", ".reminders.lock", "update.lock", "update.lock.recovery", "update-jobs",
+  "health-metrics.jsonl", "health-alert-state.json", "workflow-health.json",
+]);
 const VAULT_EXCLUDES = new Set([".index", ".graph"]);
 
 function command(program, args, { cwd, env = process.env, inherit = false, timeout = 20 * 60_000 } = {}) {
