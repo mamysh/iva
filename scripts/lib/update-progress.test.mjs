@@ -111,6 +111,27 @@ test("Telegram failure cannot affect update outcome and creates at most one fina
   assert.match(calls.find((call) => call.method === "sendMessage").body.text, /previous version is active/i);
 });
 
+test("Telegram progress gives up on a hung transport without blocking later update phases", async () => {
+  let calls = 0;
+  const fetchImpl = async (_url, init) => {
+    calls += 1;
+    return new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    });
+  };
+  const reporter = createTelegramUpdateReporter({
+    token: "secret",
+    job: { chatId: 7, messageId: 99, locale: "en" },
+    fetchImpl,
+    sleepImpl: async () => {},
+    requestTimeoutMs: 5,
+  });
+  await assert.doesNotReject(reporter.phase("target"));
+  assert.equal(calls, 3, "hung Telegram calls must stop after the bounded retry budget");
+  await assert.doesNotReject(reporter.phase("dependencies"));
+  assert.equal(calls, 3, "later phases must not repeatedly wait on a failed transport");
+});
+
 test("progress copy preserves phase order and distinguishes blocked from rollback", () => {
   const progress = renderUpdateProgress("verification", "en");
   assert.ok(progress.indexOf("Checking configuration") < progress.indexOf("Running tests and build"));

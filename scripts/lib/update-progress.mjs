@@ -122,13 +122,21 @@ export function removeTelegramUpdateJob(path) {
   try { rmSync(dirname(path)); } catch {}
 }
 
-export function createTelegramUpdateReporter({ token, job, fetchImpl = fetch, sleepImpl } = {}) {
+export function createTelegramUpdateReporter({
+  token,
+  job,
+  fetchImpl = fetch,
+  sleepImpl,
+  requestTimeoutMs = 5000,
+} = {}) {
   if (!token || !job) return null;
   const target = assertTelegramJob(job);
   const wait = sleepImpl ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const api = `https://api.telegram.org/bot${token}`;
   let lastText = null;
   let fallbackSent = false;
+  let phaseEditsDisabled = false;
+  const timeoutMs = Math.max(1, Math.min(30_000, Number(requestTimeoutMs) || 5000));
 
   async function call(method, body) {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -137,6 +145,7 @@ export function createTelegramUpdateReporter({ token, job, fetchImpl = fetch, sl
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
+          signal: AbortSignal.timeout(timeoutMs),
         });
         const data = await response.json().catch(() => ({ ok: false }));
         if (response.ok && data.ok) return true;
@@ -163,8 +172,8 @@ export function createTelegramUpdateReporter({ token, job, fetchImpl = fetch, sl
 
   return {
     async phase(phase) {
-      if (!UPDATE_PHASES.includes(phase)) return;
-      await edit(renderUpdateProgress(phase, target.locale));
+      if (!UPDATE_PHASES.includes(phase) || phaseEditsDisabled) return;
+      if (!(await edit(renderUpdateProgress(phase, target.locale)))) phaseEditsDisabled = true;
     },
     async complete(result) {
       const text = renderUpdateResult(result, target.locale);
