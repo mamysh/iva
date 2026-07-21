@@ -487,6 +487,8 @@ else
 fi
 if [ -f .env ]; then chmod 600 .env; fi
 if [ -f deploy/iva-workflow.environment ]; then chmod 600 deploy/iva-workflow.environment; fi
+node --env-file-if-exists=.env scripts/init-update-channel.mjs "$BRANCH" \
+  || die "$(t "couldn't pin the production update channel" "не удалось закрепить production-канал обновлений")"
 if [ -f .env ]; then
   complete_stage setup
 else

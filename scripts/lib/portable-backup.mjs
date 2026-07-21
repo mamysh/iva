@@ -59,7 +59,10 @@ function workflowProfile(env) {
 
 function secretStateFiles(root, env) {
   const dataDir = statePath(root, env.ASSISTANT_DATA_DIR, "data");
-  const files = [join(root, ".env"), join(root, "deploy/iva-workflow.environment"), join(dataDir, "reminders.json"), join(dataDir, "codex-auth.json")];
+  const files = [
+    join(root, ".env"), join(root, "deploy/iva-workflow.environment"), join(dataDir, "reminders.json"),
+    join(dataDir, "codex-auth.json"), join(dataDir, "update-channel.json"),
+  ];
   if (existsSync(dataDir)) {
     for (const entry of readdirSync(dataDir, { withFileTypes: true })) {
       if (entry.isFile() && /^telegram-userbot\.(?:token|session|session-journal|health\.json)$/.test(entry.name)) {

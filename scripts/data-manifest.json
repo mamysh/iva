@@ -124,6 +124,17 @@
       "lossTolerance": "accepted only if the account can be authorized again"
     },
     {
+      "id": "deployment.update-channel",
+      "path": "${ASSISTANT_DATA_DIR}/update-channel.json",
+      "type": "file",
+      "classification": { "secret": false, "personal": false, "derived": false },
+      "required": false,
+      "backupMethod": "consistent-private-snapshot",
+      "restoreOrder": 46,
+      "retention": "portable backup generations",
+      "lossTolerance": "accepted only after safe legacy migration from origin/main"
+    },
+    {
       "id": "application.other-private-state",
       "path": "${ASSISTANT_DATA_DIR}/**",
       "type": "directory",

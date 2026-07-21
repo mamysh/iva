@@ -77,6 +77,7 @@ scripts/                     Install-time, polling, memory and maintenance progr
   lib/model-wizard.mjs       Owner/chat-bound Telegram model picker state and rendering
   lib/model-config-transaction.mjs  Locked .env apply, agent readiness and rollback
   lib/update-services.mjs    Update stop/restart plan, including an active opt-in userbot
+  lib/update-channel.mjs     Allowlisted origin/main state and safe legacy tracking migration
   lib/telegram-delivery.mjs  Rich → HTML → plain Telegram delivery policy
   daily-digest.ts            Digest entry point
   reminders-run.mjs          Short-lived reminder dispatcher
@@ -221,6 +222,7 @@ install.sh
 
 iva update
   -> bin/iva.mjs
+  -> scripts/lib/update-channel.mjs private persistent origin/main resolver
   -> scripts/update-runtime.mjs preflight + detached Git worktree
   -> npm ci + tests + typecheck + build + profile canary in staging
   -> scripts/update-manifest.json migration/backup contract
@@ -270,7 +272,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | Workflow health/recovery | `scripts/workflow-health.mjs` + `scripts/lib/runtime-recovery.mjs` | CLI, workflow backends, background jobs | runtime recovery check, both disposable replicas |
 | Workflow backend | `scripts/lib/workflow-config.mjs` | agent, package versions, smoke script | config test, both builds, restart/resume |
 | PostgreSQL profile | `scripts/postgres-profile.mjs` + `scripts/lib/postgres-profile.mjs` | deploy examples, upstream package migrations | config test, real PostgreSQL bootstrap + smoke |
-| Update behavior | `scripts/update-runtime.mjs` + `scripts/lib/update-contract.mjs` | CLI, Telegram update, migration manifest | update contract, clean-install build/readiness rollback fixture |
+| Update behavior | `scripts/update-runtime.mjs` + `scripts/lib/update-contract.mjs` | persistent channel resolver, CLI, Telegram update, migration manifest | channel/update contracts, clean-install build/readiness rollback fixture |
 | Backup, restore, server moves | `scripts/data-manifest.json` + `scripts/lib/portable-backup.mjs` | backup runtime, CLI, data docs, both Workflow profiles | manifest/restore contract, both disposable replicas, clean-host drill |
 | Health metrics and capacity | `scripts/lib/health-metrics.mjs` + `scripts/observe.mjs` | doctor, status, Workflow health, observe timer | health metrics contract, doctor contract, both disposable replicas |
 | Extension contract or example | `scripts/extension-contracts.json` + `examples/extensions/` | extending docs, security, capability manifest | extension contract test, capability diff, relevant behavior canary |
@@ -292,6 +294,7 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | `check-extension-contracts.mjs` | Config/dependency activation, background ownership, inert removal and source safety. |
 | `check-release-contract.mjs` | Immutable candidate identity, required matrix, provider evidence and continuous soak rules. |
 | `check-update-transaction.mjs` | Preflight, sequential migration, backup/restore and activation rollback ordering for both profiles. |
+| `check-update-channel.mjs` | Persistent origin/main state, safe legacy tracking migration and checkout isolation. |
 | `check-reminders-store.mjs` | Reminder persistence and scheduling behavior. |
 | `check-telegram-update.mjs` | Out-of-band Telegram update flow. |
 | `check-memory-guards.mjs` | CORE and vault failure guards. |

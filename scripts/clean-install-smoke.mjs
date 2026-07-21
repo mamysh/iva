@@ -392,6 +392,10 @@ try {
   await writeFile(join(app, "deploy", "iva-workflow.environment"), workflowEnvironment, { mode: 0o600 });
 
   await runInstaller();
+  const updateChannelPath = join(sandbox, "data", "update-channel.json");
+  const expectedUpdateChannel = { schemaVersion: 1, remote: "origin", branch: "main" };
+  assert.deepEqual(JSON.parse(await readFile(updateChannelPath, "utf8")), expectedUpdateChannel);
+  assert.equal((await stat(updateChannelPath)).mode & 0o777, 0o600);
   const firstReply = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();
   assert.match(JSON.stringify(firstReply), /INSTALL_OK/);
 
@@ -407,6 +411,7 @@ try {
   assert.match(brokenBuild.output, /ROLLED BACK:.*failed/i);
   assert.equal(git(app, ["rev-parse", "HEAD"]), baseline);
   assert.equal(await fileHash(activeOutput), baselineOutputHash, "broken target build changed active output");
+  assert.deepEqual(JSON.parse(await readFile(updateChannelPath, "utf8")), expectedUpdateChannel, "build rollback changed the update channel");
   await controlService("status", "iva.service");
 
   const readinessTarget = pushTarget(author, baseline, () => {
@@ -418,6 +423,7 @@ try {
   assert.match(brokenReadiness.output, /ROLLED BACK: target readiness failed/i);
   assert.equal(git(app, ["rev-parse", "HEAD"]), baseline);
   assert.equal(await fileHash(activeOutput), baselineOutputHash, "readiness rollback did not restore active output");
+  assert.deepEqual(JSON.parse(await readFile(updateChannelPath, "utf8")), expectedUpdateChannel, "readiness rollback changed the update channel");
   await controlService("status", "iva.service");
 
   let successfulVersion;
@@ -434,6 +440,7 @@ try {
     "update did not exercise an N-1 to N version transition",
   );
   assert.equal(git(app, ["rev-parse", "HEAD"]), successfulTarget);
+  assert.deepEqual(JSON.parse(await readFile(updateChannelPath, "utf8")), expectedUpdateChannel, "successful update changed the update channel");
   assert.notEqual(successfulTarget, brokenBuildTarget);
   assert.notEqual(successfulTarget, readinessTarget);
   await controlService("status", "iva.service");

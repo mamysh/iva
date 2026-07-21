@@ -28,20 +28,24 @@ export function parseUpdateAction(data) {
   return null;
 }
 
-export async function checkDeploymentUpdate(runGit) {
-  const branch = (await runGit("rev-parse", "--abbrev-ref", "HEAD")) || "main";
-  await runGit("fetch", "--prune", "origin", branch);
+export async function checkDeploymentUpdate(runGit, channel) {
+  if (channel?.remote !== "origin" || channel?.branch !== "main") {
+    throw new Error("update channel blocked: only origin/main is allowed");
+  }
+  const { remote: remoteName, branch } = channel;
+  const targetRef = `${remoteName}/${branch}`;
+  await runGit("fetch", "--prune", remoteName, branch);
 
   const local = await runGit("rev-parse", "HEAD");
-  const remote = await runGit("rev-parse", `origin/${branch}`);
-  const behindText = await runGit("rev-list", "--count", `HEAD..origin/${branch}`);
-  const aheadText = await runGit("rev-list", "--count", `origin/${branch}..HEAD`);
+  const remote = await runGit("rev-parse", targetRef);
+  const behindText = await runGit("rev-list", "--count", `HEAD..${targetRef}`);
+  const aheadText = await runGit("rev-list", "--count", `${targetRef}..HEAD`);
   if (!/^\d+$/.test(behindText)) throw new Error(`invalid git behind count: ${behindText || "empty"}`);
   if (!/^\d+$/.test(aheadText)) throw new Error(`invalid git ahead count: ${aheadText || "empty"}`);
 
   const behind = Number(behindText);
   const ahead = Number(aheadText);
   const localVer = packageVersion(await runGit("show", "HEAD:package.json"));
-  const remoteVer = packageVersion(await runGit("show", `origin/${branch}:package.json`));
-  return { branch, local, remote, behind, ahead, rewritten: ahead > 0, localVer, remoteVer, hasUpdate: local !== remote };
+  const remoteVer = packageVersion(await runGit("show", `${targetRef}:package.json`));
+  return { channel: targetRef, branch, local, remote, behind, ahead, rewritten: ahead > 0, localVer, remoteVer, hasUpdate: local !== remote };
 }
