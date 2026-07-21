@@ -8,6 +8,7 @@ import { Client as EveClient } from "eve/client";
 import pg from "pg";
 import { resolveRuntimeWorkflowProfile } from "./lib/workflow-runtime.mjs";
 import { DEFAULT_WEDGED_AFTER_MS, FAULT_OUTCOMES, RUN_STATE_TRANSITIONS, storageGrowth, summarizeWorkflowRuns } from "./lib/runtime-recovery.mjs";
+import { localWorkflowDataPath } from "./lib/local-workflow-state.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PROFILE_ENV_PATH = join(ROOT, "deploy/iva-workflow.environment");
@@ -88,7 +89,7 @@ async function listAllRuns(world) {
 }
 
 async function localReport(env) {
-  const dataDir = resolve(ROOT, env.WORKFLOW_LOCAL_DATA_DIR || ".workflow-data");
+  const dataDir = localWorkflowDataPath(ROOT);
   const world = createLocalWorld({ dataDir, recoverActiveRuns: false });
   try {
     const runs = await listAllRuns(world);
@@ -125,7 +126,7 @@ async function postgresReport(env) {
 async function cancelActive(env, profile) {
   const world = profile.backend === "postgres"
     ? createPostgresWorld({ connectionString: env.WORKFLOW_POSTGRES_URL || env.DATABASE_URL })
-    : createLocalWorld({ dataDir: resolve(ROOT, env.WORKFLOW_LOCAL_DATA_DIR || ".workflow-data"), recoverActiveRuns: false });
+    : createLocalWorld({ dataDir: localWorkflowDataPath(ROOT), recoverActiveRuns: false });
   let cancelled = 0;
   try {
     for (const status of ["pending", "running"]) {
@@ -159,7 +160,7 @@ async function repairInterruptedSteps(env, profile) {
       repaired = result.rowCount || 0;
     } finally { await client.end(); }
   } else {
-    const dataDir = resolve(ROOT, env.WORKFLOW_LOCAL_DATA_DIR || ".workflow-data");
+    const dataDir = localWorkflowDataPath(ROOT);
     const stepsDir = join(dataDir, "steps");
     if (existsSync(stepsDir)) {
       for (const name of readdirSync(stepsDir).filter((entry) => entry.endsWith(".json"))) {
@@ -179,7 +180,7 @@ async function repairInterruptedSteps(env, profile) {
   }
   const world = profile.backend === "postgres"
     ? createPostgresWorld({ connectionString: env.WORKFLOW_POSTGRES_URL || env.DATABASE_URL })
-    : createLocalWorld({ dataDir: resolve(ROOT, env.WORKFLOW_LOCAL_DATA_DIR || ".workflow-data"), recoverActiveRuns: false });
+    : createLocalWorld({ dataDir: localWorkflowDataPath(ROOT), recoverActiveRuns: false });
   let abandoned = 0;
   try {
     for (const status of ["pending", "running"]) {
@@ -211,7 +212,7 @@ async function reenqueueActive(env, profile) {
   }
   const world = profile.backend === "postgres"
     ? createPostgresWorld({ connectionString: env.WORKFLOW_POSTGRES_URL || env.DATABASE_URL })
-    : createLocalWorld({ dataDir: resolve(ROOT, env.WORKFLOW_LOCAL_DATA_DIR || ".workflow-data"), port: Number(port), recoverActiveRuns: true });
+    : createLocalWorld({ dataDir: localWorkflowDataPath(ROOT), port: Number(port), recoverActiveRuns: true });
   try {
     await world.start?.();
     await new Promise((resolve) => setTimeout(resolve, 3_000));

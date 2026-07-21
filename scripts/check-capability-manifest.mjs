@@ -54,6 +54,9 @@ assert.equal(manifest.storage.lifecycle.updateTransactionSource, "scripts/update
 assert.equal(manifest.storage.lifecycle.updateLockSource, "scripts/lib/update-lock.mjs");
 assert.equal(manifest.storage.lifecycle.updateProgressSource, "scripts/lib/update-progress.mjs");
 assert.equal(manifest.storage.lifecycle.updateNotificationSource, "scripts/lib/update-notification.mjs");
+assert.equal(manifest.storage.lifecycle.localWorkflowState, ".eve/.workflow-data");
+assert.equal(manifest.storage.lifecycle.legacyLocalWorkflowState, ".workflow-data");
+assert.equal(manifest.storage.lifecycle.localWorkflowMigrationSource, "scripts/lib/local-workflow-state.mjs");
 assert.equal(manifest.storage.lifecycle.backupCommand, "iva backup");
 assert.equal(manifest.storage.lifecycle.restoreCommand, "iva restore <portable-backup-directory>");
 assert.equal(manifest.storage.lifecycle.dataManifest, "scripts/data-manifest.json");
@@ -70,7 +73,7 @@ assert.deepEqual(
   ["codex", "ollama", "opencode", "openrouter"],
 );
 assert.match(manifest.runtime.node, /^24/);
-assert.equal(manifest.runtime.eve, "0.11.10");
+assert.equal(manifest.runtime.eve, "0.24.4");
 
 const serialized = JSON.stringify(manifest);
 assert.doesNotMatch(serialized, /(?:api[_-]?key|password|secret|token|authorization)/i);

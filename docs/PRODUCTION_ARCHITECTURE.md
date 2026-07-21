@@ -31,8 +31,8 @@ Git's recorded conflict resolutions (`rerere`) are enabled locally to make repea
 | Layer | Implementation | Why it is here |
 |---|---|---|
 | Chat transport | Telegram long polling + allowlist | No public webhook or reverse proxy is required. |
-| Agent runtime | Eve 0.11.10 | Model turns, tools and compaction. |
-| Durable production state | PostgreSQL Workflow World | The production profile replaces the hot `.workflow-data` stream directory, so restarts retain durable workflow state without filesystem polling overhead. |
+| Agent runtime | Eve 0.24.4 | Model turns, tools and compaction. |
+| Durable production state | PostgreSQL Workflow World | The production profile replaces the hot `.eve/.workflow-data` stream directory, so restarts retain durable workflow state without filesystem polling overhead. |
 | Personal memory | Markdown vault in a separate private Git repository | Human-readable, portable source of truth, outside the app repository and outside PostgreSQL. |
 | Memory recall | Node SQLite FTS5/BM25 + vault graph reranking | Local lexical recall with no search service. Optional hybrid mode adds embeddings only when explicitly configured. |
 | Memory maintenance | systemd timers + Autograph | Daily/weekly/monthly/yearly rollups, card maintenance and vault backup. |

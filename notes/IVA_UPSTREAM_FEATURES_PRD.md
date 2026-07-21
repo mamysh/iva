@@ -1,8 +1,8 @@
 # PRD: аккуратная интеграция upstream-возможностей 1–8 в Iva
 
-**Статус:** In implementation — Stages 0–5 complete; Stage 6 PR I complete / PR J reviewed and ready for draft PR; Stages 7–8 deferred
+**Статус:** In implementation — Stages 0–6 complete and deployed; Stage 7 explicitly deferred; Stage 8 implementation complete locally, review/CI gates active
 **Дата:** 2026-07-21
-**Локальный baseline:** `aa1ed60` (`0.3.0-rc.4`)
+**Локальный baseline:** `17fa741` (`0.3.0-rc.4`); PR J merged/deployed, opt-in update timer enabled by owner
 **Upstream baseline:** `2def9d1` (`0.2.5`)
 **Область:** runtime dependencies, управление text/vision-моделями, bash safety, memory safety,
 update UX/safety, уведомления об обновлениях, update channels и rich reports
@@ -254,11 +254,22 @@ release canaries и provider/vision hardening. Его lockfile и patch нель
 ### Реализация
 
 1. Зафиксировать текущие provider, vision, Workflow и recovery canaries на старом runtime.
-2. Обновить Eve и AI SDK в отдельной ветке без остальных функций этого PRD.
-3. Пересоздать только необходимый `patch-package` patch и документировать, почему он ещё нужен.
-4. Адаптировать типы/интерфейсы, не меняя пользовательское поведение.
-5. Подтвердить оба storage profiles и все supported providers mock-контрактами.
-6. Выполнить bounded live provider/vision canary перед release candidate.
+2. Обновить зависимости в отдельной ветке точными версиями: `eve@0.24.4`, `ai@7.0.29`,
+   `@ai-sdk/openai@4.0.15`, `@ai-sdk/openai-compatible@3.0.11` и
+   `@workflow/world-local@5.0.0-beta.28`; синхронизировать `overrides.ai` и `resolutions.ai` на
+   `7.0.29`. Прямой local-world
+   pin нужен owned doctor/health/recovery scripts и совпадает со встроенной в Eve версией.
+3. Оставить `@workflow/world-postgres@5.0.0-beta.23`. Переход на beta.27 является отдельной
+   Workflow-дельтой и не входит в PR L; stable 4.x несовместим с Workflow 5 beta line Eve.
+4. Пересоздать только необходимый `patch-package` patch и закрепить его owned behavioral test:
+   детерминированные prompt/tool validation errors завершаются terminal без durable retry-loop.
+5. Перенести local Workflow state с legacy `.workflow-data` в официальный путь Eve
+   `.eve/.workflow-data` через проверяемое copy-and-activate, не удаляя legacy state в этом релизе.
+6. Адаптировать типы/интерфейсы, operational scripts и data manifest, не меняя пользовательское
+   поведение `/model`, `/think`, text/vision ролей и update channel.
+7. Подтвердить оба storage profiles и все supported providers mock-контрактами.
+8. Выполнить bounded live canary отдельно для активного text provider и активного vision provider;
+   для Codex проверить минимум два последовательных turn и фактический text effort.
 
 ### Acceptance criteria
 
@@ -266,6 +277,9 @@ release canaries и provider/vision hardening. Его lockfile и patch нель
 - второй и последующие Codex turns не получают server-side item reference errors;
 - reasoning stripping проходит generate и stream paths;
 - local/PostgreSQL restart-resume и task side-effect canaries зелёные;
+- legacy local state мигрируется атомарно, повторный update идемпотентен, а rollback запускает старый
+  runtime на сохранённом legacy state;
+- portable backup содержит `.eve/.workflow-data`, но не выдаёт остальной `.eve` за personal state;
 - текущие vision defaults сохранены;
 - update/rollback replica проходит на обеих storage-конфигурациях.
 
@@ -680,20 +694,109 @@ fail-closed блокировать update, без автоматического
 
 **Функция:** 1.
 
+### Product decisions
+
+1. Целевой runtime фиксируется на `eve@0.24.4`; свежие Eve-релизы не добавляются в этот цикл без
+   нового аудита.
+2. AI SDK и оба provider package используют exact pins. Lockfile, `overrides.ai` и `resolutions.ai`
+   обязаны указывать ту же версию `ai@7.0.29`.
+3. `@workflow/world-postgres@5.0.0-beta.23` остаётся без изменений. Его последующее обновление
+   выполняется отдельным Workflow PR после soak Stage 8.
+   Operational local-world фиксируется отдельно на `@workflow/world-local@5.0.0-beta.28`, совпадающем
+   со встроенной версией Eve `0.24.4`; транзитивный beta.25 из PostgreSQL package не используется
+   для открытия active local state.
+4. Текущий Eve patch сохраняется по существу: `AI_InvalidPromptError`, `AI_InvalidArgumentError`,
+   `AI_TypeValidationError`, `AI_NoSuchToolError`, `AI_InvalidToolInputError` и
+   `AI_UnsupportedFunctionalityError` классифицируются terminal до общих retry/recoverable правил.
+5. `/model` не меняет семантику: text и vision остаются отдельными ролями, `/think` влияет только на
+   Codex text request, существующие defaults и credentials не мигрируются.
+6. Production не является средой проверки. Merge, RC promotion и production deploy являются
+   отдельными решениями.
+
+### Local Workflow state contract
+
+Eve `0.24.4` хранит default local World в `.eve/.workflow-data`, тогда как текущая IVA использует
+legacy `.workflow-data`. В PR L вводится один owned resolver для operational-кода со следующими
+состояниями:
+
+| Legacy path | Current path | Действие |
+|---|---|---|
+| отсутствует | отсутствует | fresh local state создаёт Eve |
+| есть | отсутствует | offline backup → verified copy во временный sibling → atomic rename |
+| есть | есть | current path authoritative; legacy не перезаписывается и остаётся rollback safety net |
+| отсутствует | есть | использовать current path без миграции |
+
+Правила миграции:
+
+- source никогда не перемещается и не удаляется в релизе `0.3.0-rc.5`;
+- незавершённая копия не может стать active path; повторный запуск безопасен;
+- runtime останавливается до snapshot/copy и допускается к сообщениям только после readiness;
+- rollback до успешной активации возвращает прежний код и legacy path;
+- portable backup/restore включает только `.eve/.workflow-data`, а остальной `.eve` остаётся
+  derived/rebuildable;
+- transitional restore умеет читать backup с legacy или current layout и восстанавливает layout,
+  соответствующий активной версии;
+- `WORKFLOW_LOCAL_DATA_DIR` не является пользовательским runtime selector, потому что Eve его не
+  читает; test fixtures передают isolated paths через собственные параметры.
+
+### Этапы реализации PR L
+
+1. **Baseline и canaries:** обновить статус PRD, добавить классификационный и runtime no-retry
+   canary, а также fixtures четырёх состояний local path.
+2. **Dependency transaction:** изменить только `package.json`, lockfile, Eve patch и необходимую
+   type/API адаптацию.
+3. **State transition:** внедрить owned path resolver и copy-and-activate; обновить updater,
+   portable backup/restore, doctor, workflow-health и replica assertions.
+4. **Contracts и документация:** обновить data manifest, capability snapshot, configuration/deploy/
+   troubleshooting/testing docs. Дельта capability manifest должна быть объяснима только версиями
+   runtime и новым official local-state layout.
+5. **Automated verification:** узкие tests → `npm run verify:pr` → local/PostgreSQL build matrix →
+   install/reinstall/update/rollback/restore replicas.
+6. **Review и merge:** PR L проходит review и сливается без production deploy.
+7. **RC promotion:** версия `0.3.0-rc.5`, immutable tag на точном merged `main` commit, полный Release
+   candidate matrix и sanitized commit-bound report.
+8. **Live evidence и soak:** отдельно авторизованные active text/vision canaries и семь непрерывных
+   дней на production-like single-owner replica с тем же commit.
+9. **Production promotion:** только после зелёного soak и отдельного подтверждения владельца.
+   Fresh-owner acceptance дополнительно блокирует публикацию stable channel для новых пользователей.
+
+### Статус реализации PR L на 2026-07-21
+
+- Этапы 1–5 реализованы в `codex/runtime-dependency-upgrade`: exact dependency pins, новый Eve patch,
+  owned local-state migration, operational path transition, portable backup contract, capability/
+  data manifests и документация.
+- Локально зелёные narrow contracts, `npm test`, `npm run typecheck`, local и PostgreSQL profile
+  builds, `npm run replica:local`, `npm run replica:install` и `npm run verify:pr`; npm audit не
+  содержит high-severity advisory.
+- Реальный `replica:postgres` остаётся обязательным CI/release gate: локально disposable
+  `POSTGRES_FIXTURE_URL` отсутствует, production database использовать запрещено.
+- PR review/CI, merge, `0.3.0-rc.5` promotion, bounded live text/vision evidence, seven-day soak и
+  production deploy не считаются выполненными. Deploy потребует отдельного подтверждения владельца.
+- Следующий исполняемый шаг: review локального diff → commit/push → draft PR L → GitHub CI, без
+  production mutation.
+
 ### Работы
 
-1. Обновить Eve/AI SDK отдельно от feature PRs.
-2. Пересобрать patch-package patch.
-3. Устранить type/build/runtime несовместимости.
-4. Прогнать полный release matrix и bounded live canaries.
+1. Обновить exact-pinned Eve/AI SDK отдельно от feature PRs.
+2. Пересобрать patch-package patch и доказать terminal/no-retry semantics.
+3. Выполнить безопасную миграцию local Workflow state и transitional backup/rollback.
+4. Устранить type/build/runtime несовместимости без изменения model UX.
+   Eve `0.24.4` build сохраняет authored-source root, поэтому staged artifact не переносится как
+   готовый `.output`: после полного staging proof candidate повторно собирается в active root при
+   остановленных writers, а failure возвращает прежние output/modules до restart.
+5. Прогнать полный release matrix и bounded live canaries.
 
 ### Gate
 
 - `npm run verify:pr`;
 - local и PostgreSQL replicas;
 - install/update/rollback/restore scenarios;
+- migration fixtures для legacy/current local state и повторного update;
+- capability manifest diff review;
 - live text + vision provider evidence;
-- release report на immutable commit.
+- семь дней commit-bound production-like soak;
+- release report на immutable commit;
+- production deploy не входит в PR и требует отдельного подтверждения.
 
 ## 8. Нарезка на PR
 
@@ -773,7 +876,8 @@ production PostgreSQL database.
 3. `/model` сначала может быть включён read-only: показать resolved роли без изменения.
 4. После прохождения replica/canary включается apply path.
 5. Daily update timer остаётся opt-in.
-6. Eve/AI SDK upgrade выпускается отдельным release candidate.
+6. Eve/AI SDK upgrade выпускается отдельным `0.3.0-rc.5` release candidate после merge без
+   автоматического production deploy.
 
 ### Rollback
 
@@ -783,7 +887,9 @@ production PostgreSQL database.
 - Telegram wizard можно отключить без удаления сохранённой конфигурации;
 - update timer можно отключить без изменения update channel;
 - dependency upgrade откатывается только через существующий verified updater, без изменения vault и
-  user data.
+  user data;
+- local rollback использует сохранённый legacy `.workflow-data`; новый `.eve/.workflow-data` не
+  удаляется автоматически и остаётся доступен для диагностики/повторной активации.
 
 ## 13. Метрики успеха
 
@@ -827,6 +933,17 @@ does not alter vision».
 ### Риск: stable AI SDK меняет provider body
 
 **Решение:** отдельный dependency PR, body-level provider tests и live release canary.
+
+### Риск: Eve переносит local Workflow state внутрь `.eve`
+
+**Решение:** backup только точного personal subtree, atomic copy-and-activate из legacy path,
+идемпотентный повторный update и сохранение legacy state для rollback. Весь `.eve` никогда не
+классифицируется как пользовательские данные.
+
+### Риск: смешение Eve upgrade с новой beta-версией PostgreSQL World
+
+**Решение:** сохранить `@workflow/world-postgres@5.0.0-beta.23`; отдельный Workflow-only PR возможен
+после Stage 8 soak.
 
 ### Риск: жёсткое rich-report правило ухудшит обычный диалог
 

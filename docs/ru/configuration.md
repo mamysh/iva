@@ -103,7 +103,10 @@ iva restart
 
 ## Workflow backend
 
-Оставьте эти переменные пустыми для стандартного локального backend `.workflow-data`. Для долгоживущего self-host можно включить официальный PostgreSQL Workflow World:
+Оставьте эти переменные пустыми для стандартного локального backend `.eve/.workflow-data`. При
+обновлении на Eve 0.24 Iva переносит legacy `.workflow-data` и сохраняет старую копию для отката.
+Не задавайте `WORKFLOW_LOCAL_DATA_DIR`: локальным путём управляет Eve. Для долгоживущего self-host
+можно включить официальный PostgreSQL Workflow World:
 
 | Переменная | По умолчанию | Заметки |
 |---|---|---|

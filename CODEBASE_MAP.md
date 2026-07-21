@@ -110,7 +110,7 @@ install.sh                   Bare-server installer and bootstrap entry point
 package.json                 Commands and direct dependencies
 ```
 
-Generated or private paths such as `.env`, `data/`, `vault/`, `.workflow-data`, `.output`, `.eve`,
+Generated or private paths such as `.env`, `data/`, `vault/`, legacy `.workflow-data`, `.output`, `.eve`,
 `deploy/iva-workflow.environment` and Telegram session files are ignored. Do not treat them as code or
 commit them.
 
@@ -164,7 +164,7 @@ When changing a provider, check both generate and stream paths with
 agent/agent.ts
   -> scripts/lib/workflow-config.mjs
   -> Eve / Workflow SDK
-  -> local .workflow-data OR PostgreSQL Workflow World
+  -> local .eve/.workflow-data OR PostgreSQL Workflow World
 ```
 
 - `scripts/workflow-smoke.mjs` verifies seed/restart/resume continuity.
@@ -290,7 +290,8 @@ services and timers live in `deploy/`. See [`docs/deploy.md`](docs/deploy.md) an
 | Workflow health/recovery | `scripts/workflow-health.mjs` + `scripts/lib/runtime-recovery.mjs` | CLI, workflow backends, background jobs | runtime recovery check, both disposable replicas |
 | Workflow backend | `scripts/lib/workflow-config.mjs` | agent, package versions, smoke script | config test, both builds, restart/resume |
 | PostgreSQL profile | `scripts/postgres-profile.mjs` + `scripts/lib/postgres-profile.mjs` | deploy examples, upstream package migrations | config test, real PostgreSQL bootstrap + smoke |
-| Update behavior | `scripts/update-runtime.mjs` + `scripts/lib/update-contract.mjs` | persistent channel resolver, CLI, Telegram update, migration manifest | channel/update contracts, clean-install build/readiness rollback fixture |
+| Update behavior | `scripts/update-runtime.mjs` + `scripts/lib/update-contract.mjs` | persistent channel resolver, CLI, Telegram update, migration manifest; staged proof plus active-root Eve relocation build | channel/update contracts, clean-install build/readiness/restart rollback fixture |
+| Local Workflow state layout | `scripts/lib/local-workflow-state.mjs` + `scripts/migrate-local-workflow-state.mjs` | Eve default local World, updater, doctor, health, portable backup | four-layout migration contract, update rollback and local backup/restore replica |
 | Update notifications | `scripts/update-check.mjs` + `scripts/lib/update-notification.mjs` | persistent channel, Telegram callbacks, generated opt-in timer, doctor/status | notification SHA dedup test, Telegram/update channel tests, unit writer, both replicas |
 | Backup, restore, server moves | `scripts/data-manifest.json` + `scripts/lib/portable-backup.mjs` | backup runtime, CLI, data docs, both Workflow profiles | manifest/restore contract, both disposable replicas, clean-host drill |
 | Health metrics and capacity | `scripts/lib/health-metrics.mjs` + `scripts/observe.mjs` | doctor, status, Workflow health, observe timer | health metrics contract, doctor contract, both disposable replicas |
@@ -357,7 +358,8 @@ integration checks against the selected runtime profile.
 
 - Preserve unrelated user changes in a dirty worktree.
 - Do not edit `node_modules`; dependency fixes belong in `patches/` or an upstream/version change.
-- Do not edit `.output`, `.eve`, `.workflow-data`, live `vault/` or generated systemd units as source.
+- Do not edit `.output`, `.eve` (including `.eve/.workflow-data`), legacy `.workflow-data`, live
+  `vault/` or generated systemd units as source.
 - Do not copy production `.env`, Telegram sessions, vault contents or database dumps into tests.
 - Keep the live vault separate from `vault-template/`.
 - Do not start background processes from agent tools. Long-lived work belongs to managed services or

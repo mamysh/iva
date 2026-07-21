@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createMigrationPlan, createUpdatePreflight, runUpdateTransaction } from "./lib/update-contract.mjs";
 import { updateServicePlan } from "./lib/update-services.mjs";
 
@@ -11,6 +12,22 @@ assert.deepEqual(updateServicePlan(true), {
   stopGroups: [["iva-telegram-poll.service", "iva-telegram-userbot.service"], ["iva.service"]],
   restartUserbot: true,
 });
+
+const declaredManifest = JSON.parse(readFileSync(new URL("./update-manifest.json", import.meta.url), "utf8"));
+const updateRuntime = readFileSync(new URL("./update-runtime.mjs", import.meta.url), "utf8");
+assert.equal(updateRuntime.includes('moveIfPresent(join(STAGING_DIR, ".output"), join(ROOT, ".output"))'), false);
+const activatedModules = updateRuntime.indexOf('moveIfPresent(join(STAGING_DIR, "node_modules"), join(ROOT, "node_modules"))');
+const activeRootBuild = updateRuntime.indexOf('npm(["run", "build"], { cwd: ROOT, env: stageEnv, inherit: true })');
+assert.ok(activatedModules >= 0 && activeRootBuild > activatedModules, "activation must rebuild Eve in the active source root");
+const previousDeclaredManifest = {
+  ...declaredManifest,
+  migrationVersion: 1,
+  migrations: declaredManifest.migrations.filter(({ version }) => version <= 1),
+};
+const declaredLocalPlan = createMigrationPlan(previousDeclaredManifest, declaredManifest, "local");
+assert.deepEqual(declaredLocalPlan.migrations.map(({ id }) => id), ["eve-local-workflow-state-layout"]);
+assert.equal(declaredLocalPlan.requiresBackup, true);
+assert.deepEqual(createMigrationPlan(previousDeclaredManifest, declaredManifest, "postgres").migrations, []);
 
 const manifest = (migrationVersion, migrations = []) => ({ schemaVersion: 1, migrationVersion, migrations });
 const baseline = manifest(0);

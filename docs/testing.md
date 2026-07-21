@@ -46,6 +46,9 @@ This gate currently proves:
 - bounded 31-day health history, 7-day baseline gate, Workflow growth projection and alert cooldown/deduplication;
 - extension config/dependency fail-closed behavior, managed background ownership and optional removal safety;
 - the update preflight/migration contract, broken-build isolation and readiness rollback order;
+- exact Eve deterministic-error classification, including wrapped prompt/tool validation failures;
+- the four local Workflow layouts around the `.workflow-data` to `.eve/.workflow-data` migration,
+  verified copy-and-activate, rollback preservation and idempotent repeat;
 - the sanitized data inventory, private portable-backup modes/checksums, clean-host local restore,
   tasks/reminders/memory recall, derived-index rebuild and honest vault-only boundary;
 - install readiness rejects incomplete configuration, failed health, inactive/restarting services
@@ -106,8 +109,10 @@ The local variant likewise performs an offline portable snapshot/restore of real
 disposable home with mock provider, Telegram and systemd boundaries, checking readiness, doctor safe
 auto-fix followed by a green repeat, redacted JSON, private-file modes, vault preservation, and
 independent Telegram-bridge stop/restart while Eve stays available. The same install fixture creates
-a disposable Git remote and proves broken target build isolation, automatic readiness rollback with
-the previous service restored, and a successful atomic update. The PostgreSQL variant runs the official pinned-package bootstrap on a
+a disposable Git remote and proves broken target build isolation, the real N−1→N local-state
+migration, automatic readiness rollback with both state layouts preserved, active-root Eve rebuild,
+post-cleanup restart, and a successful idempotent atomic update. The PostgreSQL variant runs the
+official pinned-package bootstrap on a
 fresh real database, verifies the Workflow/Drizzle/Graphile schemas and doctor PostgreSQL write/read
 probe without creating a user session, persists a first turn, repeats
 bootstrap without losing runs, resumes after restart, and proves that no local workflow state was

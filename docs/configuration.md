@@ -110,7 +110,10 @@ The nightly doctor builds the hybrid index; to build it now, run `node --env-fil
 
 ## Workflow backend
 
-Leave these unset for the default local `.workflow-data` backend. For long-running self-host installs, enable the official PostgreSQL Workflow World:
+Leave these unset for the default local `.eve/.workflow-data` backend. Iva migrates the legacy
+`.workflow-data` layout during the Eve 0.24 upgrade and preserves the legacy copy for rollback. Do
+not configure `WORKFLOW_LOCAL_DATA_DIR`: Eve owns the local path. For long-running self-host installs,
+enable the official PostgreSQL Workflow World:
 
 | Variable | Default | Notes |
 |---|---|---|

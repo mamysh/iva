@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createMigrationPlan, createUpdatePreflight, runUpdateTransaction } from "./lib/update-contract.mjs";
 import { acquireUpdateLock, releaseUpdateLock } from "./lib/update-lock.mjs";
 import { resolveUpdateChannel, updateChannelRef } from "./lib/update-channel.mjs";
+import { existingLocalWorkflowDataPath } from "./lib/local-workflow-state.mjs";
 import { resolveRuntimeWorkflowProfile } from "./lib/workflow-runtime.mjs";
 import { UPDATE_USERBOT_SERVICE, updateServicePlan } from "./lib/update-services.mjs";
 
@@ -211,7 +212,7 @@ export function createWorkflowBackup(profile, env, targetCommit) {
     chmodSync(path, 0o600);
     return { verified: true, profile, path };
   }
-  const source = resolvePath(env.WORKFLOW_LOCAL_DATA_DIR || ".workflow-data");
+  const source = existingLocalWorkflowDataPath(ROOT);
   const path = join(backupDir, "workflow-local");
   if (!existsSync(source)) throw new Error("local workflow backup blocked: data directory is missing");
   const sourceSnapshot = directorySnapshot(source);
@@ -221,7 +222,7 @@ export function createWorkflowBackup(profile, env, targetCommit) {
   if (backupSnapshot.files !== sourceSnapshot.files || backupSnapshot.bytes !== sourceSnapshot.bytes) {
     throw new Error("local workflow backup could not be verified");
   }
-  return { verified: true, profile, path };
+  return { verified: true, profile, path, sourcePath: source };
 }
 
 function restoreWorkflowBackup(backup, env) {
@@ -231,7 +232,7 @@ function restoreWorkflowBackup(backup, env) {
     must("pg_restore", ["--clean", "--if-exists", "--no-owner", "--dbname", pgEnv.PGDATABASE, backup.path], { env: pgEnv, inherit: true });
     return;
   }
-  const target = resolvePath(env.WORKFLOW_LOCAL_DATA_DIR || ".workflow-data");
+  const target = backup.sourcePath || existingLocalWorkflowDataPath(ROOT);
   rmSync(target, { recursive: true, force: true });
   cpSync(backup.path, target, { recursive: true, preserveTimestamps: true });
 }
@@ -300,7 +301,7 @@ async function performUpdateUnlocked({ force = false, log = console.log, onProgr
       backupToolsReady(profile.backend) && (
         profile.backend === "postgres"
           ? Boolean(env.WORKFLOW_POSTGRES_URL || env.DATABASE_URL)
-          : directorySnapshot(resolvePath(env.WORKFLOW_LOCAL_DATA_DIR || ".workflow-data")).files > 0
+          : directorySnapshot(existingLocalWorkflowDataPath(ROOT)).files > 0
       )
     ),
   });
@@ -376,8 +377,12 @@ async function performUpdateUnlocked({ force = false, log = console.log, onProgr
         git(["reset", "--hard", targetCommit]);
         moveIfPresent(join(ROOT, ".output"), previousOutput);
         moveIfPresent(join(ROOT, "node_modules"), previousModules);
-        moveIfPresent(join(STAGING_DIR, ".output"), join(ROOT, ".output"));
         moveIfPresent(join(STAGING_DIR, "node_modules"), join(ROOT, "node_modules"));
+        // Eve 0.24 build artifacts retain the authored-source root. A staging build proves the
+        // candidate, but moving it would leave references to .iva-update/staging after cleanup.
+        // Rebuild once in the activated root while writers remain stopped; rollback restores the
+        // previous output/modules if this bounded relocation build fails.
+        npm(["run", "build"], { cwd: ROOT, env: stageEnv, inherit: true });
       } catch (error) {
         restoreActivation();
         restartManagedServices(servicePlan);

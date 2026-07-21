@@ -169,7 +169,7 @@
     },
     {
       "id": "workflow.local",
-      "path": "${IVA_ROOT}/.workflow-data/**",
+      "path": "${IVA_ROOT}/.eve/.workflow-data/**",
       "type": "directory",
       "classification": { "secret": false, "personal": true, "derived": false },
       "required": false,
@@ -177,6 +177,17 @@
       "restoreOrder": 60,
       "retention": "portable backup generations",
       "lossTolerance": "none when the local profile is active"
+    },
+    {
+      "id": "workflow.local-legacy-rollback",
+      "path": "${IVA_ROOT}/.workflow-data/**",
+      "type": "directory",
+      "classification": { "secret": false, "personal": true, "derived": false },
+      "required": false,
+      "backupMethod": "verified update snapshot before layout migration; preserve in place for rollback",
+      "restoreOrder": 61,
+      "retention": "retain through the 0.3.0-rc.5 soak; never delete during the migration release",
+      "lossTolerance": "none until the dependency upgrade is committed and rollback is no longer required"
     },
     {
       "id": "workflow.postgres",
@@ -191,7 +202,7 @@
     },
     {
       "id": "runtime.generated",
-      "path": "${IVA_ROOT}/{node_modules,.output,.eve,.iva-update}/**",
+      "path": "${IVA_ROOT}/{node_modules,.output,.iva-update}/** plus ${IVA_ROOT}/.eve/** excluding .eve/.workflow-data/**",
       "type": "directory",
       "classification": { "secret": false, "personal": false, "derived": true },
       "required": false,

@@ -33,6 +33,7 @@ const stubs = join(sandbox, "bin");
 const processState = join(sandbox, "processes");
 const preload = join(sandbox, "telegram-fetch-preload.mjs");
 const serviceControl = join(sandbox, "service-control.mjs");
+const candidateUpdateManifest = readFileSync(join(ROOT, "scripts/update-manifest.json"), "utf8");
 const realNpm = process.env.npm_execpath;
 const logs = [];
 let provider;
@@ -59,6 +60,7 @@ async function copyFixture() {
   await mkdir(app, { recursive: true });
   const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" }).split("\0").filter(Boolean);
   for (const path of tracked) {
+    if (!existsSync(join(ROOT, path))) continue;
     await mkdir(dirname(join(app, path)), { recursive: true });
     await cp(join(ROOT, path), join(app, path));
   }
@@ -132,6 +134,29 @@ function bumpFixtureVersion(author) {
   return nextVersion;
 }
 
+function activateCandidateUpdateManifest(root) {
+  writeFileSync(join(root, "scripts/update-manifest.json"), candidateUpdateManifest);
+}
+
+function pinPreviousMigrationManifest(root) {
+  const manifestPath = join(root, "scripts/update-manifest.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.migrationVersion = 1;
+  manifest.migrations = manifest.migrations.filter(({ version }) => version <= 1);
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+async function stageLegacyLocalWorkflowLayout() {
+  const current = join(app, ".eve/.workflow-data");
+  const legacy = join(app, ".workflow-data");
+  await controlService("stop", "iva.service");
+  await rm(legacy, { recursive: true, force: true });
+  await cp(current, legacy, { recursive: true, preserveTimestamps: true });
+  await rm(current, { recursive: true, force: true });
+  assert.equal(existsSync(legacy), true);
+  assert.equal(existsSync(current), false);
+}
+
 async function fileHash(path) {
   return createHash("sha256").update(await readFile(path)).digest("hex");
 }
@@ -174,13 +199,29 @@ const app = process.env.IVA_FIXTURE_APP;
 const state = process.env.IVA_FIXTURE_STATE;
 const pidfile = join(state, unit + ".pid");
 const logfile = join(state, unit + ".log");
+const sleepArray = new Int32Array(new SharedArrayBuffer(4));
+const sleep = (milliseconds) => Atomics.wait(sleepArray, 0, 0, milliseconds);
+const groupRunning = (pid) => {
+  try { process.kill(-pid, 0); return true; } catch {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  }
+};
+const signalGroup = (pid, signal) => {
+  try { process.kill(-pid, signal); } catch {
+    try { process.kill(pid, signal); } catch {}
+  }
+};
 const running = () => {
   if (!existsSync(pidfile)) return false;
-  try { process.kill(Number(readFileSync(pidfile, "utf8")), 0); return true; } catch { return false; }
+  return groupRunning(Number(readFileSync(pidfile, "utf8")));
 };
 const stop = () => {
   if (!running()) { rmSync(pidfile, { force: true }); return; }
-  try { process.kill(Number(readFileSync(pidfile, "utf8")), "SIGTERM"); } catch {}
+  const pid = Number(readFileSync(pidfile, "utf8"));
+  signalGroup(pid, "SIGTERM");
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline && groupRunning(pid)) sleep(50);
+  if (groupRunning(pid)) signalGroup(pid, "SIGKILL");
   rmSync(pidfile, { force: true });
 };
 const start = () => {
@@ -362,6 +403,24 @@ async function runFixtureCli(args) {
   return { code, output };
 }
 
+async function doctorRestartCanary() {
+  await controlService("stop", "iva.service");
+  const repaired = await runFixtureCli(["doctor"]);
+  if (repaired.code !== 0) {
+    let serviceLog = "";
+    try { serviceLog = (await readFile(join(processState, "iva.service.log"), "utf8")).slice(-8_000); } catch {}
+    assert.equal(repaired.code, 0, `${repaired.output}\n--- synthetic iva.service log ---\n${serviceLog}`);
+  }
+  assert.match(repaired.output, /fixed: 1/);
+  await controlService("status", "iva.service");
+  const jsonDoctor = await runFixtureCli(["doctor", "--json"]);
+  assert.equal(jsonDoctor.code, 0, jsonDoctor.output);
+  const report = JSON.parse(jsonDoctor.output);
+  assert.equal(report.exitCode, 0);
+  assert.equal(report.checks.find((item) => item.id === "services.agent")?.status, "pass");
+  assert.doesNotMatch(jsonDoctor.output, /synthetic-install-key|synthetic-token|1000|\/iva-clean-install-/);
+}
+
 try {
   await mkdir(home, { recursive: true });
   await copyFixture();
@@ -433,11 +492,14 @@ try {
   assert.equal((await stat(updateChannelPath)).mode & 0o777, 0o600);
   const firstReply = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();
   assert.match(JSON.stringify(firstReply), /INSTALL_OK/);
+  await doctorRestartCanary();
 
+  pinPreviousMigrationManifest(app);
   const { author, baseline } = await initializeUpdateRepository();
   const activeOutput = join(app, ".output/server/index.mjs");
   const baselineOutputHash = await fileHash(activeOutput);
   const brokenBuildTarget = pushTarget(author, baseline, () => {
+    activateCandidateUpdateManifest(author);
     bumpFixtureVersion(author);
     appendFileSync(join(author, "agent/agent.ts"), "\nthis is not valid TypeScript\n");
   }, "broken target build");
@@ -450,7 +512,9 @@ try {
   assert.deepEqual(JSON.parse(await readFile(updateChannelPath, "utf8")), expectedUpdateChannel, "build rollback changed the update channel");
   await controlService("status", "iva.service");
 
+  if (!postgresMode) await stageLegacyLocalWorkflowLayout();
   const readinessTarget = pushTarget(author, baseline, () => {
+    activateCandidateUpdateManifest(author);
     bumpFixtureVersion(author);
     writeFileSync(join(author, "scripts/fixture-readiness-fail"), "fixture\n");
   }, "broken target readiness");
@@ -462,10 +526,15 @@ try {
   assert.equal(await fileHash(activeOutput), baselineOutputHash, "readiness rollback did not restore active output");
   assert.deepEqual(JSON.parse(await readFile(updateChannelPath, "utf8")), expectedUpdateChannel, "readiness rollback changed the update channel");
   await controlService("status", "iva.service");
+  if (!postgresMode) {
+    assert.equal(existsSync(join(app, ".workflow-data")), true, "migration removed the legacy rollback state");
+    assert.equal(existsSync(join(app, ".eve/.workflow-data")), true, "migration did not activate the current local state");
+  }
 
   let successfulVersion;
   const baselineVersion = JSON.parse(await readFile(join(app, "package.json"), "utf8")).version;
   const successfulTarget = pushTarget(author, baseline, () => {
+    activateCandidateUpdateManifest(author);
     successfulVersion = bumpFixtureVersion(author);
     writeFileSync(join(author, "scripts/fixture-update-success"), "fixture\n");
   }, "successful target update");
@@ -485,17 +554,7 @@ try {
   const afterUpdateReply = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();
   assert.match(JSON.stringify(afterUpdateReply), /INSTALL_OK/);
 
-  await controlService("stop", "iva.service");
-  const repairedDoctor = await runFixtureCli(["doctor"]);
-  assert.equal(repairedDoctor.code, 0, repairedDoctor.output);
-  assert.match(repairedDoctor.output, /fixed: 1/);
-  await controlService("status", "iva.service");
-  const jsonDoctor = await runFixtureCli(["doctor", "--json"]);
-  assert.equal(jsonDoctor.code, 0, jsonDoctor.output);
-  const doctorReport = JSON.parse(jsonDoctor.output);
-  assert.equal(doctorReport.exitCode, 0);
-  assert.equal(doctorReport.checks.find((item) => item.id === "services.agent")?.status, "pass");
-  assert.doesNotMatch(jsonDoctor.output, /synthetic-install-key|synthetic-token|1000|\/iva-clean-install-/);
+  await doctorRestartCanary();
   assert.ok(telegram.requests() > 0, "Telegram polling bridge did not reach the mock Bot API");
   await controlService("stop", "iva-telegram-poll.service");
   const whileBridgeStopped = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();

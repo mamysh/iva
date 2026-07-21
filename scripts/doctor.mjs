@@ -10,6 +10,7 @@ import { assertWorkflowProfileMatch } from "./lib/workflow-config.mjs";
 import { readWorkflowBuildDescriptor, resolveRuntimeWorkflowProfile } from "./lib/workflow-runtime.mjs";
 import { evaluateDoctorSnapshot, formatDoctorReport } from "./lib/doctor-contract.mjs";
 import { readMetricHistory, summarizeHealth } from "./lib/health-metrics.mjs";
+import { localWorkflowDataPath } from "./lib/local-workflow-state.mjs";
 import { providerAccessConfigured } from "./lib/model-catalog.mjs";
 import { resolveModelRoles } from "./lib/model-profile.mjs";
 import { readEntries } from "./lib/usage.mjs";
@@ -159,7 +160,7 @@ async function storageProbe(backend) {
       return { writeRead: false, chunks: 0 };
     } finally { await client.end().catch(() => {}); }
   }
-  const workflowDir = resolvePath(env.WORKFLOW_LOCAL_DATA_DIR || ".workflow-data");
+  const workflowDir = localWorkflowDataPath(ROOT);
   const probe = join(workflowDir, `.iva-doctor-probe-${process.pid}`);
   try {
     mkdirSync(workflowDir, { recursive: true });
