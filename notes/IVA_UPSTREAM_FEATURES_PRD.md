@@ -1,8 +1,8 @@
 # PRD: аккуратная интеграция upstream-возможностей 1–8 в Iva
 
-**Статус:** In implementation — Stages 0–6 complete and deployed; Stage 7 explicitly deferred; Stage 8 implementation complete locally, review/CI gates active
-**Дата:** 2026-07-21
-**Локальный baseline:** `17fa741` (`0.3.0-rc.4`); PR J merged/deployed, opt-in update timer enabled by owner
+**Статус:** In implementation — Stages 0–6 complete and deployed; Stage 7 explicitly deferred; Stage 8 PR L merged, `0.3.0-rc.5` promotion active
+**Дата:** 2026-07-22
+**Локальный baseline:** `4721034` (PR #34 merged); candidate version `0.3.0-rc.5`
 **Upstream baseline:** `2def9d1` (`0.2.5`)
 **Область:** runtime dependencies, управление text/vision-моделями, bash safety, memory safety,
 update UX/safety, уведомления об обновлениях, update channels и rich reports
@@ -10,7 +10,7 @@ update UX/safety, уведомления об обновлениях, update cha
 ## 1. Резюме
 
 Iva должна получить полезные возможности из свежего `upstream/main`, не заменяя ими локальную
-архитектуру `0.3.0-rc.4`. Upstream и локальная ветка разошлись после `e09ec88`: upstream содержит 35
+архитектуру `0.3.0-rc.5`. Upstream и локальная ветка разошлись после `e09ec88`: upstream содержит 35
 уникальных коммитов, локальная ветка — 72. Прямой merge или последовательный cherry-pick не является
 допустимым способом реализации этого PRD.
 
@@ -760,7 +760,7 @@ legacy `.workflow-data`. В PR L вводится один owned resolver для
 9. **Production promotion:** только после зелёного soak и отдельного подтверждения владельца.
    Fresh-owner acceptance дополнительно блокирует публикацию stable channel для новых пользователей.
 
-### Статус реализации PR L на 2026-07-21
+### Статус реализации PR L на 2026-07-22
 
 - Этапы 1–5 реализованы в `codex/runtime-dependency-upgrade`: exact dependency pins, новый Eve patch,
   owned local-state migration, operational path transition, portable backup contract, capability/
@@ -768,12 +768,13 @@ legacy `.workflow-data`. В PR L вводится один owned resolver для
 - Локально зелёные narrow contracts, `npm test`, `npm run typecheck`, local и PostgreSQL profile
   builds, `npm run replica:local`, `npm run replica:install` и `npm run verify:pr`; npm audit не
   содержит high-severity advisory.
-- Реальный `replica:postgres` остаётся обязательным CI/release gate: локально disposable
-  `POSTGRES_FIXTURE_URL` отсутствует, production database использовать запрещено.
-- PR review/CI, merge, `0.3.0-rc.5` promotion, bounded live text/vision evidence, seven-day soak и
-  production deploy не считаются выполненными. Deploy потребует отдельного подтверждения владельца.
-- Следующий исполняемый шаг: review локального diff → commit/push → draft PR L → GitHub CI, без
-  production mutation.
+- PR #34 слит squash-merge в `main` commit `4721034`; PR и post-merge Verify зелёные, включая Node 24,
+  оба build profile, clean install/update/rollback и реальную disposable PostgreSQL replica.
+- RC promotion меняет только release surfaces на `0.3.0-rc.5` и не является production deploy.
+- Immutable tag, Release candidate matrix, bounded live text/vision evidence, seven-day soak и
+  production deploy ещё не выполнены. Deploy потребует отдельного подтверждения владельца.
+- Следующий исполняемый шаг: merge RC promotion → annotated tag `v0.3.0-rc.5` → полный commit-bound
+  Release candidate matrix без production mutation.
 
 ### Работы
 

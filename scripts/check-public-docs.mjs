@@ -24,8 +24,9 @@ for (const path of ["README.md", "README.ru.md"]) {
   assert.match(text, /Rich Messages|Rich replies|Богатые ответы/);
   assert.match(text, /userbot \(beta\)/i);
   assert.match(text, /`\/update`/);
-  assert.match(text, /v0\.3\.0-rc\.4\/install\.sh/);
-  assert.match(text, /BRANCH=v0\.3\.0-rc\.4/);
+  const escapedVersion = packageVersion.replaceAll(".", "\\.");
+  assert.match(text, new RegExp(`v${escapedVersion}/install\\.sh`));
+  assert.match(text, new RegExp(`BRANCH=v${escapedVersion}`));
 }
 for (const name of ownerDocs) {
   assert.equal(existsSync(`docs/${name}.md`), true, `missing English owner doc: ${name}.md`);
