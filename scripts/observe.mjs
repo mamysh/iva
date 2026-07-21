@@ -9,6 +9,7 @@ import {
 } from "./lib/health-metrics.mjs";
 import { readStateEnvironment } from "./lib/portable-backup.mjs";
 import { readEntries } from "./lib/usage.mjs";
+import { lastSuccessfulUnitRun } from "./lib/systemd-history.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const env = { ...process.env, ...readStateEnvironment(ROOT) };
@@ -32,9 +33,7 @@ function numberValue(value) {
 }
 
 function unitSuccessAt(unit) {
-  if (numberValue(systemdValue(unit, "ExecMainStatus")) !== 0) return null;
-  const timestamp = Date.parse(systemdValue(unit, "ExecMainStartTimestamp"));
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+  return lastSuccessfulUnitRun(unit, systemdValue);
 }
 
 function swapUsedPercent() {

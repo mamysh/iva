@@ -13,6 +13,7 @@ import { readMetricHistory, summarizeHealth } from "./lib/health-metrics.mjs";
 import { providerAccessConfigured } from "./lib/model-catalog.mjs";
 import { resolveModelRoles } from "./lib/model-profile.mjs";
 import { readEntries } from "./lib/usage.mjs";
+import { lastSuccessfulUnitRun } from "./lib/systemd-history.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = join(ROOT, ".env");
@@ -62,12 +63,9 @@ function serviceSnapshot(systemd, name) {
   };
 }
 
-function lastSuccessfulUnitRun(name) {
+function systemdSuccessAt(name) {
   if (command("systemctl", ["--user", "show-environment"]).code !== 0) return null;
-  if (Number.parseInt(systemdValue(name, "ExecMainStatus"), 10) !== 0) return null;
-  const value = systemdValue(name, "ExecMainStartTimestamp");
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+  return lastSuccessfulUnitRun(name, systemdValue);
 }
 
 async function healthOk() {
@@ -221,9 +219,9 @@ const timersEnabled = systemd ? TIMERS.filter((name) => command("systemctl", ["-
 const workflow = await workflowSnapshot();
 const usage = readEntries(dataDir);
 const providerLastSuccess = [...usage].reverse().find((entry) => !entry.error)?.ts || null;
-const memoryJobTimes = ["iva-memory-daily.service", "iva-memory-doctor.service"].map(lastSuccessfulUnitRun).filter(Boolean).sort();
+const memoryJobTimes = ["iva-memory-daily.service", "iva-memory-doctor.service"].map(systemdSuccessAt).filter(Boolean).sort();
 const memoryLastSuccess = memoryJobTimes.at(-1) || null;
-const reminderLastSuccess = lastSuccessfulUnitRun("iva-reminders.service");
+const reminderLastSuccess = systemdSuccessAt("iva-reminders.service");
 const vaultRemote = existsSync(vaultDir) && command("git", ["-C", vaultDir, "remote", "get-url", "origin"]).code === 0;
 const indexPath = join(vaultDir, ".index/embeddings.json");
 const indexReady = configuration.memoryMode !== "hybrid" || (existsSync(indexPath) && Date.now() - statSync(indexPath).mtimeMs <= 48 * 3_600_000);
@@ -245,7 +243,7 @@ const report = evaluateDoctorSnapshot({
   backups: {
     lastReminderDispatchAt: reminderLastSuccess,
     vaultRemote,
-    lastVaultBackupAt: lastSuccessfulUnitRun("iva-memory-doctor.service"),
+    lastVaultBackupAt: systemdSuccessAt("iva-memory-doctor.service"),
     databaseBackup: workflow.backend === "postgres" ? newestVerifiedDatabaseBackup() : true,
   },
   capacity: {

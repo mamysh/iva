@@ -169,6 +169,8 @@ agent/agent.ts
 - `bin/iva.mjs` owns the CLI route, safe doctor auto-fix, backend-aware reset and service environment.
 - `scripts/doctor.mjs` collects layered runtime evidence; `scripts/lib/doctor-contract.mjs` owns the
   sanitized schema, severity/exit-code contract and human rendering.
+- `scripts/lib/systemd-history.mjs` resolves successful oneshot timestamps for doctor and observation,
+  including the timer fallback used when a unit reload clears inactive service metadata.
 
 Workflow state is not long-term personal memory. Changing the Workflow World must not rewrite the
 vault.
