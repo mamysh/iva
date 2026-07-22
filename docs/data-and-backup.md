@@ -14,7 +14,7 @@ truth for classification, backup method, restore order, retention, and acceptabl
 | Opt-in Telegram userbot token and session | Yes when present | The personal account must be authorized again; restoring the file never enables the service |
 | Local Workflow state | Yes, with every writer stopped | Conversation/continuation state is lost |
 | PostgreSQL Workflow state | Yes, `pg_dump` custom format verified by `pg_restore --list` | Conversation/continuation state is lost |
-| Memory `.index`/`.graph`, bounded health metrics, build output, dependencies, Eve caches, userbot venv | No | They are derived and rebuilt from code, the vault, or fresh measurements |
+| Memory `.index`/`.graph`, bounded health metrics, build output, dependencies, Eve caches, Python virtual environments | No | They are derived and rebuilt from code, the vault, or fresh measurements |
 
 The vault is only memory. A vault-only recovery honestly restores Markdown memory and attachments,
 but it does not restore tasks, reminders, OAuth, Telegram polling position, userbot authorization, or
@@ -41,6 +41,10 @@ including `backup.json`, is `0600`. `backup.json` contains commit/version/profil
 and exclusions, but no credentials, database URL, private source path, prompts, or memory contents.
 Copy the whole directory to encrypted/off-host storage. Filesystem permissions do not encrypt the
 backup from root or from the storage provider.
+
+Nested application-data repositories remain part of the portable backup. Their derived `.venv`
+directories are excluded so ordinary Python symlinks do not make an otherwise portable snapshot
+unrestorable; recreate those environments from their locked dependency files after restore.
 
 For PostgreSQL, `psql`, `pg_dump`, and `pg_restore` must be installed. The `pg_dump` major version
 must be at least the server major version. Connection credentials are supplied through PostgreSQL

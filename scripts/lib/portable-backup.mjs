@@ -14,6 +14,7 @@ const DATA_EXCLUDES = new Set([
   "backups", ".reminders.lock", "update.lock", "update.lock.recovery", "update-jobs",
   "update-notification-state.json", "health-metrics.jsonl", "health-alert-state.json", "workflow-health.json",
 ]);
+const DATA_RECURSIVE_EXCLUDES = new Set([".venv"]);
 const VAULT_EXCLUDES = new Set([".index", ".graph"]);
 
 function command(program, args, { cwd, env = process.env, inherit = false, timeout = 20 * 60_000 } = {}) {
@@ -113,7 +114,7 @@ function assertInside(parent, child) {
   return rel;
 }
 
-function copyPrivateTree(source, target, { exclude = new Set() } = {}) {
+function copyPrivateTree(source, target, { exclude = new Set(), recursiveExclude = new Set() } = {}) {
   const info = lstatSync(source);
   if (info.isSymbolicLink()) throw new Error(`backup blocked: symbolic links are not supported (${source})`);
   if (info.isFile()) {
@@ -126,8 +127,8 @@ function copyPrivateTree(source, target, { exclude = new Set() } = {}) {
   mkdirSync(target, { recursive: true, mode: PRIVATE_DIR_MODE });
   chmodSync(target, PRIVATE_DIR_MODE);
   for (const entry of readdirSync(source, { withFileTypes: true })) {
-    if (exclude.has(entry.name)) continue;
-    copyPrivateTree(join(source, entry.name), join(target, entry.name));
+    if (exclude.has(entry.name) || recursiveExclude.has(entry.name)) continue;
+    copyPrivateTree(join(source, entry.name), join(target, entry.name), { recursiveExclude });
   }
 }
 
@@ -206,7 +207,9 @@ export function verifyPortableBackup(backupDir) {
     }
     assertInside(root, join(root, file.path));
   }
-  const actual = inventoryFiles(root).filter((file) => file.path !== "backup.json");
+  const actual = inventoryFiles(root)
+    .filter((file) => file.path !== "backup.json")
+    .sort((a, b) => a.path.localeCompare(b.path));
   if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("portable backup checksum or file inventory mismatch");
   return metadata;
 }
@@ -249,7 +252,10 @@ export function createPortableBackup({
   try {
     copyPrivateTree(join(appRoot, ".env"), join(temporary, "payload/config/.env"));
     copyOptional(join(appRoot, "deploy/iva-workflow.environment"), join(temporary, "payload/config/workflow.environment"));
-    copyOptional(dataDir, join(temporary, "payload/data"), { exclude: DATA_EXCLUDES });
+    copyOptional(dataDir, join(temporary, "payload/data"), {
+      exclude: DATA_EXCLUDES,
+      recursiveExclude: DATA_RECURSIVE_EXCLUDES,
+    });
     copyPrivateTree(vaultDir, join(temporary, "payload/vault"), { exclude: VAULT_EXCLUDES });
 
     let postgres = null;
@@ -273,7 +279,7 @@ export function createPortableBackup({
       createdAt: createdAt.toISOString(),
       source: { commit, version, profile: selectedProfile },
       postgres,
-      exclusions: ["data/backups", "data/.reminders.lock", "data/health-metrics.jsonl", "data/health-alert-state.json", "data/workflow-health.json", "vault/.index", "vault/.graph"],
+      exclusions: ["data/backups", "data/**/.venv", "data/.reminders.lock", "data/health-metrics.jsonl", "data/health-alert-state.json", "data/workflow-health.json", "vault/.index", "vault/.graph"],
       files,
     };
     writePrivateJson(join(temporary, "backup.json"), metadata);

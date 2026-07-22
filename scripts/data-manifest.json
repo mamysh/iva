@@ -221,6 +221,17 @@
       "restoreOrder": 101,
       "retention": "none",
       "lossTolerance": "recreatable"
+    },
+    {
+      "id": "runtime.data-python-venvs",
+      "path": "${ASSISTANT_DATA_DIR}/**/.venv/**",
+      "type": "directory",
+      "classification": { "secret": false, "personal": false, "derived": true },
+      "required": false,
+      "backupMethod": "exclude-and-rebuild",
+      "restoreOrder": 102,
+      "retention": "none",
+      "lossTolerance": "recreatable"
     }
   ]
 }
