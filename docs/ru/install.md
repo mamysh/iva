@@ -15,7 +15,7 @@
 ## Установка
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.5/install.sh | BRANCH=v0.3.0-rc.5 bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.6/install.sh | BRANCH=v0.3.0-rc.6 bash
 ```
 
 Команда устанавливает точный candidate tag RC5; release evidence ещё собирается. Обычным пользователям лучше дождаться stable-команды в
@@ -53,7 +53,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.5/install.sh |
 Флаги проходят через пайп с помощью `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.5/install.sh | BRANCH=v0.3.0-rc.5 bash -s -- --skip-setup
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.6/install.sh | BRANCH=v0.3.0-rc.6 bash -s -- --skip-setup
 ```
 
 | Опция | Действие |
@@ -62,7 +62,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.5/install.sh |
 | `--non-interactive` | вообще без вопросов — только значения по умолчанию, мастер пропущен |
 | `-h`, `--help` | показать встроенную справку и выйти |
 | `REPO_URL=…` | ставить из форка (по умолчанию `https://github.com/mamysh/iva.git`) |
-| `BRANCH=…` | ставить ветку или тег (`v0.3.0-rc.5` для текущего кандидата) |
+| `BRANCH=…` | ставить ветку или тег (`v0.3.0-rc.6` для текущего кандидата) |
 | `INSTALL_DIR=…` | куда положить код (по умолчанию `~/iva`) |
 
 Последние три — переменные окружения, скрипт читает их на старте.
