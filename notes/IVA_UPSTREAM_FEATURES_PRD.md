@@ -1,8 +1,8 @@
 # PRD: аккуратная интеграция upstream-возможностей 1–8 в Iva
 
-**Статус:** In implementation — Stages 0–6 complete and deployed; Stage 7 explicitly deferred; Stage 8 PR L merged, `0.3.0-rc.6` promotion active
+**Статус:** In implementation — Stages 0–6 complete and deployed; Stage 7 explicitly deferred; Stage 8 PR L merged, `0.3.0-rc.7` security promotion active
 **Дата:** 2026-07-22
-**Локальный baseline:** `45a1fd7` (PR #36 merged); candidate version `0.3.0-rc.6`
+**Локальный baseline:** `ccbea99` (PR #38 merged); candidate version `0.3.0-rc.7`
 **Upstream baseline:** `2def9d1` (`0.2.5`)
 **Область:** runtime dependencies, управление text/vision-моделями, bash safety, memory safety,
 update UX/safety, уведомления об обновлениях, update channels и rich reports
@@ -10,7 +10,7 @@ update UX/safety, уведомления об обновлениях, update cha
 ## 1. Резюме
 
 Iva должна получить полезные возможности из свежего `upstream/main`, не заменяя ими локальную
-архитектуру `0.3.0-rc.5`. Upstream и локальная ветка разошлись после `e09ec88`: upstream содержит 35
+архитектуру `0.3.0-rc.7`. Upstream и локальная ветка разошлись после `e09ec88`: upstream содержит 35
 уникальных коммитов, локальная ветка — 72. Прямой merge или последовательный cherry-pick не является
 допустимым способом реализации этого PRD.
 
@@ -753,7 +753,7 @@ legacy `.workflow-data`. В PR L вводится один owned resolver для
 5. **Automated verification:** узкие tests → `npm run verify:pr` → local/PostgreSQL build matrix →
    install/reinstall/update/rollback/restore replicas.
 6. **Review и merge:** PR L проходит review и сливается без production deploy.
-7. **RC promotion:** версия `0.3.0-rc.6`, immutable tag на точном merged `main` commit, полный Release
+7. **RC promotion:** версия `0.3.0-rc.7`, immutable tag на точном merged `main` commit, полный Release
    candidate matrix и sanitized commit-bound report.
 8. **Live evidence и soak:** отдельно авторизованные active text/vision canaries и семь непрерывных
    дней на exact-candidate single-owner runtime с тем же commit. Решением владельца от 2026-07-22
@@ -777,9 +777,17 @@ legacy `.workflow-data`. В PR L вводится один owned resolver для
   application-data repository; production остался на `0.3.0-rc.4`.
 - PR #36 исправил canonical inventory и derived `.venv` exclusion, прошёл local/install/PostgreSQL
   backup/restore gates и слит в `main` commit `45a1fd7`; post-merge Verify зелёный.
-- `0.3.0-rc.6` supersedes RC5. Следующий исполняемый шаг: merge RC6 promotion → annotated tag →
-  полный commit-bound Release candidate matrix → повторный live canary → verified production backup
-  с off-host копией → контролируемый production canary и семидневный soak.
+- `v0.3.0-rc.6` получил immutable tag, полный зелёный Release candidate matrix и повторные bounded
+  live text/vision canaries на commit `f619d1a`.
+- Verified portable backup production RC4 создан на сервере и проверен после off-host копирования.
+  Первая попытка update полностью прошла staging proof, но fail-closed откатилась до переключения
+  source из-за недоступного user-systemd bus в операторском запуске; production остался на RC4.
+- Во время staging обнаружен новый runtime advisory `GHSA-8r6m-32jq-jx6q`. Production rollout
+  остановлен; PR #38 обновил транзитивный `fast-xml-parser` до patched `5.10.1`, прошёл audits,
+  локальную replica и полный CI и слит в `main` commit `ccbea99`.
+- `0.3.0-rc.7` supersedes RC6. Следующий исполняемый шаг: merge RC7 promotion → annotated tag →
+  полный commit-bound Release candidate matrix → повторный live canary → свежий verified production
+  backup с off-host копией → контролируемый production canary и семидневный soak.
 
 ### Работы
 

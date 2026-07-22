@@ -15,10 +15,10 @@
 ## Установка
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.6/install.sh | BRANCH=v0.3.0-rc.6 bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.7/install.sh | BRANCH=v0.3.0-rc.7 bash
 ```
 
-Команда устанавливает точный candidate tag RC5; release evidence ещё собирается. Обычным пользователям лучше дождаться stable-команды в
+Команда устанавливает точный candidate tag RC7; release evidence ещё собирается. Обычным пользователям лучше дождаться stable-команды в
 описании релиза `v0.3.0`; `main` — меняющаяся ветка разработки.
 
 Первый вопрос — язык, English или русский, ещё до того, как скрипт что-то тронет в системе. Ввод читается из `/dev/tty`, поэтому мастер остаётся интерактивным даже через пайп из `curl`. Если терминала нет вовсе (Docker, CI), настройка пропускается, а скрипт печатает, как запустить её позже.
@@ -53,7 +53,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.6/install.sh |
 Флаги проходят через пайп с помощью `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.6/install.sh | BRANCH=v0.3.0-rc.6 bash -s -- --skip-setup
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.7/install.sh | BRANCH=v0.3.0-rc.7 bash -s -- --skip-setup
 ```
 
 | Опция | Действие |
@@ -62,7 +62,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.6/install.sh |
 | `--non-interactive` | вообще без вопросов — только значения по умолчанию, мастер пропущен |
 | `-h`, `--help` | показать встроенную справку и выйти |
 | `REPO_URL=…` | ставить из форка (по умолчанию `https://github.com/mamysh/iva.git`) |
-| `BRANCH=…` | ставить ветку или тег (`v0.3.0-rc.6` для текущего кандидата) |
+| `BRANCH=…` | ставить ветку или тег (`v0.3.0-rc.7` для текущего кандидата) |
 | `INSTALL_DIR=…` | куда положить код (по умолчанию `~/iva`) |
 
 Последние три — переменные окружения, скрипт читает их на старте.

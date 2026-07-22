@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.7] - 2026-07-22
+
 - Resolve `GHSA-8r6m-32jq-jx6q` by updating the transitive `fast-xml-parser` runtime dependency to
   `5.10.1`, which restores entity-expansion limits across repeated `DOCTYPE` declarations.
 
@@ -61,7 +63,8 @@ soak and fresh-owner acceptance pass.
 - ⬆️ **Self-update from Telegram** — `/update` checks the reviewed deployment branch and installs only after explicit confirmation.
 - 🧪 **Personal Telegram MCP (beta)** — optional QR onboarding for a personal account, disabled by default in this fork and restricted to read-only exposure unless explicitly reviewed.
 
-[Unreleased]: https://github.com/mamysh/iva/compare/v0.3.0-rc.6...main
+[Unreleased]: https://github.com/mamysh/iva/compare/v0.3.0-rc.7...main
+[0.3.0-rc.7]: https://github.com/mamysh/iva/compare/v0.3.0-rc.6...v0.3.0-rc.7
 [0.3.0-rc.6]: https://github.com/mamysh/iva/compare/v0.3.0-rc.5...v0.3.0-rc.6
 [0.3.0-rc.5]: https://github.com/mamysh/iva/compare/v0.3.0-rc.4...v0.3.0-rc.5
 [0.3.0-rc.4]: https://github.com/mamysh/iva/compare/v0.3.0-rc.3...v0.3.0-rc.4

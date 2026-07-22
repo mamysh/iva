@@ -18,14 +18,14 @@
 
 ---
 
-> **Pre-release:** `v0.3.0-rc.6` is the current release candidate. Its automated matrix, live
+> **Pre-release:** `v0.3.0-rc.7` is the current release candidate. Its automated matrix, live
 > provider/vision evidence and seven-day production-like soak are release gates; it is not the
 > stable `v0.3.0` release yet.
 
 Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data. To evaluate the exact candidate tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.6/install.sh | BRANCH=v0.3.0-rc.6 bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.7/install.sh | BRANCH=v0.3.0-rc.7 bash
 ```
 
 General users should wait for the stable release command. `main` is the moving development channel.
