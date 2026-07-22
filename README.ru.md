@@ -18,14 +18,14 @@
 
 ---
 
-> **Предрелиз:** `v0.3.0-rc.6` — текущий release candidate. Автоматическая матрица, live-проверки
+> **Предрелиз:** `v0.3.0-rc.7` — текущий release candidate. Автоматическая матрица, live-проверки
 > text/vision и семидневное production-like наблюдение остаются release-гейтами; это ещё не
 > стабильный релиз `v0.3.0`.
 
 Iva — self-hosted AI-ассистент в Telegram с многослойной памятью, который превращает ваши сообщения в vault, совместимый с Obsidian. Вы говорите — она раскладывает: голосовые, фото, пересланные посты и решения становятся обычными markdown-карточками, которые она действительно помнит. Всё крутится на вашем собственном сервере, с вашими ключами и вашими данными. Точный candidate tag ставится так:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.6/install.sh | BRANCH=v0.3.0-rc.6 bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.7/install.sh | BRANCH=v0.3.0-rc.7 bash
 ```
 
 Обычным пользователям лучше дождаться stable-команды. `main` — меняющаяся ветка разработки.
