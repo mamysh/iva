@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.6] - 2026-07-22
+
 - Fix portable backup of nested application-data repositories by comparing a canonical file order
   and excluding rebuildable Python virtual environments without dropping the repository state.
 
@@ -56,7 +58,8 @@ soak and fresh-owner acceptance pass.
 - ⬆️ **Self-update from Telegram** — `/update` checks the reviewed deployment branch and installs only after explicit confirmation.
 - 🧪 **Personal Telegram MCP (beta)** — optional QR onboarding for a personal account, disabled by default in this fork and restricted to read-only exposure unless explicitly reviewed.
 
-[Unreleased]: https://github.com/mamysh/iva/compare/v0.3.0-rc.5...main
+[Unreleased]: https://github.com/mamysh/iva/compare/v0.3.0-rc.6...main
+[0.3.0-rc.6]: https://github.com/mamysh/iva/compare/v0.3.0-rc.5...v0.3.0-rc.6
 [0.3.0-rc.5]: https://github.com/mamysh/iva/compare/v0.3.0-rc.4...v0.3.0-rc.5
 [0.3.0-rc.4]: https://github.com/mamysh/iva/compare/v0.3.0-rc.3...v0.3.0-rc.4
 [0.3.0-rc.3]: https://github.com/mamysh/iva/compare/v0.3.0-rc.2...v0.3.0-rc.3

@@ -1,8 +1,8 @@
 # PRD: аккуратная интеграция upstream-возможностей 1–8 в Iva
 
-**Статус:** In implementation — Stages 0–6 complete and deployed; Stage 7 explicitly deferred; Stage 8 PR L merged, `0.3.0-rc.5` promotion active
+**Статус:** In implementation — Stages 0–6 complete and deployed; Stage 7 explicitly deferred; Stage 8 PR L merged, `0.3.0-rc.6` promotion active
 **Дата:** 2026-07-22
-**Локальный baseline:** `4721034` (PR #34 merged); candidate version `0.3.0-rc.5`
+**Локальный baseline:** `45a1fd7` (PR #36 merged); candidate version `0.3.0-rc.6`
 **Upstream baseline:** `2def9d1` (`0.2.5`)
 **Область:** runtime dependencies, управление text/vision-моделями, bash safety, memory safety,
 update UX/safety, уведомления об обновлениях, update channels и rich reports
@@ -753,11 +753,13 @@ legacy `.workflow-data`. В PR L вводится один owned resolver для
 5. **Automated verification:** узкие tests → `npm run verify:pr` → local/PostgreSQL build matrix →
    install/reinstall/update/rollback/restore replicas.
 6. **Review и merge:** PR L проходит review и сливается без production deploy.
-7. **RC promotion:** версия `0.3.0-rc.5`, immutable tag на точном merged `main` commit, полный Release
+7. **RC promotion:** версия `0.3.0-rc.6`, immutable tag на точном merged `main` commit, полный Release
    candidate matrix и sanitized commit-bound report.
 8. **Live evidence и soak:** отдельно авторизованные active text/vision canaries и семь непрерывных
-   дней на production-like single-owner replica с тем же commit.
-9. **Production promotion:** только после зелёного soak и отдельного подтверждения владельца.
+   дней на exact-candidate single-owner runtime с тем же commit. Решением владельца от 2026-07-22
+   изолированный host не создаётся: после verified off-host backup RC разворачивается как
+   контролируемый production canary, а stable promotion остаётся заблокированным до зелёного soak.
+9. **Stable production promotion:** только после зелёного soak и отдельного подтверждения владельца.
    Fresh-owner acceptance дополнительно блокирует публикацию stable channel для новых пользователей.
 
 ### Статус реализации PR L на 2026-07-22
@@ -770,11 +772,14 @@ legacy `.workflow-data`. В PR L вводится один owned resolver для
   содержит high-severity advisory.
 - PR #34 слит squash-merge в `main` commit `4721034`; PR и post-merge Verify зелёные, включая Node 24,
   оба build profile, clean install/update/rollback и реальную disposable PostgreSQL replica.
-- RC promotion меняет только release surfaces на `0.3.0-rc.5` и не является production deploy.
-- Immutable tag, Release candidate matrix, bounded live text/vision evidence, seven-day soak и
-  production deploy ещё не выполнены. Deploy потребует отдельного подтверждения владельца.
-- Следующий исполняемый шаг: merge RC promotion → annotated tag `v0.3.0-rc.5` → полный commit-bound
-  Release candidate matrix без production mutation.
+- `v0.3.0-rc.5` получил immutable tag, зелёную Release candidate matrix и bounded live provider/
+  vision evidence на commit `b6dea1c`, но pre-deploy backup выявил fail-closed дефект на nested
+  application-data repository; production остался на `0.3.0-rc.4`.
+- PR #36 исправил canonical inventory и derived `.venv` exclusion, прошёл local/install/PostgreSQL
+  backup/restore gates и слит в `main` commit `45a1fd7`; post-merge Verify зелёный.
+- `0.3.0-rc.6` supersedes RC5. Следующий исполняемый шаг: merge RC6 promotion → annotated tag →
+  полный commit-bound Release candidate matrix → повторный live canary → verified production backup
+  с off-host копией → контролируемый production canary и семидневный soak.
 
 ### Работы
 
