@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Resolve `GHSA-8r6m-32jq-jx6q` by updating the transitive `fast-xml-parser` runtime dependency to
+  `5.10.1`, which restores entity-expansion limits across repeated `DOCTYPE` declarations.
+
 ## [0.3.0-rc.6] - 2026-07-22
 
 - Fix portable backup of nested application-data repositories by comparing a canonical file order
