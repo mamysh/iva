@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
@@ -57,6 +57,12 @@ try {
   privateFile(join(source, "data/update.lock/owner.json"), '{"derived":true}\n');
   privateFile(join(source, "data/update-jobs/synthetic.json"), '{"derived":true}\n');
   privateFile(join(source, "data/update-notification-state.json"), '{"schemaVersion":1,"lastCheckedCommit":"aaaaaaaa","lastNotifiedCommit":"aaaaaaaa"}\n');
+  privateFile(join(source, "data/telegram-mcp/.git/config"), "[core]\n\trepositoryformatversion = 0\n");
+  privateFile(join(source, "data/telegram-mcp/.gitignore"), ".venv/\n");
+  privateFile(join(source, "data/telegram-mcp/.venv/lib/runtime.py"), "derived virtual environment\n");
+  symlinkSync("lib", join(source, "data/telegram-mcp/.venv/lib64"), "dir");
+  privateFile(join(source, "data/nested-order/a/child"), "nested inventory\n");
+  privateFile(join(source, "data/nested-order/a-"), "adjacent inventory\n");
   privateFile(join(source, "vault/cards/canary-fact.md"), "---\nname: Restore fact\nstatus: active\nconfidence: HIGH\n---\nThe restore phrase is amber orchard 731.\n");
   privateFile(join(source, "vault/.index/embeddings.json"), '{"derived":true}\n');
   privateFile(join(source, "vault/.graph/links.json"), '{"derived":true}\n');
@@ -84,6 +90,8 @@ try {
   const verified = verifyPortableBackup(backup);
   assert.ok(verified.files.some((file) => file.path === "payload/data/tasks.json"));
   assert.ok(verified.files.some((file) => file.path === "payload/data/telegram-userbot.session"));
+  assert.ok(verified.files.some((file) => file.path === "payload/data/telegram-mcp/.git/config"), "nested application data must remain portable");
+  assert.ok(verified.files.every((file) => !file.path.includes("/.venv/")), "derived virtual environments entered the backup");
   assert.ok(verified.files.some((file) => file.path === "payload/workflow/local/session-marker.json"));
   assert.ok(verified.files.every((file) => !file.path.includes("generated-artifact")), "derived .eve data entered the backup");
   assert.ok(verified.files.every((file) => !file.path.includes("/backups/")));

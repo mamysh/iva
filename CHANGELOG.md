@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Fix portable backup of nested application-data repositories by comparing a canonical file order
+  and excluding rebuildable Python virtual environments without dropping the repository state.
+
 ## [0.3.0-rc.5] - 2026-07-22
 
 - Upgrade the runtime to Eve 0.24.4 and stable AI SDK 7 packages without changing text/vision model
