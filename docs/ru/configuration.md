@@ -55,7 +55,7 @@ iva restart
 | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | — | Общий секрет между long-poll-мостом и локальным вебхуком. Любая длинная случайная строка. |
 | `TELEGRAM_ALLOWED_USER_IDS` | *(пусто)* | Числовые ID пользователей через запятую — кому разрешено говорить с Iva. |
 | `TELEGRAM_DIGEST_CHAT_ID` | — | Чат, куда приходят утренний дайджест и ночные отчёты памяти. Обычно ваш собственный chat ID. |
-| `IVA_UPDATE_CHECK_ENABLED` | `false` | Opt-in ежедневная read-only проверка private-канала `origin/main`. Одно предложение на target commit; автоматической установки нет. Удобнее включать через `iva update-check on|off`. |
+| `IVA_UPDATE_CHECK_ENABLED` | `false` | Opt-in ежедневная read-only проверка private-канала, закреплённого при установке (`origin/stable` или `origin/main`). Одно предложение на target commit; автоматической установки нет. Удобнее включать через `iva update-check on|off`. |
 
 Список разрешённых работает по принципу **fail-closed: пустой список — Iva не отвечает никому.** Мастер сам подхватывает ваш ID, как только вы напишете боту; или спросите у [@userinfobot](https://t.me/userinfobot). Почему fail-closed важен: [security.md](./security.md).
 

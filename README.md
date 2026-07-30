@@ -18,14 +18,14 @@
 
 ---
 
-> **Stable:** `v0.3.0` passed the automated release matrix, bounded live provider/vision canary and
+> **Stable:** `v0.3.6` passed the automated release matrix, bounded live provider/vision canary and
 > seven-day production-like soak. PostgreSQL remains opt-in while the separate 30-day observation
-> continues.
+> continues. It also fixes the stable installer and pins future updates to `origin/stable`.
 
-Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data. Install the immutable stable release:
+Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data. Install the reviewed stable channel:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0/install.sh | BRANCH=v0.3.0 bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/stable/install.sh | BRANCH=stable bash
 ```
 
 The `stable` branch moves only to fully approved release tags; `main` remains the moving development

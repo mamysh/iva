@@ -90,7 +90,9 @@ ffmpeg -i note.m4a -f segment -segment_time 600 -c copy part%02d.m4a
 Cause: versions before 0.1.7 ran `git pull --ff-only`, which aborts when `main` was rewritten upstream. Bootstrap past it once by hand:
 
 ```bash
-cd ~/iva && git fetch origin main && git reset --hard origin/main
+cd ~/iva
+branch="$(git branch --show-current)"
+git fetch origin "$branch" && git reset --hard "origin/$branch"
 iva update   # from here on, update handles divergence itself
 ```
 

@@ -23,7 +23,7 @@ Iva сама опрашивает Telegram, поэтому домен, публ�
 | `iva-memory-doctor.timer` | проверка vault и git push в 05:00 |
 | `iva-reminders.timer` | напоминания каждые 5 минут |
 | `iva-observe.timer` | технические метрики раз в час |
-| `iva-update-check.timer` | opt-in проверка `origin/main` ежедневно в 10:00 по `ASSISTANT_TIMEZONE` |
+| `iva-update-check.timer` | opt-in проверка закреплённого `origin/stable` или `origin/main` ежедневно в 10:00 по `ASSISTANT_TIMEZONE` |
 
 Время берётся из часового пояса сервера. Пропущенная во время выключения задача запускается после старта.
 
@@ -45,8 +45,9 @@ iva logs poll
 
 `iva update-check on` включает ежедневное уведомление один раз на новый target commit. Кнопки
 «Посмотреть / Обновить / Позже» используют существующий `/update` flow; таймер только сравнивает
-`origin/main` и никогда не устанавливает код автоматически. Проверка использует общий update lock и
-не пересекается с CLI/Telegram transaction. Отключение: `iva update-check off`.
+закреплённый при установке `origin/stable` или `origin/main` и никогда не устанавливает код
+автоматически. Проверка использует общий update lock и не пересекается с CLI/Telegram transaction.
+Отключение: `iva update-check off`.
 
 ## Workflow
 

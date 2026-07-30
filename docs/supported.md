@@ -15,6 +15,12 @@ The exact machine-readable contract is in
 when its immutable `vX.Y.Z-rc.N` tag matches `package.json`, the full matrix belongs to that commit,
 and the capability manifest hash is recorded in the report.
 
+## Current stable release
+
+`v0.3.6` passes the automated stable-channel matrix and inherits the bounded live-provider/vision
+canary and seven-day soak from `v0.3.0`; the patch changes only update-channel selection and its
+release canaries, not the model or memory runtime.
+
 ## Provider status
 
 Iva has four provider routes: Ollama Cloud, OpenCode Zen, OpenRouter and OpenAI through Codex OAuth.
@@ -33,8 +39,9 @@ provider and can change independently of an Iva release.
 - Ubuntu 22.04, Debian, Linux ARM64, Windows, macOS production hosting and Vercel deployment are not
   stable release-matrix targets yet, even where the installer may work.
 - A live provider canary requires owner-supplied access and may incur one small provider request.
-- The independent fresh-owner installation was explicitly waived for `v0.3.0`; automated clean
-  install/reinstall passed, but this release has no separate human installation result.
+- The independent fresh-owner installation was explicitly waived for `v0.3.0` and carried forward
+  to the update-channel-only `v0.3.6` patch; automated stable-channel clean install/reinstall passed,
+  but these releases have no separate human installation result.
 - Automated tests use a mock Telegram endpoint. Production receives only bounded post-deploy checks;
   it is never the automated test environment.
 - One successful personal VPS does not make an experimental component generally stable.

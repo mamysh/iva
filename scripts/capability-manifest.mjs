@@ -169,6 +169,8 @@ export function createCapabilityManifest() {
       postgresIntegrationGate: "npm run replica:postgres",
       lifecycle: {
         updateCommand: "iva update",
+        recommendedUpdateChannel: "origin/stable",
+        allowedUpdateChannels: ["origin/stable", "origin/main"],
         updateTransactionSource: "scripts/update-runtime.mjs",
         updateLockSource: "scripts/lib/update-lock.mjs",
         updateProgressSource: "scripts/lib/update-progress.mjs",

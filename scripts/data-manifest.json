@@ -132,7 +132,7 @@
       "backupMethod": "consistent-private-snapshot",
       "restoreOrder": 46,
       "retention": "portable backup generations",
-      "lossTolerance": "accepted only after safe legacy migration from origin/main"
+      "lossTolerance": "accepted only after safe legacy migration from an allowlisted origin/main or origin/stable channel"
     },
     {
       "id": "deployment.update-runtime-state",

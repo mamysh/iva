@@ -1,6 +1,8 @@
 // Pure self-update helpers shared by the Telegram bridge and its regression tests.
 // The bridge supplies a git runner; this module owns comparison semantics only.
 
+import { updateChannelRef } from "./update-channel.mjs";
+
 export const CONTROL_COMMANDS = Object.freeze([
   "/help",
   "/usage",
@@ -31,11 +33,8 @@ export function parseUpdateAction(data) {
 }
 
 export async function checkDeploymentUpdate(runGit, channel) {
-  if (channel?.remote !== "origin" || channel?.branch !== "main") {
-    throw new Error("update channel blocked: only origin/main is allowed");
-  }
+  const targetRef = updateChannelRef(channel);
   const { remote: remoteName, branch } = channel;
-  const targetRef = `${remoteName}/${branch}`;
   await runGit("fetch", "--prune", remoteName, branch);
 
   const local = await runGit("rev-parse", "HEAD");

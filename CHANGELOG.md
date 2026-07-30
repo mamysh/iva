@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-07-30
+
+- Fix the reviewed `stable` installer so it pins `origin/stable` instead of rejecting that branch at
+  update-channel initialization. Stable installs, Telegram `/update` and daily update notifications
+  now stay on `origin/stable`; intentional development installs can continue to use `origin/main`.
+- Make the disposable clean-install/update replica exercise the stable channel by default, covering
+  installation, failed-build and failed-readiness rollback, successful update and reinstall.
+- Resolve `GHSA-mh99-v99m-4gvg` by updating the transitive `brace-expansion` runtime dependency to
+  `5.0.8`.
+
 ## [0.3.0] - 2026-07-30
 
 First stable release of the production-hardened self-host line. The immutable release passed the
@@ -82,7 +92,8 @@ soak and fresh-owner acceptance pass.
 - ⬆️ **Self-update from Telegram** — `/update` checks the reviewed deployment branch and installs only after explicit confirmation.
 - 🧪 **Personal Telegram MCP (beta)** — optional QR onboarding for a personal account, disabled by default in this fork and restricted to read-only exposure unless explicitly reviewed.
 
-[Unreleased]: https://github.com/mamysh/iva/compare/v0.3.0...main
+[Unreleased]: https://github.com/mamysh/iva/compare/v0.3.6...main
+[0.3.6]: https://github.com/mamysh/iva/compare/v0.3.0...v0.3.6
 [0.3.0]: https://github.com/mamysh/iva/compare/v0.3.0-rc.7...v0.3.0
 [0.3.0-rc.7]: https://github.com/mamysh/iva/compare/v0.3.0-rc.6...v0.3.0-rc.7
 [0.3.0-rc.6]: https://github.com/mamysh/iva/compare/v0.3.0-rc.5...v0.3.0-rc.6

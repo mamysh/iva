@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import {
   PRODUCTION_UPDATE_CHANNEL,
+  STABLE_UPDATE_CHANNEL,
   readUpdateChannelState,
   resolveUpdateChannel,
   updateChannelStatePath,
@@ -39,6 +40,18 @@ assert.deepEqual(JSON.parse(readFileSync(updateChannelStatePath(legacyDir), "utf
 });
 assert.equal(statSync(updateChannelStatePath(legacyDir)).mode & 0o777, 0o600);
 
+const stableDir = mkdtempSync(join(tmpdir(), "iva-update-channel-stable-"));
+const stableGit = fakeGit({ branch: "stable", tracking: "origin/stable" });
+const stable = resolveUpdateChannel({ dataDir: stableDir, runGit: stableGit.runGit, requireCheckout: true });
+assert.deepEqual(stable.channel, STABLE_UPDATE_CHANNEL);
+assert.equal(stable.currentBranch, "stable");
+assert.equal(stable.migrated, true);
+assert.deepEqual(JSON.parse(readFileSync(updateChannelStatePath(stableDir), "utf8")), {
+  schemaVersion: 1,
+  remote: "origin",
+  branch: "stable",
+});
+
 // A temporary checkout cannot replace the already pinned deployment channel.
 const integration = fakeGit({ branch: "codex/integration", tracking: "origin/integration" });
 const pinned = resolveUpdateChannel({ dataDir: legacyDir, runGit: integration.runGit });
@@ -71,7 +84,7 @@ assert.throws(
 
 const invalidDir = mkdtempSync(join(tmpdir(), "iva-update-channel-invalid-"));
 writeFileSync(updateChannelStatePath(invalidDir), '{"schemaVersion":1,"remote":"upstream","branch":"main"}\n');
-assert.throws(() => readUpdateChannelState(invalidDir), /only origin\/main is allowed/);
+assert.throws(() => readUpdateChannelState(invalidDir), /only origin\/main or origin\/stable is allowed/);
 
 const detachedDir = mkdtempSync(join(tmpdir(), "iva-update-channel-detached-"));
 writeUpdateChannelState(detachedDir);

@@ -6,6 +6,11 @@ import { dirname, join } from "node:path";
 export const UPDATE_CHANNEL_SCHEMA_VERSION = 1;
 export const UPDATE_CHANNEL_STATE_FILE = "update-channel.json";
 export const PRODUCTION_UPDATE_CHANNEL = Object.freeze({ remote: "origin", branch: "main" });
+export const STABLE_UPDATE_CHANNEL = Object.freeze({ remote: "origin", branch: "stable" });
+export const ALLOWED_UPDATE_CHANNELS = Object.freeze([
+  PRODUCTION_UPDATE_CHANNEL,
+  STABLE_UPDATE_CHANNEL,
+]);
 
 function channelError(message) {
   return new Error(`update channel blocked: ${message}`);
@@ -18,8 +23,8 @@ export function validateUpdateChannel(value) {
   if (value.schemaVersion !== UPDATE_CHANNEL_SCHEMA_VERSION) {
     throw channelError("unsupported state schema");
   }
-  if (value.remote !== PRODUCTION_UPDATE_CHANNEL.remote || value.branch !== PRODUCTION_UPDATE_CHANNEL.branch) {
-    throw channelError("only origin/main is allowed");
+  if (!ALLOWED_UPDATE_CHANNELS.some(({ remote, branch }) => value.remote === remote && value.branch === branch)) {
+    throw channelError("only origin/main or origin/stable is allowed");
   }
   return { remote: value.remote, branch: value.branch };
 }
@@ -83,7 +88,9 @@ export function resolveUpdateChannel({ dataDir, runGit, persist = true, requireC
   const configured = readUpdateChannelState(dataDir);
   if (configured) {
     if (requireCheckout && currentBranch !== configured.channel.branch) {
-      throw channelError(`current branch ${currentBranch} does not match ${updateChannelRef(configured.channel)}; switch to main first`);
+      throw channelError(
+        `current branch ${currentBranch} does not match ${updateChannelRef(configured.channel)}; switch to ${configured.channel.branch} first`,
+      );
     }
     return { ...configured, currentBranch, migrated: false };
   }
@@ -93,13 +100,14 @@ export function resolveUpdateChannel({ dataDir, runGit, persist = true, requireC
     ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
     "legacy install has no tracking branch",
   );
-  if (tracking !== "origin/main") {
-    throw channelError(`legacy tracking branch ${tracking} is not allowed; expected origin/main`);
+  const channel = ALLOWED_UPDATE_CHANNELS.find(({ remote, branch }) => tracking === `${remote}/${branch}`);
+  if (!channel) {
+    throw channelError(`legacy tracking branch ${tracking} is not allowed; expected origin/main or origin/stable`);
   }
-  const channel = { ...PRODUCTION_UPDATE_CHANNEL };
   if (requireCheckout && currentBranch !== channel.branch) {
-    throw channelError(`current branch ${currentBranch} does not match ${updateChannelRef(channel)}; switch to main first`);
+    throw channelError(`current branch ${currentBranch} does not match ${updateChannelRef(channel)}; switch to ${channel.branch} first`);
   }
-  const written = persist ? writeUpdateChannelState(dataDir, channel) : { path: null, channel };
+  const selected = { ...channel };
+  const written = persist ? writeUpdateChannelState(dataDir, selected) : { path: null, channel: selected };
   return { ...written, currentBranch, migrated: true };
 }

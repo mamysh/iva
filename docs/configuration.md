@@ -53,7 +53,7 @@ For `codex` there is no API key in `.env`: run `iva login` (device code, headles
 | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | — | Shared secret between the long-poll bridge and the local webhook. Any long random string. |
 | `TELEGRAM_ALLOWED_USER_IDS` | *(empty)* | Comma-separated numeric user IDs allowed to talk to Iva. |
 | `TELEGRAM_DIGEST_CHAT_ID` | — | Chat that receives the morning digest and nightly memory reports. Usually your own chat ID. |
-| `IVA_UPDATE_CHECK_ENABLED` | `false` | Opt-in daily read-only check of the private `origin/main` update channel. Sends one Telegram offer per target commit; never installs automatically. Prefer `iva update-check on|off` over manual editing. |
+| `IVA_UPDATE_CHECK_ENABLED` | `false` | Opt-in daily read-only check of the private update channel pinned at installation (`origin/stable` or `origin/main`). Sends one Telegram offer per target commit; never installs automatically. Prefer `iva update-check on|off` over manual editing. |
 
 The allowlist is **fail-closed: empty means Iva answers nobody.** The wizard auto-discovers your ID the moment you message the bot; or ask [@userinfobot](https://t.me/userinfobot). Why fail-closed matters: [security.md](./security.md).
 

@@ -19,8 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/stable/install.sh | BRAN
 ```
 
 This installs the reviewed stable channel, which advances only to fully approved release tags.
-Use the immutable `v0.3.0` tag when an installation must stay pinned; `main` is a moving development
-channel.
+`v0.3.6` identifies the current immutable release commit; `main` is a moving development channel.
 
 The first question is your language — English or Russian — before anything touches the system. Input is read from `/dev/tty`, so the wizard stays interactive even piped through `curl`. If there's no terminal at all (Docker, CI), setup is skipped and the script prints how to run it later.
 
@@ -64,7 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/stable/install.sh | BRAN
 | `--non-interactive` | no questions at all — defaults only, wizard skipped |
 | `-h`, `--help` | show the built-in help and exit |
 | `REPO_URL=…` | install from a fork (default `https://github.com/mamysh/iva.git`) |
-| `BRANCH=…` | install a branch or tag (`stable` for the reviewed channel, `v0.3.0` to pin this release) |
+| `BRANCH=…` | install an allowlisted branch (`stable` for the reviewed channel or `main` for development) |
 | `INSTALL_DIR=…` | where the code goes (default `~/iva`) |
 
 The last three are environment variables, read by the script at startup.

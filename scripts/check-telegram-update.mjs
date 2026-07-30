@@ -36,17 +36,18 @@ assert.match(scheduledCheck, /acquireLock\(dataDir, \{ source: "notification" \}
 assert.match(scheduledCheck, /finally \{[\s\S]*releaseLock\(lock\)/);
 assert.doesNotMatch(scheduledCheck, /performUpdate|systemd-run/, "scheduled check must never start an update transaction");
 
-function fakeGit({ local = "local", remote = "remote", behind = "0", ahead = "0", localVer = "0.2.5", remoteVer = "0.2.5", fail } = {}) {
+function fakeGit({ branch = "main", local = "local", remote = "remote", behind = "0", ahead = "0", localVer = "0.2.5", remoteVer = "0.2.5", fail } = {}) {
   return async (...args) => {
     const key = args.join(" ");
+    const targetRef = `origin/${branch}`;
     if (fail && key.startsWith(fail)) throw new Error(`git failed: ${key}`);
-    if (key === "fetch --prune origin main") return "";
+    if (key === `fetch --prune origin ${branch}`) return "";
     if (key === "rev-parse HEAD") return local;
-    if (key === "rev-parse origin/main") return remote;
-    if (key === "rev-list --count HEAD..origin/main") return behind;
-    if (key === "rev-list --count origin/main..HEAD") return ahead;
+    if (key === `rev-parse ${targetRef}`) return remote;
+    if (key === `rev-list --count HEAD..${targetRef}`) return behind;
+    if (key === `rev-list --count ${targetRef}..HEAD`) return ahead;
     if (key === "show HEAD:package.json") return JSON.stringify({ version: localVer });
-    if (key === "show origin/main:package.json") return JSON.stringify({ version: remoteVer });
+    if (key === `show ${targetRef}:package.json`) return JSON.stringify({ version: remoteVer });
     throw new Error(`unexpected git call: ${key}`);
   };
 }
@@ -60,6 +61,10 @@ await assert.rejects(checkDeploymentUpdate(fakeGit({ fail: "fetch" }), channel),
 await assert.rejects(checkDeploymentUpdate(fakeGit({ fail: "rev-parse origin\/main" }), channel), /git failed/);
 await assert.rejects(checkDeploymentUpdate(fakeGit({ behind: "" }), channel), /invalid git behind count/);
 await assert.rejects(checkDeploymentUpdate(fakeGit({ ahead: "" }), channel), /invalid git ahead count/);
-await assert.rejects(checkDeploymentUpdate(fakeGit(), { remote: "upstream", branch: "main" }), /only origin\/main/);
+const stableChannel = { remote: "origin", branch: "stable" };
+const stableResult = await checkDeploymentUpdate(fakeGit({ branch: "stable", local: "old", remote: "new", behind: "1" }), stableChannel);
+assert.equal(stableResult.channel, "origin/stable");
+assert.equal(stableResult.hasUpdate, true);
+await assert.rejects(checkDeploymentUpdate(fakeGit(), { remote: "upstream", branch: "main" }), /only origin\/main or origin\/stable/);
 
 console.log("telegram update checks passed");

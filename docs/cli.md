@@ -28,9 +28,10 @@ only allowlisted model keys to `.env`, restarts `iva.service`, waits for stable 
 the exact previous configuration if readiness fails. Picker callbacks are opaque, owner/chat-bound and
 expire after five minutes.
 
-`/update` compares your install with its explicit private update channel. The first release allows only
-`origin/main`; a temporary checkout cannot silently change it, and `upstream/main` is never a production
-channel. Legacy installs are pinned only when their factual tracking branch is already `origin/main`.
+`/update` compares your install with its explicit private update channel: `origin/stable` for the
+reviewed stable installer or `origin/main` for an intentional development installation. A temporary
+checkout cannot silently change it, and `upstream/main` is never a production channel. Legacy installs
+are pinned only when their factual tracking branch is already one of those two allowlisted channels.
 If a newer version exists, Iva replies with the version bump and two buttons — **⬆️ Update** and
 **Later**. Update pulls the reviewed fork branch, rebuilds and restarts Iva in its own detached scope
 (so the restart of the bridge can't kill the update mid-flight), then reports ✅ or ❌ back in the

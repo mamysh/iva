@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "product": {
     "name": "iva",
-    "version": "0.3.0"
+    "version": "0.3.6"
   },
   "agent": {
     "source": "agent/agent.ts",
@@ -287,6 +287,11 @@
     "postgresIntegrationGate": "npm run replica:postgres",
     "lifecycle": {
       "updateCommand": "iva update",
+      "recommendedUpdateChannel": "origin/stable",
+      "allowedUpdateChannels": [
+        "origin/stable",
+        "origin/main"
+      ],
       "updateTransactionSource": "scripts/update-runtime.mjs",
       "updateLockSource": "scripts/lib/update-lock.mjs",
       "updateProgressSource": "scripts/lib/update-progress.mjs",

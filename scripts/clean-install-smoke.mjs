@@ -17,6 +17,10 @@ import { nextFixtureVersion } from "./lib/release-contract.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const postgresMode = process.argv.includes("--postgres");
+const updateBranch = process.env.IVA_FIXTURE_UPDATE_BRANCH || "stable";
+if (!["main", "stable"].includes(updateBranch)) {
+  throw new Error("IVA_FIXTURE_UPDATE_BRANCH must be main or stable");
+}
 const postgresUrl = process.env.POSTGRES_FIXTURE_URL;
 if (postgresMode) {
   if (!postgresUrl) throw new Error("--postgres requires POSTGRES_FIXTURE_URL");
@@ -80,7 +84,7 @@ function git(cwd, args) {
 async function initializeUpdateRepository() {
   const remote = join(sandbox, "remote.git");
   git(sandbox, ["init", "--bare", remote]);
-  git(app, ["init", "-b", "main"]);
+  git(app, ["init", "-b", updateBranch]);
   git(app, ["config", "user.name", "Iva fixture"]);
   git(app, ["config", "user.email", "iva-fixture@example.invalid"]);
   git(app, ["add", "."]);
@@ -91,7 +95,8 @@ async function initializeUpdateRepository() {
   git(app, ["commit", "-m", "fixture baseline"]);
   const baseline = git(app, ["rev-parse", "HEAD"]);
   git(app, ["remote", "add", "origin", remote]);
-  git(app, ["push", "-u", "origin", "main"]);
+  git(app, ["push", "-u", "origin", updateBranch]);
+  git(remote, ["symbolic-ref", "HEAD", `refs/heads/${updateBranch}`]);
   const author = join(sandbox, "author");
   git(sandbox, ["clone", remote, author]);
   git(author, ["config", "user.name", "Iva fixture"]);
@@ -106,7 +111,7 @@ function pushTarget(author, baseline, mutate, message) {
   git(author, ["add", "."]);
   git(author, ["commit", "-m", message]);
   const target = git(author, ["rev-parse", "HEAD"]);
-  git(author, ["push", "--force", "origin", "HEAD:main"]);
+  git(author, ["push", "--force", "origin", `HEAD:${updateBranch}`]);
   return target;
 }
 
@@ -263,6 +268,12 @@ else if (action === "stop") stop();
   for (const command of ["gh", "uv", "ffmpeg", "pandoc", "pdftotext"]) {
     await executable(join(stubs, command), `#!/usr/bin/env bash\nexit 0\n`);
   }
+  await executable(
+    join(stubs, "sudo"),
+    "#!/usr/bin/env bash\n" +
+      "if [ \"${1:-}\" = -v ]; then exit 0; fi\n" +
+      "exec \"$@\"\n",
+  );
   await executable(join(stubs, "journalctl"), "#!/usr/bin/env bash\nexit 0\n");
   await executable(join(stubs, "loginctl"), "#!/usr/bin/env bash\nexit 0\n");
 
@@ -334,6 +345,7 @@ async function runInstaller() {
       IVA_FIXTURE_PRELOAD: preload,
       IVA_FIXTURE_CONTROL: serviceControl,
       IVA_FIXTURE_STATE: processState,
+      BRANCH: updateBranch,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -345,10 +357,17 @@ async function runInstaller() {
     });
   }
   const code = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("installer timed out")), 10 * 60_000);
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`installer timed out\n${logs.join("").slice(-10_000)}`));
+    }, 10 * 60_000);
     child.once("exit", (exitCode) => {
       clearTimeout(timeout);
       resolve(exitCode);
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
     });
   });
   assert.equal(code, 0, logs.join("").slice(-10_000));
@@ -491,7 +510,7 @@ try {
   assert.equal(disableUpdateCheck.code, 0, disableUpdateCheck.output);
   assert.equal(existsSync(updateTimerEnabledPath), false, "iva update-check off did not disable its timer");
   const updateChannelPath = join(sandbox, "data", "update-channel.json");
-  const expectedUpdateChannel = { schemaVersion: 1, remote: "origin", branch: "main" };
+  const expectedUpdateChannel = { schemaVersion: 1, remote: "origin", branch: updateBranch };
   assert.deepEqual(JSON.parse(await readFile(updateChannelPath, "utf8")), expectedUpdateChannel);
   assert.equal((await stat(updateChannelPath)).mode & 0o777, 0o600);
   const firstReply = await (await new Client({ host: `http://127.0.0.1:${port}` }).session().send("Reply exactly: INSTALL_OK")).result();
