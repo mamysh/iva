@@ -59,6 +59,9 @@ export function createReleaseReport({ identity, contract, results, generatedAt =
   const byId = new Map((results || []).map((result) => [result.id, result]));
   const scenarios = contract.requiredScenarios.map((scenario) => {
     const result = byId.get(scenario.id);
+    if (result?.status === "waived" && scenario.kind !== "acceptance") {
+      throw new Error(`${scenario.id}: only acceptance scenarios may be waived`);
+    }
     return {
       id: scenario.id,
       kind: scenario.kind,
@@ -68,7 +71,7 @@ export function createReleaseReport({ identity, contract, results, generatedAt =
   });
   const unknown = [...byId.keys()].filter((id) => !contract.requiredScenarios.some((scenario) => scenario.id === id));
   if (unknown.length) throw new Error(`unknown release scenario results: ${unknown.join(", ")}`);
-  const complete = scenarios.every(({ status }) => status === "pass");
+  const complete = scenarios.every(({ status }) => status === "pass" || status === "waived");
   return { schemaVersion: 1, generatedAt, candidate: identity, complete, scenarios };
 }
 
@@ -81,7 +84,8 @@ export function parseScenarioResults(value) {
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(result.id || "")) throw new Error("invalid release result id");
     if (ids.has(result.id)) throw new Error(`duplicate release result: ${result.id}`);
     ids.add(result.id);
-    if (!["pass", "fail", "missing"].includes(result.status)) throw new Error(`${result.id}: invalid release result status`);
+    if (!["pass", "fail", "missing", "waived"].includes(result.status)) throw new Error(`${result.id}: invalid release result status`);
+    if (result.status === "waived" && !result.evidence) throw new Error(`${result.id}: waived result requires evidence`);
     if (result.evidence != null && !/^[A-Za-z0-9._:/@+-]+$/.test(result.evidence)) throw new Error(`${result.id}: unsafe evidence value`);
   }
   return parsed;

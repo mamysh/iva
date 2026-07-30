@@ -18,17 +18,18 @@
 
 ---
 
-> **Pre-release:** `v0.3.0-rc.7` is the current release candidate. Its automated matrix, live
-> provider/vision evidence and seven-day production-like soak are release gates; it is not the
-> stable `v0.3.0` release yet.
+> **Stable:** `v0.3.0` passed the automated release matrix, bounded live provider/vision canary and
+> seven-day production-like soak. PostgreSQL remains opt-in while the separate 30-day observation
+> continues.
 
-Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data. To evaluate the exact candidate tag:
+Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data. Install the immutable stable release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.7/install.sh | BRANCH=v0.3.0-rc.7 bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0/install.sh | BRANCH=v0.3.0 bash
 ```
 
-General users should wait for the stable release command. `main` is the moving development channel.
+The `stable` branch moves only to fully approved release tags; `main` remains the moving development
+channel.
 
 **Origin & authorship.** Iva was created by [Shima (`smixs`)](https://github.com/smixs) as [smixs/iva](https://github.com/smixs/iva). This repository is a production-hardened continuation that regularly integrates the upstream project while keeping its self-hosting changes reviewable.
 
@@ -62,7 +63,7 @@ Full architecture and search internals: [docs/memory.md](docs/memory.md).
 ## Quick start
 
 1. Get a bot token from [@BotFather](https://t.me/BotFather).
-2. Run the pinned RC installer above on a supported Ubuntu 24.04 x64 host.
+2. Run the pinned stable installer above on a supported Ubuntu 24.04 x64 host.
 3. Message your bot. The wizard picks your Telegram ID out of that message, finishes setup, and Iva confirms right in the chat that it's live.
 
 Headless installs take `--skip-setup` or `--non-interactive`. Wizard walkthrough and an SSH primer for first-time VPS owners: [docs/install.md](docs/install.md).

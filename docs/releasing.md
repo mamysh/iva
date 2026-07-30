@@ -69,6 +69,12 @@ supported host without oral help from the author. Record only the candidate comm
 any documentation defect; never collect their credentials or personal data. This scenario cannot be
 replaced by the automated clean-install fixture.
 
+An owner may explicitly waive only this acceptance scenario for a specific release. Record it as
+`waived` with dated `owner-waiver:YYYY-MM-DD` evidence and disclose the exception in the release
+notes. A waiver makes the report complete without pretending the installation passed; it does not
+remove the scenario from future releases. Automated, live-provider and soak scenarios cannot be
+waived.
+
 ## Stable cut
 
 After all required scenarios pass, replace the prerelease version with `X.Y.Z`, update changelog and

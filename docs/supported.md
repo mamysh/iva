@@ -33,6 +33,8 @@ provider and can change independently of an Iva release.
 - Ubuntu 22.04, Debian, Linux ARM64, Windows, macOS production hosting and Vercel deployment are not
   stable release-matrix targets yet, even where the installer may work.
 - A live provider canary requires owner-supplied access and may incur one small provider request.
+- The independent fresh-owner installation was explicitly waived for `v0.3.0`; automated clean
+  install/reinstall passed, but this release has no separate human installation result.
 - Automated tests use a mock Telegram endpoint. Production receives only bounded post-deploy checks;
   it is never the automated test environment.
 - One successful personal VPS does not make an experimental component generally stable.

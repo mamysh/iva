@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-30
+
+First stable release of the production-hardened self-host line. The immutable release passed the
+Ubuntu 24.04 local/PostgreSQL matrix, install/reinstall, restart/resume, N−1→N update and rollback,
+portable backup/restore, authenticated provider inventory, bounded live vision canary, and a
+continuous seven-day soak with zero P0/P1 incidents.
+
+The independent fresh-owner documented installation was explicitly waived by the project owner for
+this release. Automated clean install/reinstall passed; the exception remains disclosed and does not
+remove the acceptance scenario from future stable releases.
+
+- Durable opt-in PostgreSQL Workflow profile with recovery, diagnostics and growth observation.
+- Transactional updates with isolated builds, verified migrations and automatic readiness rollback.
+- Portable backup/restore for application data, vault metadata and both Workflow profiles.
+- Independent text/vision model roles, Telegram configuration controls and bounded live capability
+  evidence.
+- Layered memory, tasks, reminders, rich Telegram delivery, extension contracts and owner/developer
+  runbooks guarded by disposable replicas and behavioral canaries.
+
 ## [0.3.0-rc.7] - 2026-07-22
 
 - Resolve `GHSA-8r6m-32jq-jx6q` by updating the transitive `fast-xml-parser` runtime dependency to
@@ -63,7 +82,8 @@ soak and fresh-owner acceptance pass.
 - ⬆️ **Self-update from Telegram** — `/update` checks the reviewed deployment branch and installs only after explicit confirmation.
 - 🧪 **Personal Telegram MCP (beta)** — optional QR onboarding for a personal account, disabled by default in this fork and restricted to read-only exposure unless explicitly reviewed.
 
-[Unreleased]: https://github.com/mamysh/iva/compare/v0.3.0-rc.7...main
+[Unreleased]: https://github.com/mamysh/iva/compare/v0.3.0...main
+[0.3.0]: https://github.com/mamysh/iva/compare/v0.3.0-rc.7...v0.3.0
 [0.3.0-rc.7]: https://github.com/mamysh/iva/compare/v0.3.0-rc.6...v0.3.0-rc.7
 [0.3.0-rc.6]: https://github.com/mamysh/iva/compare/v0.3.0-rc.5...v0.3.0-rc.6
 [0.3.0-rc.5]: https://github.com/mamysh/iva/compare/v0.3.0-rc.4...v0.3.0-rc.5

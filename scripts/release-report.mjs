@@ -25,7 +25,7 @@ const identity = candidateIdentity({
 const results = parseScenarioResults(process.env.RELEASE_SCENARIO_RESULTS);
 const report = createReleaseReport({ identity, contract, results });
 if (process.argv.includes("--require-complete") && !report.complete) {
-  const missing = report.scenarios.filter(({ status }) => status !== "pass").map(({ id }) => id);
+  const missing = report.scenarios.filter(({ status }) => status !== "pass" && status !== "waived").map(({ id }) => id);
   throw new Error(`release matrix is incomplete: ${missing.join(", ")}`);
 }
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
