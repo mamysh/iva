@@ -15,11 +15,12 @@ readiness gate.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.7/install.sh | BRANCH=v0.3.0-rc.7 bash
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/stable/install.sh | BRANCH=stable bash
 ```
 
-This installs the exact RC7 candidate tag. Its release evidence is still being collected. General users should wait for the stable-channel command in the
-`v0.3.0` release notes; `main` is a moving development channel.
+This installs the reviewed stable channel, which advances only to fully approved release tags.
+Use the immutable `v0.3.0` tag when an installation must stay pinned; `main` is a moving development
+channel.
 
 The first question is your language — English or Russian — before anything touches the system. Input is read from `/dev/tty`, so the wizard stays interactive even piped through `curl`. If there's no terminal at all (Docker, CI), setup is skipped and the script prints how to run it later.
 
@@ -54,7 +55,7 @@ Re-running the same command later is safe: it reuses the existing checkout, fast
 Flags pass through the pipe with `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.7/install.sh | BRANCH=v0.3.0-rc.7 bash -s -- --skip-setup
+curl -fsSL https://raw.githubusercontent.com/mamysh/iva/stable/install.sh | BRANCH=stable bash -s -- --skip-setup
 ```
 
 | Option | Effect |
@@ -63,7 +64,7 @@ curl -fsSL https://raw.githubusercontent.com/mamysh/iva/v0.3.0-rc.7/install.sh |
 | `--non-interactive` | no questions at all — defaults only, wizard skipped |
 | `-h`, `--help` | show the built-in help and exit |
 | `REPO_URL=…` | install from a fork (default `https://github.com/mamysh/iva.git`) |
-| `BRANCH=…` | install a branch or tag (`v0.3.0-rc.7` for the current candidate) |
+| `BRANCH=…` | install a branch or tag (`stable` for the reviewed channel, `v0.3.0` to pin this release) |
 | `INSTALL_DIR=…` | where the code goes (default `~/iva`) |
 
 The last three are environment variables, read by the script at startup.
