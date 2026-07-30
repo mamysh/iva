@@ -9,6 +9,10 @@ Ubuntu 24.04 local/PostgreSQL matrix, install/reinstall, restart/resume, Nâˆ’1â†
 portable backup/restore, authenticated provider inventory, bounded live vision canary, and a
 continuous seven-day soak with zero P0/P1 incidents.
 
+The independent fresh-owner documented installation was explicitly waived by the project owner for
+this release. Automated clean install/reinstall passed; the exception remains disclosed and does not
+remove the acceptance scenario from future stable releases.
+
 - Durable opt-in PostgreSQL Workflow profile with recovery, diagnostics and growth observation.
 - Transactional updates with isolated builds, verified migrations and automatic readiness rollback.
 - Portable backup/restore for application data, vault metadata and both Workflow profiles.

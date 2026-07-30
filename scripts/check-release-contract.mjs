@@ -40,6 +40,29 @@ const complete = createReleaseReport({
   results: contract.requiredScenarios.map(({ id }) => ({ id, status: "pass", evidence: "fixture" })),
 });
 assert.equal(complete.complete, true);
+const acceptanceWaiver = createReleaseReport({
+  identity,
+  contract,
+  results: contract.requiredScenarios.map(({ id, kind }) => ({
+    id,
+    status: kind === "acceptance" ? "waived" : "pass",
+    evidence: kind === "acceptance" ? "owner-waiver:2026-07-30" : "fixture",
+  })),
+});
+assert.equal(acceptanceWaiver.complete, true);
+assert.equal(acceptanceWaiver.scenarios.find(({ kind }) => kind === "acceptance")?.status, "waived");
+assert.throws(
+  () => createReleaseReport({
+    identity,
+    contract,
+    results: contract.requiredScenarios.map(({ id }) => ({
+      id,
+      status: id === "verify-pr" ? "waived" : "pass",
+      evidence: "fixture",
+    })),
+  }),
+  /only acceptance scenarios may be waived/,
+);
 
 const inventory = await collectProviderInventory({
   provider: "ollama",
@@ -88,4 +111,4 @@ assert.match(read("scripts/release-provider-canary.mjs"), /docs\/favicon\.png/);
 assert.match(JSON.parse(read("package.json")).scripts["release:provider"], /--env-file-if-exists=\.env/);
 assert.match(read("scripts/clean-install-smoke.mjs"), /update did not exercise an N-1 to N version transition/);
 
-console.log("release contract checks passed: immutable identity, complete matrix, provider inventory, vision evidence and seven-day soak");
+console.log("release contract checks passed: immutable identity, explicit acceptance waiver, provider inventory, vision evidence and seven-day soak");
