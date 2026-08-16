@@ -568,17 +568,19 @@ export function materializeCustomLayer({
         recursive: true,
         preserveTimestamps: true,
       });
-      // Authored agent modules import runtime helpers through ../scripts and
-      // ../../scripts. Keep that source topology intact after the disposable
-      // update worktree is removed, otherwise Eve cannot bundle the promoted
-      // agent on the next service start. Trees without scripts/ (minimal
-      // fixtures, stripped archives) have nothing to carry over.
-      const rootScripts = join(root, "scripts");
-      if (existsSync(rootScripts))
-        cpSync(rootScripts, join(stagedRuntime, "scripts"), {
-          recursive: true,
-          preserveTimestamps: true,
-        });
+      // Authored agent modules import runtime helpers through ../scripts,
+      // ../../scripts and ../../packages. Keep that source topology intact
+      // after the disposable update worktree is removed, otherwise Eve cannot
+      // bundle the promoted agent on the next service start. Minimal fixtures
+      // and stripped archives may omit either support tree.
+      for (const supportTree of ["scripts", "packages"]) {
+        const source = join(root, supportTree);
+        if (existsSync(source))
+          cpSync(source, join(stagedRuntime, supportTree), {
+            recursive: true,
+            preserveTimestamps: true,
+          });
+      }
       renameSync(stagedRuntime, runtimeRoot);
     } catch (error) {
       rmSync(stagedRuntime, { recursive: true, force: true });
