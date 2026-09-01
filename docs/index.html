@@ -359,9 +359,13 @@
         display: flex;
         align-items: center;
         gap: 12px;
+        flex-wrap: wrap;
       }
       .btn {
-        display: inline-block;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        white-space: nowrap;
         font-size: 14px;
         font-weight: 500;
         border-radius: 9999px;
@@ -369,6 +373,12 @@
         transition:
           transform 180ms var(--ease-out),
           box-shadow 220ms var(--ease-out);
+      }
+      .btn-primary svg {
+        width: 16px;
+        height: 16px;
+        display: block;
+        flex-shrink: 0;
       }
       .btn:active {
         transform: scale(0.97);
@@ -931,7 +941,21 @@
             <a
               class="btn btn-primary"
               href="https://github.com/smixs/iva-agent#install"
-              >Install in 5 minutes</a
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Install in 5 minutes</a
             >
             <a
               class="btn btn-glass liquid-glass btn-star"
@@ -983,7 +1007,7 @@
             </button>
           </div>
           <p class="hero-meta">
-            v0.3.13 · Free · Open source · MIT · built on
+            Free · Open source · MIT · built on
             <a href="https://eve.dev/docs/introduction">eve</a>
           </p>
         </div>
