@@ -32,6 +32,9 @@ import {
 import {
   CATALOG,
   catalogProvider,
+  fetchModels,
+  normalizeBaseUrl,
+  providerBase,
   providerEnvKeys,
 } from "../lib/model-catalog.ts";
 import { keptSetupWritePlan } from "../lib/setup-keep.ts";
@@ -285,6 +288,11 @@ async function writeEnv(out: Env): Promise<void> {
     "OPENROUTER_CONTEXT_WINDOW",
     "CODEX_MODEL",
     "CODEX_CONTEXT_WINDOW",
+    "CUSTOM_BASE_URL",
+    "CUSTOM_API_KEY",
+    "CUSTOM_MODEL",
+    "CUSTOM_VISION_MODEL",
+    "CUSTOM_CONTEXT_WINDOW",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_BOT_USERNAME",
     "TELEGRAM_WEBHOOK_SECRET_TOKEN",
@@ -589,8 +597,9 @@ async function main() {
         await validateModelSelection({
           provider: prov0,
           model: existing[provModel],
-          key: provKey ? existing[provKey] : undefined,
+          key: provKey ? existing[provKey] || undefined : undefined,
           dataDir: dataDirAbs(existing),
+          ...(cat0 ? { base: providerBase(cat0, existing) } : {}),
         });
         await writeEnv(out);
       }
@@ -635,9 +644,13 @@ async function main() {
   console.log(
     `    4) OpenRouter — ${C.c}https://openrouter.ai${C.x} ${t("(one key → 300+ models, pay-as-you-go)", "(один ключ → 300+ моделей, оплата по факту)")}`,
   );
-  const provDef = { opencode: "2", codex: "3", openrouter: "4" }[prov0] || "1";
+  console.log(
+    `    5) ${t("Custom — your own OpenAI-compatible endpoint", "Custom — свой OpenAI-совместимый эндпоинт")} ${t("(proxy, vLLM, LiteLLM, a vendor plan)", "(прокси, vLLM, LiteLLM, вендорская подписка)")}`,
+  );
+  const provDef =
+    { opencode: "2", codex: "3", openrouter: "4", custom: "5" }[prov0] || "1";
   const provChoice = (
-    await ask(`  ${t("Provider", "Провайдер")} (1/2/3/4)`, provDef)
+    await ask(`  ${t("Provider", "Провайдер")} (1/2/3/4/5)`, provDef)
   ).trim();
   const provider =
     provChoice === "2"
@@ -646,7 +659,9 @@ async function main() {
         ? "codex"
         : provChoice === "4"
           ? "openrouter"
-          : "ollama";
+          : provChoice === "5"
+            ? "custom"
+            : "ollama";
   out.MODEL_PROVIDER = provider;
 
   if (provider === "ollama") {
@@ -806,6 +821,92 @@ async function main() {
       `  → ${t("model", "модель")}: ${C.g}${out.OPENROUTER_MODEL}${C.x}`,
     );
     console.log(`  → vision: ${C.g}${out.OPENROUTER_VISION_MODEL}${C.x}`);
+  } else if (provider === "custom") {
+    // Свой OpenAI-совместимый эндпоинт. Курировать нечего: адрес и модель знает только
+    // владелец, поэтому спрашиваем их, а список моделей пробуем живым GET /models.
+    console.log(
+      `\n  ${t("Your own OpenAI-compatible endpoint: a proxy, vLLM, LiteLLM or a vendor plan.", "Свой OpenAI-совместимый эндпоинт: прокси, vLLM, LiteLLM или вендорская подписка.")}`,
+    );
+    console.log(
+      `  ${t("Address in full, with the /v1-style suffix", "Адрес целиком, вместе с суффиксом вида /v1")}: ${C.g}https://api.example.com/v1${C.x}`,
+    );
+    for (;;) {
+      const base = normalizeBaseUrl(
+        await ask(
+          `  ${t("Endpoint base URL", "Базовый адрес эндпоинта")}`,
+          out.CUSTOM_BASE_URL || "",
+        ),
+      );
+      if (base) {
+        out.CUSTOM_BASE_URL = base;
+        break;
+      }
+      console.log(
+        `${C.y}  ⚠ ${t("Needs a full http(s) address, e.g. https://api.example.com/v1.", "Нужен полный http(s)-адрес, напр. https://api.example.com/v1.")}${C.x}\n`,
+      );
+    }
+    console.log(
+      `\n  ${t("API key — Enter to skip if the endpoint needs none (self-hosted usually doesn't).", "API-ключ — Enter, если эндпоинт его не требует (свой сервер обычно не требует).")}`,
+    );
+    const customKeyExisting =
+      process.env.CUSTOM_API_KEY || existing.CUSTOM_API_KEY || "";
+    let customKey = await ask(
+      `  ${t("Custom API key", "API-ключ эндпоинта")}`,
+      customKeyExisting ? mask(customKeyExisting) : "",
+    );
+    if (customKeyExisting && (!customKey || customKey.endsWith(KEEP())))
+      customKey = customKeyExisting;
+    out.CUSTOM_API_KEY = (customKey || "").trim();
+    // GET /models спецификацией не гарантирован: нет каталога — берём id из рук владельца.
+    let customModels: string[] = [];
+    try {
+      customModels = await fetchModels(
+        "custom",
+        out.CUSTOM_API_KEY || undefined,
+        { base: out.CUSTOM_BASE_URL },
+      );
+    } catch (error) {
+      console.log(
+        `  ${C.y}${t("couldn't read the model list", "не смог прочитать список моделей")}: ${(error as ThrownSetupError).message}${C.x}`,
+      );
+    }
+    if (customModels.length) {
+      console.log(
+        `\n  ${t("Models available", "Доступно моделей")}: ${customModels.length}.`,
+      );
+      out.CUSTOM_MODEL = await pickFromList(
+        customModels,
+        out.CUSTOM_MODEL || "",
+        customModels[0],
+      );
+    } else {
+      for (;;) {
+        const id = (
+          await ask(
+            `  ${t("Model id, exactly as the provider names it", "ID модели, ровно как называет её провайдер")}`,
+            out.CUSTOM_MODEL || "",
+          )
+        ).trim();
+        if (id) {
+          out.CUSTOM_MODEL = id;
+          break;
+        }
+        console.log(
+          `${C.y}  ⚠ ${t("Required — this endpoint has no default model.", "Обязательно — дефолтной модели у этого эндпоинта нет.")}${C.x}\n`,
+        );
+      }
+    }
+    console.log(
+      `\n  ${t("Vision model (photos)", "Vision-модель (фото)")}: ${t("a fallback only — a chat model that reads images is asked directly. Enter — skip.", "только запасной путь: модель чата, которая видит картинки, спрашивается напрямую. Enter — пропустить.")}`,
+    );
+    out.CUSTOM_VISION_MODEL = (
+      await ask(
+        `  ${t("Custom vision model id", "ID vision-модели эндпоинта")}`,
+        out.CUSTOM_VISION_MODEL || "",
+      )
+    ).trim();
+    out.CUSTOM_CONTEXT_WINDOW = out.CUSTOM_CONTEXT_WINDOW || "131072";
+    console.log(`  → ${t("model", "модель")}: ${C.g}${out.CUSTOM_MODEL}${C.x}`);
   } else {
     // codex — вход по подписке OpenAI (OAuth), без API-ключа. Токен → data/codex-auth.json.
     const dataDir = dataDirAbs({ ...existing, ...out });
@@ -1223,15 +1324,19 @@ async function main() {
     opencode: { model: "OPENCODE_MODEL", key: "OPENCODE_API_KEY" },
     openrouter: { model: "OPENROUTER_MODEL", key: "OPENROUTER_API_KEY" },
     codex: { model: "CODEX_MODEL", key: null },
+    custom: { model: "CUSTOM_MODEL", key: "CUSTOM_API_KEY" },
   }[provider];
   process.stdout.write(
     `  ${t("validating the selected model again…", "ещё раз проверяю выбранную модель…")} `,
   );
+  const catOut = catalogProvider(provider);
   await validateModelSelection({
     provider: out.MODEL_PROVIDER,
     model: out[selected.model],
-    key: selected.key ? out[selected.key] : undefined,
+    key: selected.key ? out[selected.key] || undefined : undefined,
     dataDir: dataDirAbs(out),
+    // Адрес своего эндпоинта: у остальных провайдеров он вшит в каталог.
+    ...(catOut ? { base: providerBase(catOut, out) } : {}),
   });
   console.log(`${C.g}${t("ok", "ок")}${C.x}`);
   await writeEnv(out);
@@ -1241,6 +1346,7 @@ async function main() {
     opencode: out.OPENCODE_MODEL,
     openrouter: out.OPENROUTER_MODEL,
     codex: out.CODEX_MODEL,
+    custom: out.CUSTOM_MODEL,
   }[provider];
   console.log();
   hr();

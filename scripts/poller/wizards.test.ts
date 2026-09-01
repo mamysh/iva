@@ -4,17 +4,20 @@ import test, { type TestContext } from "node:test";
 import { ContextWindowConfigurationError } from "../../agent/lib/context-window.ts";
 import { MODEL_PROVIDER_NAMES } from "#lib/model-provider.ts";
 import { CATALOG } from "../lib/model-catalog.ts";
+import { DATA_DIR_ABS } from "./config.ts";
 import {
   currentConfig,
   flows,
   getWizard,
   handleThinkCmd,
+  handleWizardText,
   isStaleWizard,
   resetMessageCopy,
   runWizardRequest,
   selectWizardEffort,
   selectWizardModel,
   selectableWizardOptions,
+  validateAndSaveWizard,
   wizardActionAllowed,
 } from "./wizards.ts";
 
@@ -39,7 +42,9 @@ test("the model wizard shows the configured provider, valid or not", async () =>
     });
     assert.equal(config.providerLabel, name);
     assert.equal(config.provider, name);
-    assert.equal(config.model, CATALOG[name].def);
+    // У custom дефолтной модели нет: пустой .env честно показывается «?», а не именем,
+    // к которому агент не пойдёт.
+    assert.equal(config.model, CATALOG[name].def ?? "?");
   }
   // Через живой .env сюда приходит то, что оставил парсер scripts/lib/env-file.ts: он
   // срезает обрамляющие пробелы, поэтому в списке их нет. Это правило ИМЕННО этого
@@ -194,6 +199,168 @@ test("/think refuses an invalid provider and sends the user to /model", async (t
   // Ни экрана загрузки уровней, ни самих уровней: настраивать нечего.
   assert.doesNotMatch(texts, /Loading thinking levels/u);
   assert.doesNotMatch(texts, /reply_markup.*eff:/u);
+});
+
+// ─── custom: свой OpenAI-совместимый эндпоинт ─────────────────────────────────────────
+// Адрес и имя модели у него приходят текстом, а не кнопкой: курировать нечего, и GET
+// /models эндпоинт не обязан отдавать вовсе.
+
+type WizardStateForTest = {
+  chatId: number;
+  userId: string;
+  provider: string;
+  model: string;
+  step: string;
+  awaitText: { kind: string; secret: boolean; data: object } | null;
+  pendingBase?: string | null;
+  pendingKey?: string | null;
+  dropKey?: boolean;
+  effort: string | null;
+  efforts: string[];
+  modelOptions: { id: string; reasoningLevels: string[] }[];
+  flow: string;
+};
+
+/** Живой слот визарда: без него runWizardRequest и wizScreen считают состояние протухшим. */
+function customWizard(
+  chatId: number,
+  userId: string,
+  step: string,
+  kind: string,
+): WizardStateForTest {
+  const st = flows.start(
+    chatId,
+    userId,
+    "model",
+  ) as unknown as WizardStateForTest;
+  st.provider = "custom";
+  st.step = step;
+  st.awaitText = { kind, secret: false, data: {} };
+  st.pendingBase = null;
+  return st;
+}
+
+test("«Без ключа» живёт только на экране ввода ключа", () => {
+  assert.equal(wizardActionAllowed({ step: "awaiting_key" }, "nokey"), true);
+  for (const step of ["intro", "provider", "models", "effort", "saved"])
+    assert.equal(wizardActionAllowed({ step }, "nokey"), false, step);
+});
+
+test("the endpoint address is refused until it is one, then kept normalized", async (t) => {
+  const sent = telegramSpy(t);
+  const st = customWizard(4102040, "9104210", "awaiting_base", "baseurl");
+
+  for (const raw of ["api.example.com/v1", "   ", "ftp://api.example.com/v1"]) {
+    await handleWizardText(
+      { chat: { id: st.chatId }, message_id: 11, text: raw },
+      st as never,
+    );
+    assert.equal(st.pendingBase, null, raw);
+    // Ожидание ввода снято не было: следующий текст всё ещё принадлежит визарду.
+    assert.equal(st.awaitText?.kind, "baseurl", raw);
+  }
+  assert.match(
+    sent.map((call) => call.text).join("\n"),
+    /https:\/\/api\.example\.com\/v1/u,
+  );
+
+  await handleWizardText(
+    {
+      chat: { id: st.chatId },
+      message_id: 12,
+      text: "  https://api.example.com/v1//  ",
+    },
+    st as never,
+  );
+  assert.equal(st.pendingBase, "https://api.example.com/v1");
+  // Адрес принят — визард пошёл дальше по обычному порядку шагов, к ключу.
+  assert.equal(st.awaitText?.kind, "apikey");
+  assert.equal(st.step, "awaiting_key");
+});
+
+test("a typed model id is refused when it is not one line", async (t) => {
+  telegramSpy(t);
+  const st = customWizard(4102041, "9104211", "awaiting_model", "modelid");
+  st.pendingBase = "https://api.example.com/v1";
+
+  for (const raw of ["", "   ", "one\ntwo"]) {
+    await handleWizardText(
+      { chat: { id: st.chatId }, message_id: 13, text: raw },
+      st as never,
+    );
+    assert.equal(st.model, null, JSON.stringify(raw));
+    assert.equal(st.awaitText?.kind, "modelid", JSON.stringify(raw));
+  }
+});
+
+// Что именно уезжает в .env — единственное место, где выбор превращается в конфигурацию.
+test("saving custom writes the endpoint, the model and drops a key nobody wants", async () => {
+  const seen: { selection: unknown; updates: unknown }[] = [];
+  const st = {
+    flow: "model",
+    provider: "custom",
+    model: "some-model",
+    effort: null,
+    pendingBase: "https://api.example.com/v1",
+    pendingKey: null,
+    dropKey: true,
+  };
+
+  await validateAndSaveWizard(st as never, {
+    readEnv: async () => ({
+      CUSTOM_API_KEY: "stale-key-from-another-endpoint",
+    }),
+    validate: (selection: unknown) => {
+      seen.push({ selection, updates: null });
+      return Promise.resolve({ id: "some-model", reasoningLevels: [] });
+    },
+    write: (updates: Record<string, string | null>) => {
+      seen.push({ selection: null, updates });
+      return Promise.resolve();
+    },
+  });
+
+  assert.deepEqual(seen[0].selection, {
+    provider: "custom",
+    model: "some-model",
+    // Ключ владелец отменил — проверять модель идём без него.
+    key: undefined,
+    dataDir: DATA_DIR_ABS,
+    base: "https://api.example.com/v1",
+  });
+  assert.deepEqual(seen[1].updates, {
+    THINKING_EFFORT: null,
+    MODEL_PROVIDER: "custom",
+    CUSTOM_MODEL: "some-model",
+    CUSTOM_BASE_URL: "https://api.example.com/v1",
+    // null сносит строку: старый ключ не должен уехать на новый эндпоинт.
+    CUSTOM_API_KEY: null,
+  });
+});
+
+test("a custom key entered in the dialog is written next to the endpoint", async () => {
+  let written: Record<string, string | null> = {};
+  await validateAndSaveWizard(
+    {
+      flow: "model",
+      provider: "custom",
+      model: "some-model",
+      effort: null,
+      pendingBase: "https://api.example.com/v1",
+      pendingKey: "secret",
+    } as never,
+    {
+      readEnv: async () => ({}),
+      validate: () =>
+        Promise.resolve({ id: "some-model", reasoningLevels: [] }),
+      write: (updates: Record<string, string | null>) => {
+        written = updates;
+        return Promise.resolve();
+      },
+    },
+  );
+  assert.equal(written.CUSTOM_API_KEY, "secret");
+  assert.equal(written.CUSTOM_BASE_URL, "https://api.example.com/v1");
 });
 
 test("/think still works on a provider the runtime accepts", async (t) => {

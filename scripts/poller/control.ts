@@ -40,7 +40,7 @@ import {
   endWizard,
   flows,
   getWizard,
-  handleKeyMessage,
+  handleWizardText,
   handleModelCmd,
   handleThinkCmd,
   handleWizardCallback,
@@ -460,9 +460,10 @@ async function handleControl(
             return true;
           });
         }
-        // /model wizard key intake — consume the update even on failure (the key must never
-        // be re-polled into eve). handleKeyMessage stays the wizard's own handler.
-        return handleKeyMessage(
+        // /model wizard text intake (key, endpoint address, model id) — consume the update
+        // even on failure (a key must never be re-polled into eve). handleWizardText stays
+        // the wizard's own handler.
+        return handleWizardText(
           msg as { chat: { id: number }; message_id: number; text: string },
           pending,
         ).catch((e: unknown) => {

@@ -5,6 +5,8 @@ import {
   checkKey,
   EFFORTS,
   fetchModelOptions,
+  normalizeBaseUrl,
+  providerBase,
   providerSupportsReasoning,
 } from "../lib/model-catalog.ts";
 import {
@@ -35,6 +37,11 @@ type WizardState = TelegramFlowState & {
   effort: string | null;
   step: string;
   pendingKey?: string | null;
+  // Владелец явно выбрал «без ключа»: строку ключа из .env надо убрать, а не оставить
+  // старую от прошлого эндпоинта.
+  dropKey?: boolean;
+  // Адрес своего эндпоинта, введённый в этом же диалоге (custom).
+  pendingBase?: string | null;
   reenterKey?: string | null;
 };
 type WizardRequestResult<T> =
@@ -53,6 +60,17 @@ type WizardTransport = (
 const wizardTg = tg as unknown as WizardTransport;
 const errorMessage = (error: unknown) =>
   (error as { message?: unknown } | null | undefined)?.message;
+// Отказ провайдера по ключу (401/403) — единственная причина, которую нельзя списать
+// на «у эндпоинта нет каталога»: ключ неверен, и спрашивать модель бессмысленно.
+const isAuthRejection = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  error.code === "auth_rejected";
+
+// Короткая причина для экрана: только сообщение ошибки, без стека и без объекта целиком.
+const errorReason = (error: unknown) =>
+  error instanceof Error ? error.message : "";
 const messageCallSucceeded = (value: unknown) =>
   typeof value === "object" &&
   value !== null &&
@@ -143,6 +161,8 @@ export function wizardActionAllowed(
   if (!st || action === "cancel") return Boolean(st);
   if (action === "keep") return st.step === "intro" || st.step === "effort";
   if (action === "chg") return st.step === "intro";
+  // «Без ключа» живёт ровно на экране ввода ключа и только у провайдера, где ключ не обязателен.
+  if (action === "nokey") return st.step === "awaiting_key";
   if (action.startsWith("prov:")) return st.step === "provider";
   if (action.startsWith("m:")) return st.step === "models";
   if (action.startsWith("eff:")) return st.step === "effort";
@@ -235,6 +255,17 @@ const refuseSecretInGroup = (st: WizardState) =>
     tr(
       "API keys are secrets — open a private chat with me and set the key there.",
       "Ключи — это секрет. Открой личный чат со мной и введи ключ там.",
+    ),
+    menuRow(),
+  );
+// Ввод текстом мост перехватывает только в личке (scripts/poller/control.ts). В группе
+// визард ждал бы сообщения, которое до него не дойдёт, — поэтому отказ до установки awaitText.
+const refuseInputInGroup = (st: WizardState) =>
+  endWizard(
+    st,
+    tr(
+      "This one needs a private chat with me — open one and send /model there.",
+      "Это настраивается только в личном чате — открой его и отправь /model там.",
     ),
     menuRow(),
   );
@@ -384,9 +415,54 @@ async function showProviderScreen(st: WizardState) {
   return wizScreen(st, tr("Pick a provider:", "Выбери провайдера:"), rows);
 }
 
+// Экран ввода адреса своего эндпоинта (custom). Не секрет, но приходит тем же текстовым
+// швом, что и ключ: диспетчер моста отдаёт следующее сообщение визарду по awaitText.
+function askBaseUrl(st: WizardState, current?: string) {
+  if (!isPrivateChat(st)) return refuseInputInGroup(st);
+  st.awaitText = { kind: "baseurl", secret: false, data: {} };
+  st.step = "awaiting_base";
+  const known = current
+    ? tr(`Now: ${current}.\n`, `Сейчас: ${current}.\n`)
+    : "";
+  return wizScreen(
+    st,
+    known +
+      tr(
+        "Send the OpenAI-compatible endpoint of your provider — the full base, including the /v1-style suffix (e.g. https://api.example.com/v1).",
+        "Пришли OpenAI-совместимый адрес своего провайдера — базу целиком, вместе с суффиксом вида /v1 (напр. https://api.example.com/v1).",
+      ),
+    [cancelRow()],
+  );
+}
+
+// Экран ввода имени модели: у чужого эндпоинта каталога моделей может не быть вовсе,
+// и тогда единственный источник имени — владелец.
+function askModelId(st: WizardState, reason?: string) {
+  if (!isPrivateChat(st)) return refuseInputInGroup(st);
+  st.awaitText = { kind: "modelid", secret: false, data: {} };
+  st.step = "awaiting_model";
+  const why = reason
+    ? tr(
+        `The endpoint has no model list I can read (${reason}).\n`,
+        `Список моделей у эндпоинта прочитать не вышло (${reason}).\n`,
+      )
+    : "";
+  return wizScreen(
+    st,
+    why +
+      tr(
+        "Send the model id exactly as your provider names it.",
+        "Пришли id модели ровно так, как называет её провайдер.",
+      ),
+    [cancelRow()],
+  );
+}
+
 async function pickProvider(st: WizardState, provider: string) {
   st.provider = provider;
   st.pendingKey = null;
+  st.pendingBase = null;
+  st.dropKey = false;
   const cat = CATALOG[provider];
   if (cat.auth === "oauth") {
     st.step = "loading";
@@ -406,14 +482,36 @@ async function pickProvider(st: WizardState, provider: string) {
   }
   const env = await readEnvValues(ENV_PATH);
   if (!wizardIsCurrent(st)) return false;
-  if (!cat.keyVar || !env[cat.keyVar] || st.reenterKey === provider) {
+  // Адрес спрашиваем ПЕРВЫМ: без него ни ключ проверить, ни каталог моделей спросить.
+  if (cat.baseVar) {
+    st.pendingBase = providerBase(cat, env) ?? null;
+    if (!st.pendingBase) return askBaseUrl(st, env[cat.baseVar]);
+  }
+  return askKeyOrShowModels(st, env);
+}
+
+// Продолжение после введённого адреса: тот же порядок шагов, что и в pickProvider.
+async function pickProviderAfterBase(st: WizardState) {
+  const env = await readEnvValues(ENV_PATH);
+  if (!wizardIsCurrent(st)) return false;
+  return askKeyOrShowModels(st, env);
+}
+
+async function askKeyOrShowModels(
+  st: WizardState,
+  env: Record<string, string>,
+) {
+  const cat = CATALOG[st.provider];
+  if (!cat.keyVar || !env[cat.keyVar] || st.reenterKey === st.provider) {
     st.reenterKey = null;
     // В группе ключ вводить нельзя (его не удалить) — отказ до установки awaitText.
     if (!isPrivateChat(st)) return refuseSecretInGroup(st);
     // awaitText обобщает старый awaitKey (см. handleControl): диспатчер по pending.awaitText
-    // отдаёт следующий текст этому визарду (handleKeyMessage), а не eve.
+    // отдаёт следующий текст этому визарду (handleWizardText), а не eve.
     st.awaitText = { kind: "apikey", secret: true, data: {} };
     st.step = "awaiting_key";
+    // Свой эндпоинт может стоять без авторизации — тогда ключа нет и спрашивать нечего.
+    const optional = cat.auth === "key-optional";
     return wizScreen(
       st,
       tr(
@@ -422,7 +520,9 @@ async function pickProvider(st: WizardState, provider: string) {
         `Нужен API-ключ ${cat.label}. Пришли его следующим сообщением — я сразу удалю его из чата.\n` +
           "Если через пару секунд не подтвержу получение — не отправляй повторно, начни заново с /model.",
       ),
-      [cancelRow()],
+      optional
+        ? [[btn(tr("No key", "Без ключа"), "iva_model:nokey")], cancelRow()]
+        : [cancelRow()],
     );
   }
   return showModelScreen(st);
@@ -439,15 +539,22 @@ async function showModelScreen(st: WizardState) {
     [cancelRow()],
   );
   if (!wizardIsCurrent(st)) return loadingShown;
+  const base = cat.baseVar
+    ? (st.pendingBase ?? providerBase(cat, env))
+    : undefined;
   const loaded = await runWizardRequest(st, () =>
     fetchModelOptions(
       st.provider,
       cat.keyVar ? (st.pendingKey ?? env[cat.keyVar]) : undefined,
-      { dataDir: DATA_DIR_ABS },
+      { dataDir: DATA_DIR_ABS, ...(base ? { base } : {}) },
     ),
   );
   if (loaded.stale) return loadingShown;
   if (!loaded.ok) {
+    // У чужого эндпоинта GET /models не обязан существовать: отсутствие каталога — не
+    // поломка, а повод спросить имя модели у владельца. Отказ по ключу остаётся отказом.
+    if (cat.baseVar && !isAuthRejection(loaded.error))
+      return askModelId(st, errorReason(loaded.error));
     return showModelValidationError(st, loaded.error);
   }
   const options = loaded.value;
@@ -481,13 +588,7 @@ async function showModelScreen(st: WizardState) {
 
 async function showModelValidationError(st: WizardState, error: unknown) {
   st.step = "model_error";
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "auth_rejected" &&
-    CATALOG[st.provider]?.keyVar
-  ) {
+  if (isAuthRejection(error) && CATALOG[st.provider]?.keyVar) {
     st.reenterKey = st.provider;
   }
   const reason =
@@ -546,12 +647,19 @@ function startCodexLogin(st: WizardState) {
   );
 }
 
-// Plain-text message while the wizard awaits an API key. Deleted from the chat FIRST;
-// the key value must never reach eve, log(), reply() or any error text.
-async function handleKeyMessage(
+/**
+ * Plain-text message the wizard is waiting for. Which step it belongs to is decided by the
+ * awaitText kind the screen set: an API key (secret — deleted from the chat first), the
+ * endpoint address or the model id. A stale kind (bridge restarted mid-flow) falls back to
+ * the key path, which deletes the message rather than letting an unread secret linger.
+ */
+async function handleWizardText(
   msg: { chat: { id: number }; message_id: number; text: string },
   st: WizardState,
 ) {
+  const kind = (st.awaitText as { kind?: string } | null | undefined)?.kind;
+  if (kind === "baseurl") return handleBaseUrlText(msg, st);
+  if (kind === "modelid") return handleModelIdText(msg, st);
   const chatId = msg.chat.id;
   const del = await wizardTg("deleteMessage", {
     chat_id: chatId,
@@ -584,7 +692,9 @@ async function handleKeyMessage(
     );
     return true;
   }
-  const checked = await runWizardRequest(st, () => checkKey(st.provider, key));
+  const checked = await runWizardRequest(st, () =>
+    checkKey(st.provider, key, st.pendingBase ?? undefined),
+  );
   if (checked.stale) return true;
   if (!checked.ok) {
     await endWizard(
@@ -611,8 +721,83 @@ async function handleKeyMessage(
   }
   st.awaitText = null;
   st.pendingKey = key;
+  st.dropKey = false;
   if (!wizardIsCurrent(st)) return true;
   await showModelScreen(st);
+  return true;
+}
+
+// Адрес эндпоинта: не секрет, сообщение из чата не удаляем. Без схемы (`api.example.com/v1`)
+// это не адрес — переспрашиваем на месте, а не падаем на первом запросе.
+async function handleBaseUrlText(
+  msg: { chat: { id: number }; message_id: number; text: string },
+  st: WizardState,
+) {
+  const base = normalizeBaseUrl(msg.text);
+  if (!base) {
+    await wizScreen(
+      st,
+      tr(
+        "That isn't an endpoint address. It needs the scheme and the /v1-style suffix — e.g. https://api.example.com/v1. Send it again or tap «Cancel».",
+        "Это не адрес эндпоинта. Нужна схема и суффикс вида /v1 — напр. https://api.example.com/v1. Пришли ещё раз или нажми «Отмена».",
+      ),
+      [cancelRow()],
+    );
+    return true;
+  }
+  st.awaitText = null;
+  st.pendingBase = base;
+  if (!wizardIsCurrent(st)) return true;
+  // Дальше обычный порядок шагов: ключ (если его нет в .env), затем модели.
+  await pickProviderAfterBase(st);
+  return true;
+}
+
+// Имя модели текстом — путь для эндпоинта без GET /models. Проверять его не у кого,
+// поэтому оно сразу уезжает в сохранение: там validateModelSelection ещё раз сходит к
+// каталогу и примет ввод, только если каталога действительно нет.
+async function handleModelIdText(
+  msg: { chat: { id: number }; message_id: number; text: string },
+  st: WizardState,
+) {
+  const model = msg.text.trim();
+  if (!model || /[\r\n]/.test(model)) {
+    await wizScreen(
+      st,
+      tr(
+        "That isn't a model id — send one line, exactly as your provider names it.",
+        "Это не id модели — пришли одной строкой, ровно как называет её провайдер.",
+      ),
+      [cancelRow()],
+    );
+    return true;
+  }
+  st.awaitText = null;
+  st.model = model;
+  st.modelOptions = [{ id: model, reasoningLevels: [] }];
+  st.efforts = [];
+  st.effort = null;
+  if (!wizardIsCurrent(st)) return true;
+  try {
+    await saveWizard(st);
+  } catch (e) {
+    if (!wizardIsCurrent(st)) return true;
+    if (e instanceof ModelValidationError) {
+      await showModelValidationError(st, e);
+      return true;
+    }
+    await endWizard(
+      st,
+      tr(
+        "Couldn't save .env: " + String(errorMessage(e)),
+        "Не удалось сохранить .env: " + String(errorMessage(e)),
+      ),
+      menuRow(),
+    );
+    return true;
+  }
+  if (!wizardIsCurrent(st)) return true;
+  await showSaved(st);
   return true;
 }
 
@@ -633,18 +818,29 @@ export async function validateAndSaveWizard(
       "invalid wizard selection",
     );
   }
-  const key = cat.keyVar ? (st.pendingKey ?? env[cat.keyVar]) : undefined;
+  const key = cat.keyVar
+    ? st.dropKey
+      ? undefined
+      : (st.pendingKey ?? env[cat.keyVar])
+    : undefined;
+  const base = cat.baseVar
+    ? (st.pendingBase ?? providerBase(cat, env))
+    : undefined;
   await validate({
     provider: st.provider,
     model: st.model,
     key,
     dataDir: DATA_DIR_ABS,
+    ...(base ? { base } : {}),
   });
   const updates: Record<string, string | null> = { THINKING_EFFORT: st.effort }; // null ⇒ drop the line ("не задан")
   if (st.flow === "model") {
     updates.MODEL_PROVIDER = st.provider;
     updates[cat.modelVar] = st.model;
+    if (cat.baseVar && st.pendingBase) updates[cat.baseVar] = st.pendingBase;
     if (cat.keyVar && st.pendingKey) updates[cat.keyVar] = st.pendingKey;
+    // Явное «без ключа» СНОСИТ строку: иначе на новый эндпоинт уехал бы ключ от прошлого.
+    else if (cat.keyVar && st.dropKey) updates[cat.keyVar] = null;
   }
   await write(updates);
 }
@@ -721,6 +917,13 @@ async function handleWizardCallback(cq: {
   }
   if (action === "chg") {
     return showProviderScreen(st);
+  }
+  if (action === "nokey") {
+    if (CATALOG[st.provider]?.auth !== "key-optional") return false;
+    st.awaitText = null;
+    st.pendingKey = null;
+    st.dropKey = true;
+    return showModelScreen(st);
   }
   if (action.startsWith("prov:")) {
     const p = action.slice("prov:".length);
@@ -884,6 +1087,6 @@ export {
   endWizard,
   handleModelCmd,
   handleThinkCmd,
-  handleKeyMessage,
+  handleWizardText,
   handleWizardCallback,
 };
