@@ -7,7 +7,7 @@ import {
   recoverConfigTransaction,
 } from "../lib/config-transaction.ts";
 import { parseEnvText } from "../lib/env-file.ts";
-import { catalogProvider } from "../lib/model-catalog.ts";
+import { catalogProvider, providerBase } from "../lib/model-catalog.ts";
 import {
   classifyRoot,
   refreshOwnedShim,
@@ -134,6 +134,8 @@ export function createConfigCommand(
             model: nextEnv[selected[0]],
             key: selected[1] ? nextEnv[selected[1]] : undefined,
             dataDir: dataDirAbs(nextEnv),
+            // Адрес своего эндпоинта — часть кандидата: без него проверять модель негде.
+            base: providerBase(catalog, nextEnv),
           },
           services: SERVICES,
           healthUrl: `http://127.0.0.1:${port}/eve/v1/health`,

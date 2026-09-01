@@ -180,6 +180,105 @@ test("OpenRouter classifies non-JSON auth failures before parsing the body", asy
   }
 });
 
+// ─── custom: чужой эндпоинт ничего не обещал ──────────────────────────────────────────
+// GET /models спецификацией OpenAI-совместимости не требуется. Отсутствие каталога — не
+// поломка конфигурации, а её нормальный вид; отказ по ключу остаётся отказом.
+
+test("custom accepts a typed model when the endpoint has no catalog", async () => {
+  const cases = [
+    { name: "404", fetchFn: async () => response({}, 404) },
+    { name: "500", fetchFn: async () => response({}, 500) },
+    { name: "not json", fetchFn: async () => response("<html>", 200) },
+    { name: "empty list", fetchFn: async () => response({ data: [] }) },
+    {
+      name: "offline",
+      fetchFn: async () => {
+        throw new Error("offline");
+      },
+    },
+  ];
+  for (const item of cases) {
+    const selected = await validateModelSelection(
+      {
+        provider: "custom",
+        model: "  vendor/typed  ",
+        base: "https://api.example.com/v1",
+      },
+      { fetchFn: item.fetchFn },
+    );
+    assert.deepEqual(
+      selected,
+      { id: "vendor/typed", reasoningLevels: [] },
+      item.name,
+    );
+  }
+});
+
+test("custom still fails on a rejected key and on a model the live catalog denies", async () => {
+  for (const status of [401, 403]) {
+    await assert.rejects(
+      validateModelSelection(
+        {
+          provider: "custom",
+          model: "vendor/typed",
+          key: "bad",
+          base: "https://api.example.com/v1",
+        },
+        { fetchFn: async () => response({}, status) },
+      ),
+      (error) =>
+        error instanceof ModelValidationError &&
+        error.code === "auth_rejected" &&
+        error.status === status,
+      String(status),
+    );
+  }
+  // Каталог живой и модели в нём нет — значит и в .env ей не место.
+  await assert.rejects(
+    validateModelSelection(
+      {
+        provider: "custom",
+        model: "vendor/typo",
+        base: "https://api.example.com/v1",
+      },
+      { fetchFn: async () => response({ data: [{ id: "vendor/real" }] }) },
+    ),
+    (error) =>
+      error instanceof ModelValidationError &&
+      error.code === "model_unavailable",
+  );
+  // Живой каталог принимается как есть.
+  assert.deepEqual(
+    await validateModelSelection(
+      {
+        provider: "custom",
+        model: "vendor/real",
+        base: "https://api.example.com/v1",
+      },
+      { fetchFn: async () => response({ data: [{ id: "vendor/real" }] }) },
+    ),
+    { id: "vendor/real", reasoningLevels: [] },
+  );
+});
+
+test("custom without an endpoint address never reaches the network", async () => {
+  let calls = 0;
+  await assert.rejects(
+    validateModelSelection(
+      { provider: "custom", model: "vendor/typed" },
+      {
+        fetchFn: async () => {
+          calls += 1;
+          return response({ data: [{ id: "vendor/typed" }] });
+        },
+      },
+    ),
+    (error) =>
+      error instanceof ModelValidationError && error.code === "base_missing",
+  );
+  assert.equal(calls, 0);
+});
+
 test("empty and malformed selections are rejected before provider I/O", async () => {
   let calls = 0;
   const fetchFn = async () => {

@@ -266,6 +266,8 @@ test("a valid candidate continues after recovery with exact transaction and rest
           model: "gpt-5",
           key: undefined,
           dataDir: join(root, "nested/data"),
+          // Адрес есть только у custom; у остальных он вшит в каталог.
+          base: undefined,
         },
         services: runtime.SERVICES,
         healthUrl: "http://127.0.0.1:8723/eve/v1/health",
@@ -439,7 +441,7 @@ test("the setup wizard treats an invalid provider as unconfigured, not as comple
   // статус и апдейт его отвергают, а мастер с `||` схлопывал его в ollama и объявлял
   // сломанный .env настроенным — то есть ровно в починке и молчал.
   for (const value of ["ollmaa", "OLLAMA", ""]) {
-    const { output } = await runWizard(t, value, /Provider \(1\/2\/3\/4\)/u);
+    const { output } = await runWizard(t, value, /Provider \(1\/2\/3\/4\/5\)/u);
 
     assert.doesNotMatch(output, /already configured/u, value);
     assert.doesNotMatch(output, /Reconfigure from scratch/u, value);
@@ -449,7 +451,7 @@ test("the setup wizard treats an invalid provider as unconfigured, not as comple
       value,
     );
     // И он именно СПРАШИВАЕТ провайдера, а не проходит мимо шага.
-    assert.match(output, /Provider \(1\/2\/3\/4\)/u, value);
+    assert.match(output, /Provider \(1\/2\/3\/4\/5\)/u, value);
   }
 });
 
@@ -487,7 +489,7 @@ test("the setup wizard writes grep without leaking host secrets", async (t) => {
     "invalid",
     /Ready — settings validated for apply/u,
     [
-      "2", // Provider (1/2/3/4) -> OpenCode
+      "2", // Provider (1/2/3/4/5) -> OpenCode
       "test-key", // Paste the OpenCode API key
       "", // Model number -> default (deepseek-v4-pro)
       "", // Vision model (photos) -> default from the same live list

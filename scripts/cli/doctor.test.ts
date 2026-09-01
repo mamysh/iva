@@ -766,7 +766,7 @@ test("doctor rejects an invalid model provider instead of diagnosing Ollama", as
 
   assert.equal(
     failures[0],
-    'Invalid MODEL_PROVIDER "ollmaa"; expected one of: ollama, opencode, codex, openrouter — run: iva config',
+    'Invalid MODEL_PROVIDER "ollmaa"; expected one of: ollama, opencode, codex, openrouter, custom — run: iva config',
   );
   assert.equal(
     failures.some((message) => message.includes("OLLAMA_")),
@@ -823,6 +823,59 @@ test("doctor accepts exactly the provider names the runtime accepts", async (t) 
       JSON.stringify(value),
     );
   }
+});
+
+// Свой эндпоинт держится на двух строках .env: адрес и модель. Ключ — нет: локальный
+// сервер живёт без авторизации, и требовать его значило бы объявлять рабочую установку
+// сломанной. Проверка — тем же списком, что читает мастер (providerEnvKeys).
+test("doctor asks a custom provider for its endpoint and model, not for a key", async (t) => {
+  async function diagnose(env: Record<string, string>): Promise<string[]> {
+    const root = await sandbox(t);
+    writeFileSync(join(root, ".env"), "MODEL_PROVIDER=custom\n");
+    const failures: string[] = [];
+    const runtime: CliRuntime = {
+      ...createCliRuntime(root),
+      C: NO_COLOR,
+      ok: () => undefined,
+      warn: () => undefined,
+      bad: (message) => failures.push(message),
+      readEnv: () => ({
+        ...completeEnv(),
+        MODEL_PROVIDER: "custom",
+        ...env,
+      }),
+      hasSystemd: () => false,
+    };
+    await createDoctorCommand(runtime, lifecycle(), {
+      nodeVersion: "24.0.0",
+      log: () => undefined,
+      exit: () => undefined,
+    })();
+    return failures.filter((message) => message.startsWith(".env incomplete"));
+  }
+
+  assert.deepEqual(await diagnose({ CUSTOM_MODEL: "some-model" }), [
+    ".env incomplete, missing: CUSTOM_BASE_URL — run: iva config",
+  ]);
+  assert.deepEqual(
+    await diagnose({ CUSTOM_BASE_URL: "https://api.example.com/v1" }),
+    [".env incomplete, missing: CUSTOM_MODEL — run: iva config"],
+  );
+  // Пробельное значение — это «не задано», как и у всех остальных ключей.
+  assert.deepEqual(
+    await diagnose({ CUSTOM_BASE_URL: "  ", CUSTOM_MODEL: " " }),
+    [
+      ".env incomplete, missing: CUSTOM_BASE_URL, CUSTOM_MODEL — run: iva config",
+    ],
+  );
+  // Адрес и модель есть, ключа нет — установка полная.
+  assert.deepEqual(
+    await diagnose({
+      CUSTOM_BASE_URL: "https://api.example.com/v1",
+      CUSTOM_MODEL: "some-model",
+    }),
+    [],
+  );
 });
 
 // --- Раздел «Plugins» (ADR-0009) -----------------------------------------------

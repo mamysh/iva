@@ -26,6 +26,8 @@ type ConfigSelection = {
   model: string | null | undefined;
   key?: string;
   dataDir?: string;
+  // Адрес эндпоинта у провайдера, чей base задаёт владелец (custom).
+  base?: string;
 };
 type ConfigTransactionTarget = {
   envPath: string;

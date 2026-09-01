@@ -10,6 +10,8 @@ type ModelSelection = {
   model: string | null | undefined;
   key?: string;
   dataDir?: string;
+  // Адрес эндпоинта у провайдера, чей base не вшит в каталог (custom).
+  base?: string;
 };
 type ValidationOptions = {
   fetchFn?: typeof fetch;
@@ -158,7 +160,7 @@ export async function probeOpenRouterModel(
 }
 
 export async function validateModelSelection(
-  { provider, model, key, dataDir }: ModelSelection,
+  { provider, model, key, dataDir, base }: ModelSelection,
   { fetchFn = fetch, listCodexCatalog }: ValidationOptions = {},
 ): Promise<{ id: string; reasoningLevels: string[]; answered?: boolean }> {
   if (
@@ -177,21 +179,38 @@ export async function validateModelSelection(
   if (provider === "openrouter") {
     return probeOpenRouterModel({ model: selected, key }, { fetchFn });
   }
+  // Свой эндпоинт без адреса проверять негде — и это отказ конфигурации, а не сети.
+  if (CATALOG[provider].baseVar && !base) {
+    throw new ModelValidationError(
+      "base_missing",
+      `${CATALOG[provider].baseVar} is not set`,
+    );
+  }
+  let options;
   try {
-    const options = await fetchModelOptions(provider, key, {
+    options = await fetchModelOptions(provider, key, {
       dataDir,
       fetchFn,
+      ...(base ? { base } : {}),
       ...(listCodexCatalog ? { listCodexCatalog } : {}),
     });
-    const match = options.find((option) => option.id === selected);
-    if (!match) {
-      throw new ModelValidationError(
-        "model_unavailable",
-        `${selected} is not present in the live ${CATALOG[provider].label} catalog`,
-      );
-    }
-    return match;
   } catch (error) {
-    throw validationError(error);
+    const failure = validationError(error);
+    // У чужого эндпоинта GET /models может не быть вовсе: OpenAI-совместимость его не
+    // требует. Отказ по ключу (401/403) остаётся отказом, всё остальное — «каталога нет»,
+    // и тогда принимается имя модели, которое владелец ввёл сам. Та же мягкая политика,
+    // что у checkKey: сетевой сбой не повод объявить рабочую конфигурацию битой.
+    if (CATALOG[provider].baseVar && failure.code !== "auth_rejected")
+      return { id: selected, reasoningLevels: [] };
+    throw failure;
   }
+  // Каталог живой — значит он и есть правда: имени, которого в нём нет, в .env делать нечего.
+  const match = options.find((option) => option.id === selected);
+  if (!match) {
+    throw new ModelValidationError(
+      "model_unavailable",
+      `${selected} is not present in the live ${CATALOG[provider].label} catalog`,
+    );
+  }
+  return match;
 }

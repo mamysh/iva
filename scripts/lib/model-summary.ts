@@ -13,6 +13,7 @@ const PROVIDERS: Record<string, { label: string; context: string }> = {
   opencode: { label: "OpenCode", context: "OPENCODE_CONTEXT_WINDOW" },
   openrouter: { label: "OpenRouter", context: "OPENROUTER_CONTEXT_WINDOW" },
   codex: { label: "OpenAI", context: "CODEX_CONTEXT_WINDOW" },
+  custom: { label: "Custom", context: "CUSTOM_CONTEXT_WINDOW" },
 };
 
 /** Имена провайдеров, которые умеет подписать этот экран. Сверяются с рантаймом в тесте. */

@@ -12,6 +12,8 @@ import {
   CATALOG,
   catalogModel,
   catalogProvider,
+  normalizeBaseUrl,
+  providerBase,
   providerEnvKeys,
   FALLBACK_EFFORTS,
   ModelCatalogError,
@@ -37,13 +39,24 @@ test("both trees name the same model variable and the same default model", () =>
     const authored = MODEL_PROVIDERS[name];
     assert.equal(catalog.modelVar, authored.modelVar, name);
     assert.equal(catalog.def, authored.defaultModel, name);
-    // И то же самое с другого конца: пустой env обязан дать ровно дефолт каталога.
+    // И то же самое с другого конца: пустой env обязан дать ровно дефолт каталога, а у
+    // провайдера без дефолта (custom) — одинаково НЕ дать модель ни одной из половин.
+    if (catalog.def === null) {
+      assert.throws(() => resolveModelProvider({ MODEL_PROVIDER: name }), name);
+      assert.equal(catalogModel(name, {}), undefined, name);
+      continue;
+    }
     assert.equal(
       resolveModelProvider({ MODEL_PROVIDER: name }).model,
       catalog.def,
       name,
     );
   }
+  // Дефолта нет ровно у custom — иначе «модели не знаем» тихо расползлось бы по таблице.
+  assert.deepEqual(
+    MODEL_PROVIDER_NAMES.filter((name) => CATALOG[name].def === null),
+    ["custom"],
+  );
 });
 
 // Vision-модель — вторая модель того же провайдера, и разъехаться ей нельзя ровно по той же
@@ -56,12 +69,20 @@ test("both trees name the same vision variable and the same vision default", () 
     assert.equal(catalog.visionVar, authored.visionModelVar, name);
     assert.equal(catalog.visionDef, authored.defaultVisionModel, name);
     // И с другого конца: пустой env даёт дефолт каталога, а у codex — текстовую модель.
+    // custom без модели не разрешается вовсе — его случай проверен выше.
+    if (catalog.def === null) continue;
     assert.equal(
       resolveModelProvider({ MODEL_PROVIDER: name }).visionModel,
       catalog.visionDef ?? catalog.def,
       name,
     );
   }
+  // У custom переменная есть, а дефолта нет: картинку смотрит выбранная текстовая модель.
+  assert.equal(
+    resolveModelProvider({ MODEL_PROVIDER: "custom", CUSTOM_MODEL: "chat" })
+      .visionModel,
+    "chat",
+  );
   // null стоит ровно у codex — иначе «нет переменной» тихо расползлось бы по таблице.
   assert.deepEqual(
     MODEL_PROVIDER_NAMES.filter((name) => CATALOG[name].visionVar === null),
@@ -140,6 +161,11 @@ test("required env keys cover the key and the model, and codex asks for neither 
   ]);
   // codex входит по OAuth — ключа в .env нет вовсе.
   assert.deepEqual(providerEnvKeys(CATALOG.codex), ["CODEX_MODEL"]);
+  // custom: адрес обязателен наравне с моделью, ключ — нет (свой сервер живёт без него).
+  assert.deepEqual(providerEnvKeys(CATALOG.custom), [
+    "CUSTOM_BASE_URL",
+    "CUSTOM_MODEL",
+  ]);
   for (const name of MODEL_PROVIDER_NAMES) {
     const keys = providerEnvKeys(CATALOG[name]);
     assert.equal(keys.includes(CATALOG[name].modelVar), true, name);
@@ -166,15 +192,97 @@ test("both trees answer one .env with one model, blank or padded", () => {
   for (const name of MODEL_PROVIDER_NAMES) {
     for (const raw of raws) {
       const env = raw === undefined ? {} : { [CATALOG[name].modelVar]: raw };
-      assert.equal(
-        catalogModel(name, env),
-        resolveModelProvider({ MODEL_PROVIDER: name, ...env }).model,
-        `${name} / ${JSON.stringify(raw)}`,
-      );
+      const label = `${name} / ${JSON.stringify(raw)}`;
+      let runtime: string | undefined;
+      try {
+        runtime = resolveModelProvider({ MODEL_PROVIDER: name, ...env }).model;
+      } catch {
+        // Рантайм отказался называть модель — каталог обязан отказаться тем же местом,
+        // иначе экран показал бы имя, к которому агент даже не пойдёт.
+        runtime = undefined;
+      }
+      assert.equal(catalogModel(name, env), runtime, label);
       // И оно никогда не пустое: провайдеру нельзя уйти без имени модели.
-      assert.notEqual(catalogModel(name, env), "");
+      assert.notEqual(catalogModel(name, env), "", label);
     }
   }
+});
+
+// ─── custom: адрес приходит из .env, а не из каталога ────────────────────────────────
+// Единственный провайдер, чей base каталог не знает. Разъедься чтение адреса с рантаймом —
+// мастер спрашивал бы модели у одного эндпоинта, а агент ходил бы к другому.
+
+test("the custom base URL comes from .env, normalized, and nothing else does", () => {
+  assert.equal(providerBase(CATALOG.ollama, {}), "https://ollama.com/v1");
+  assert.equal(
+    providerBase(CATALOG.ollama, { CUSTOM_BASE_URL: "https://evil.example" }),
+    "https://ollama.com/v1",
+  );
+  assert.equal(providerBase(CATALOG.codex, {}), undefined);
+  assert.equal(providerBase(CATALOG.custom, {}), undefined);
+  assert.equal(
+    providerBase(CATALOG.custom, {
+      CUSTOM_BASE_URL: "  https://api.example.com/v1//  ",
+    }),
+    "https://api.example.com/v1",
+  );
+  // Мусор адресом не становится: без схемы fetch бросил бы «Failed to parse URL», и
+  // мастер объявил бы это сбоем сети вместо опечатки в .env.
+  for (const raw of [
+    "",
+    "   ",
+    "api.example.com/v1",
+    "ftp://api.example.com/v1",
+    "https://",
+    "не адрес",
+  ])
+    assert.equal(normalizeBaseUrl(raw), null, JSON.stringify(raw));
+  assert.equal(
+    normalizeBaseUrl("HTTP://127.0.0.1:11434/v1"),
+    "HTTP://127.0.0.1:11434/v1",
+  );
+});
+
+test("custom asks the endpoint it was given, without inventing an Authorization header", async () => {
+  const seen: { url: string; auth: string | null }[] = [];
+  const fetchFn = (async (url: string | URL, init?: RequestInit) => {
+    seen.push({
+      url: String(url),
+      auth: new Headers(init?.headers).get("authorization"),
+    });
+    return new Response(JSON.stringify({ data: [{ id: "local-model" }] }), {
+      status: 200,
+    });
+  }) as unknown as typeof fetch;
+
+  assert.deepEqual(
+    await fetchModelOptions("custom", undefined, {
+      base: "https://api.example.com/v1",
+      fetchFn,
+    }),
+    // custom не обещает reasoning_effort — уровней у его моделей нет.
+    [{ id: "local-model", reasoningLevels: [] }],
+  );
+  await fetchModelOptions("custom", "secret", {
+    base: "https://api.example.com/v1",
+    fetchFn,
+  });
+  assert.deepEqual(seen, [
+    { url: "https://api.example.com/v1/models", auth: null },
+    { url: "https://api.example.com/v1/models", auth: "Bearer secret" },
+  ]);
+});
+
+test("custom without a base URL is a configuration refusal, not an empty list", async () => {
+  await assert.rejects(
+    fetchModelOptions("custom", "secret", {
+      fetchFn: () => {
+        throw new Error("must not reach the network");
+      },
+    }),
+    (error) =>
+      error instanceof ModelCatalogError && error.code === "base_missing",
+  );
 });
 
 test("an unknown provider has no model at all", () => {
@@ -185,7 +293,7 @@ test("an unknown provider has no model at all", () => {
 // Резолвер — не единственный, кто читает недоверенную строку из .env: по ней же ходят
 // доктор, мастер, апдейт и экраны. Генератор перебирает вход, а не список.
 // Провал печатает seed и path; fc.assert(prop, { seed, path }) повторяет прогон.
-test("property: only the four exact names resolve to a provider", () => {
+test("property: only the exact catalog names resolve to a provider", () => {
   const names: readonly string[] = MODEL_PROVIDER_NAMES;
   fc.assert(
     fc.property(

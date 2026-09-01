@@ -9,13 +9,20 @@ import {
 
 export interface ProviderCatalogEntry {
   label: string;
-  auth: "key" | "oauth";
+  // "key" — ключ обязателен; "oauth" — вход по подписке, ключа в .env нет; "key-optional" —
+  // ключ есть, но эндпоинт может работать и без него (свой сервер без авторизации).
+  auth: "key" | "oauth" | "key-optional";
   base?: string;
+  // Адрес известен не всегда: у custom его задаёт владелец, и каталог знает только имя
+  // переменной. Значение приходит от вызывающего — см. providerBase.
+  baseVar: string | null;
   keyVar: string | null;
   modelVar: string;
-  def: string;
+  // null = дефолта нет, переменная обязательна (custom: модели чужого эндпоинта не угадать).
+  def: string | null;
   // Vision-модель: своя переменная и свой дефолт. null у провайдера, который смотрит
-  // картинку выбранной текстовой моделью (codex — подписка мультимодальна).
+  // картинку выбранной текстовой моделью (codex — подписка мультимодальна, custom —
+  // дефолт назвать некому).
   visionVar: string | null;
   visionDef: string | null;
   models: string[];
@@ -28,6 +35,9 @@ export interface ModelOption {
 
 export interface FetchModelOptions {
   dataDir?: string;
+  // Адрес эндпоинта для провайдера, у которого он не вшит (custom). Пусто — берётся base
+  // каталога. Значение собирает вызывающий: только он читает свежий .env.
+  base?: string;
   listCodexCatalog?: (options?: { dataDir?: string }) => Promise<ModelOption[]>;
   fetchFn?: typeof fetch;
 }
@@ -65,6 +75,7 @@ export const CATALOG: Record<string, ProviderCatalogEntry> = {
     label: "Ollama Cloud",
     auth: "key",
     base: "https://ollama.com/v1",
+    baseVar: null,
     keyVar: "OLLAMA_API_KEY",
     modelVar: "OLLAMA_MODEL",
     def: "deepseek-v4-pro",
@@ -87,6 +98,7 @@ export const CATALOG: Record<string, ProviderCatalogEntry> = {
     label: "OpenCode Go",
     auth: "key",
     base: "https://opencode.ai/zen/go/v1",
+    baseVar: null,
     keyVar: "OPENCODE_API_KEY",
     modelVar: "OPENCODE_MODEL",
     def: "deepseek-v4-pro",
@@ -109,6 +121,7 @@ export const CATALOG: Record<string, ProviderCatalogEntry> = {
   codex: {
     label: "OpenAI (подписка)",
     auth: "oauth",
+    baseVar: null,
     keyVar: null,
     modelVar: "CODEX_MODEL",
     def: "gpt-5.5",
@@ -121,6 +134,7 @@ export const CATALOG: Record<string, ProviderCatalogEntry> = {
     label: "OpenRouter",
     auth: "key",
     base: "https://openrouter.ai/api/v1",
+    baseVar: null,
     keyVar: "OPENROUTER_API_KEY",
     modelVar: "OPENROUTER_MODEL",
     def: "openai/gpt-5.1",
@@ -137,6 +151,24 @@ export const CATALOG: Record<string, ProviderCatalogEntry> = {
       "deepseek/deepseek-chat",
       "moonshotai/kimi-k3",
     ],
+  },
+  custom: {
+    label: "Custom (OpenAI-compatible)",
+    // Ключ опционален: локальный или self-hosted эндпоинт живёт без авторизации.
+    auth: "key-optional",
+    // Адрес статичным быть не может — его задаёт владелец, целиком, вместе с суффиксом
+    // вида /v1. Каталог хранит только имя переменной: значение приходит от вызывающего,
+    // который читает свежий .env (см. providerBase).
+    baseVar: "CUSTOM_BASE_URL",
+    keyVar: "CUSTOM_API_KEY",
+    modelVar: "CUSTOM_MODEL",
+    // Дефолта нет: какие модели у чужого адреса, знает только его владелец.
+    def: null,
+    visionVar: "CUSTOM_VISION_MODEL",
+    visionDef: null,
+    // Курировать нечего — список моделей приходит живым GET {base}/models, а если его нет,
+    // мастер спрашивает id текстом.
+    models: [],
   },
 };
 
@@ -166,22 +198,56 @@ export function catalogModel(
   const configured = (env[provider.modelVar] ?? "").trim();
   const stripped =
     name === "opencode" ? configured.replace(/^opencode-go\//, "") : configured;
-  return stripped || provider.def;
+  // `|| undefined` на конце: у провайдера без дефолта (custom) пустая переменная — это не
+  // модель, а незаполненная конфигурация. Рантайм на ней отказывается стартовать, и экраны
+  // обязаны сказать «?», а не назвать модель, к которой никто не пойдёт.
+  return stripped || provider.def || undefined;
+}
+
+// Базовый адрес провайдера. У известных четырёх он вшит; у custom его знает только .env,
+// поэтому значение приходит аргументом: эта половина грузится и в мосте, где process.env
+// протухает после записи в .env, и на инсталле, где authored tree может не быть (ADR-0003).
+export function providerBase(
+  provider: ProviderCatalogEntry,
+  env: Readonly<Record<string, string | undefined>> = {},
+): string | undefined {
+  if (!provider.baseVar) return provider.base;
+  return normalizeBaseUrl(env[provider.baseVar] ?? "") ?? undefined;
+}
+
+// Адрес, который ввёл владелец. Принимается только http(s)-URL целиком: без схемы
+// (`api.example.com/v1`) fetch бросил бы «Failed to parse URL», и мастер объявил бы это
+// сбоем сети. Хвостовые слэши срезаются — иначе к нему приклеится `//models`.
+// Возвращает null, если строка адресом не является.
+export function normalizeBaseUrl(raw: string): string | null {
+  const value = raw.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(value)) return null;
+  try {
+    new URL(value);
+  } catch {
+    return null;
+  }
+  return value;
 }
 
 // The .env keys a provider cannot work without. codex has no key — it signs in over OAuth
-// (data/codex-auth.json), which is checked separately. Shared by `iva doctor` and the setup
-// wizard so one of them can never call a configuration complete that the other rejects.
+// (data/codex-auth.json), which is checked separately; custom needs its endpoint address but
+// not necessarily a key. Shared by `iva doctor` and the setup wizard so one of them can never
+// call a configuration complete that the other rejects.
 export function providerEnvKeys(provider: ProviderCatalogEntry): string[] {
-  return provider.keyVar
-    ? [provider.keyVar, provider.modelVar]
-    : [provider.modelVar];
+  return [
+    ...(provider.baseVar ? [provider.baseVar] : []),
+    ...(provider.auth === "key" && provider.keyVar ? [provider.keyVar] : []),
+    provider.modelVar,
+  ];
 }
 
 // Ollama Cloud and OpenCode Go both expose OpenAI-compatible reasoning_effort.
 // Their /models payloads contain IDs only, so the API's common low/medium/high
 // contract is the best available capability signal. Codex is richer: its live
 // catalog carries a model-specific subset.
+// custom is deliberately absent: an unknown endpoint has promised nothing about
+// reasoning_effort, and sending it blind risks an HTTP 400 on every turn.
 const REASONING_PROVIDERS = new Set(["ollama", "opencode", "codex"]);
 
 export const providerSupportsReasoning = (provider: string): boolean =>
@@ -245,20 +311,32 @@ export async function fetchModelOptions(
   key?: string,
   {
     dataDir,
+    base,
     listCodexCatalog = listCodexModelCatalog,
     fetchFn = fetch,
   }: FetchModelOptions = {},
 ): Promise<ModelOption[]> {
   const cat = CATALOG[provider];
   if (!cat) return [];
+  const endpoint = base ?? cat.base;
+  // Провайдер, чей адрес задаёт владелец, без адреса не спрашивается вовсе: ходить некуда,
+  // и молчаливый пустой список выглядел бы как «у эндпоинта нет моделей».
+  if (cat.baseVar && !endpoint) {
+    throw new ModelCatalogError(
+      "base_missing",
+      `${cat.baseVar} is not set — nowhere to ask for models`,
+    );
+  }
   try {
     if (provider === "codex") {
       const live = await listCodexCatalog(dataDir ? { dataDir } : {});
       return validOptions(provider, live);
     }
-    if (cat.base && provider !== "openrouter") {
-      const res = await fetchFn(`${cat.base}/models`, {
-        headers: { Authorization: `Bearer ${key}` },
+    if (endpoint && provider !== "openrouter") {
+      const res = await fetchFn(`${endpoint}/models`, {
+        // Ключа может не быть вовсе (custom на своём сервере) — тогда идём без заголовка,
+        // а не с «Bearer undefined».
+        headers: key ? { Authorization: `Bearer ${key}` } : {},
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (res.status === 401 || res.status === 403) {
@@ -335,12 +413,14 @@ export async function fetchModels(
 export async function checkKey(
   provider: string,
   key: string,
+  base?: string,
 ): Promise<string | null> {
   const cat = CATALOG[provider];
-  if (!cat?.base) return null;
+  const endpoint = base ?? cat?.base;
+  if (!cat || !endpoint) return null;
   // OpenRouter has a dedicated auth-only endpoint; the others validate via /models.
   const url =
-    provider === "openrouter" ? `${cat.base}/key` : `${cat.base}/models`;
+    provider === "openrouter" ? `${endpoint}/key` : `${endpoint}/models`;
   try {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${key}` },
