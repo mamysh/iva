@@ -30,9 +30,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // MODEL_PROVIDER валит загрузку модуля здесь же, до первого запроса к провайдеру.
 // ollama/opencode/openrouter — OpenAI-совместимы (chat/completions, статичный ключ из .env).
 // codex — личная подписка OpenAI (ChatGPT): Responses API + OAuth-токен (data/codex-auth.json,
-// `iva login`). Имена моделей и их дефолты живут в agent/lib/model-provider.ts (там же и
-// переменные *_VISION_MODEL); здесь остаётся то, что из .env не задаётся: адрес, ключ и
-// окно контекста.
+// `iva login`). custom — тот же OpenAI-совместимый провод, но адрес задаёт владелец
+// (CUSTOM_BASE_URL): чужой прокси, vLLM, LiteLLM, вендорская подписка. Имена моделей и их
+// дефолты живут в agent/lib/model-provider.ts (там же и переменные *_VISION_MODEL); здесь
+// остаётся то, что из .env не задаётся ни у кого: адрес, ключ и окно контекста.
 const selected = resolveModelProvider();
 const PROVIDER = selected.name;
 
@@ -62,6 +63,17 @@ const PROVIDERS = {
     apiKey: undefined, // авторизация — OAuth-токен подписки, не статичный ключ (см. codexFetch)
     contextWindow: 272000,
   },
+  custom: {
+    // Адрес целиком задаёт владелец, вместе с суффиксом вида /v1 — как у ollama
+    // (https://ollama.com/v1). Хвостовой слэш срезаем: к адресу приклеивается /chat/completions.
+    // Пустое значение ловится ниже: таблица строится целиком на загрузке модуля, и падать
+    // на чужой переменной ей нельзя.
+    baseURL: (process.env.CUSTOM_BASE_URL ?? "").trim().replace(/\/+$/, ""),
+    // Ключ необязателен: локальный или self-hosted эндпоинт живёт без авторизации, и тогда
+    // openai-compatible не ставит заголовок Authorization вовсе.
+    apiKey: process.env.CUSTOM_API_KEY,
+    contextWindow: 131072,
+  },
 } as const satisfies Record<
   ModelProviderName,
   {
@@ -86,6 +98,14 @@ export const providerConfig = {
   // У codex это та же текстовая модель: подписка мультимодальна.
   visionModel: selected.visionModel,
 };
+
+// Адрес чужого эндпоинта не угадывается: без него запрос ушёл бы в пустую строку и агент
+// молчал бы, не назвав причину. Отказ здесь же, на загрузке модуля, — как у неизвестного
+// MODEL_PROVIDER, и ровно тем же списком обязательных ключей ругается `iva doctor`.
+if (providerName === "custom" && !providerConfig.baseURL)
+  throw new Error(
+    "MODEL_PROVIDER=custom requires CUSTOM_BASE_URL (OpenAI-compatible base, e.g. https://api.example.com/v1) — run: iva config",
+  );
 
 // THINKING_EFFORT (.env, пишут /model и /think в Telegram): reasoning-усилие модели.
 // Codex получает его через providerOptions.openai.reasoningEffort ниже. Ollama Cloud

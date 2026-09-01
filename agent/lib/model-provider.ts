@@ -28,6 +28,7 @@ export const MODEL_PROVIDER_NAMES = [
   "opencode",
   "codex",
   "openrouter",
+  "custom",
 ] as const;
 
 export type ModelProviderName = (typeof MODEL_PROVIDER_NAMES)[number];
@@ -99,11 +100,27 @@ export const MODEL_PROVIDERS = {
     visionModelVar: "OPENROUTER_VISION_MODEL",
     defaultVisionModel: "google/gemini-2.5-flash",
   },
+  custom: {
+    // Свой OpenAI-совместимый эндпоинт (прокси, vLLM, LiteLLM, вендорская подписка). Адрес
+    // приходит из CUSTOM_BASE_URL и живёт в agent/provider.ts вместе с ключом и окном.
+    modelVar: "CUSTOM_MODEL",
+    // Дефолту взяться неоткуда: что за модели у чужого эндпоинта, знает только его владелец.
+    // null — «обязательна»: пустая переменная валит старт, а не подставляет чужое имя.
+    defaultModel: null,
+    // reasoning_effort незнакомому эндпоинту не шлём: OpenAI-совместимость этого поля не
+    // обещает, а лишний параметр — HTTP 400 на каждом ходу.
+    compatibleReasoning: false,
+    // Vision-модель необязательна: с 0.3.34 картинку сначала предлагают самой модели чата
+    // (ADR-0012). Пусто — дефолта нет, и картинку смотрит выбранная текстовая модель.
+    visionModelVar: "CUSTOM_VISION_MODEL",
+    defaultVisionModel: null,
+  },
 } as const satisfies Record<
   ModelProviderName,
   {
     modelVar: string;
-    defaultModel: string;
+    // null = обязательная переменная: у провайдера нет модели, которую можно подставить молча.
+    defaultModel: string | null;
     compatibleReasoning: boolean;
     visionModelVar: string | null;
     defaultVisionModel: string | null;
@@ -117,13 +134,19 @@ export function invalidModelProviderMessage(raw: string): string {
   return `Invalid MODEL_PROVIDER ${JSON.stringify(raw)}; expected one of: ${MODEL_PROVIDER_NAMES.join(", ")} — run: iva config`;
 }
 
+// Отказ на провайдере без дефолтной модели (custom): подставить нечего, и промолчать нельзя —
+// пустое имя модели в теле запроса провайдер вернул бы ошибкой на каждом ходу.
+export function missingModelMessage(name: ModelProviderName): string {
+  return `MODEL_PROVIDER=${name} requires ${MODEL_PROVIDERS[name].modelVar} — run: iva config`;
+}
+
 // Одно правило чтения на ОБЕ модели провайдера — текстовую и vision. Разными их делает
 // только дефолт, поэтому он и приходит аргументом: две копии этой функции разъехались бы
 // ровно так же, как раньше расходились три ответа на одну строку .env.
 function configuredModel(
   name: ModelProviderName,
   raw: string | undefined,
-  fallback: string,
+  fallback: string | null,
 ): string {
   const configured = (raw ?? "").trim();
   // Эндпоинт OpenCode ждёт bare-ID — срезаем внутренний UI-префикс "opencode-go/"
@@ -131,7 +154,11 @@ function configuredModel(
   // тоже «не задано», а не пустое имя модели в запросе.
   const stripped =
     name === "opencode" ? configured.replace(/^opencode-go\//, "") : configured;
-  return stripped || fallback;
+  if (stripped) return stripped;
+  // Дефолта нет — значит переменная обязательна, и «не задано» здесь громкий отказ, а не
+  // тихая подстановка.
+  if (fallback === null) throw new Error(missingModelMessage(name));
+  return fallback;
 }
 
 /**
@@ -141,6 +168,7 @@ function configuredModel(
  *
  * Пробелы срезаются, пустое (и пробельное) значение — это «не задано», то есть дефолт
  * провайдера. Свою модель нельзя «стереть», оставив агента без имени модели в запросе.
+ * У провайдера без дефолта (custom) «не задано» — отказ с именем переменной.
  *
  * Повторено в scripts/lib/model-catalog.ts (`catalogModel`) для половины, которая грузится
  * без authored tree; равенство двух правил сверяет scripts/lib/model-catalog.test.ts.
@@ -154,8 +182,9 @@ export function modelProviderModel(
 
 /**
  * Vision-модель провайдера — тем же правилом trim/blank→дефолт, что и текстовая.
- * У провайдера без своей переменной (codex) vision-модель — это выбранная текстовая:
- * подписка мультимодальна, отдельного имени спрашивать не у кого.
+ * У провайдера без дефолтной vision-модели её место занимает выбранная текстовая: у codex
+ * своей переменной нет вовсе (подписка мультимодальна), у custom эндпоинт чужой и назвать
+ * дефолт некому. Здесь vision никогда не отказывает: пустая строка — не отсутствие модели.
  */
 function visionModelFor(
   name: ModelProviderName,
@@ -163,7 +192,7 @@ function visionModelFor(
   textModel: string,
 ): string {
   const fallback: string | null = MODEL_PROVIDERS[name].defaultVisionModel;
-  return fallback === null ? textModel : configuredModel(name, raw, fallback);
+  return configuredModel(name, raw, fallback ?? textModel);
 }
 
 /**

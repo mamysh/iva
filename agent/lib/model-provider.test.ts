@@ -15,10 +15,24 @@ import {
   MODEL_PROVIDERS,
   MODEL_PROVIDER_NAMES,
   invalidModelProviderMessage,
+  missingModelMessage,
   resolveModelProvider,
 } from "./model-provider.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+
+// Имена, у которых есть дефолтная модель: только их и можно разрешить пустым .env.
+// У custom дефолта нет намеренно — его собственные случаи живут отдельным блоком ниже.
+const NAMES_WITH_DEFAULT = MODEL_PROVIDER_NAMES.filter(
+  (name) => MODEL_PROVIDERS[name].defaultModel !== null,
+);
+// Минимальный env, на котором провайдер вообще разрешается: у custom — его обязательная модель.
+const minimalEnv = (
+  name: (typeof MODEL_PROVIDER_NAMES)[number],
+): Record<string, string> =>
+  MODEL_PROVIDERS[name].defaultModel === null
+    ? { [MODEL_PROVIDERS[name].modelVar]: `${name}-model` }
+    : {};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
@@ -101,10 +115,72 @@ test("model provider selection preserves each supported provider identity", () =
 
 test("every supported provider keeps its own default model", () => {
   assert.deepEqual(
-    MODEL_PROVIDER_NAMES.map(
+    NAMES_WITH_DEFAULT.map(
       (name) => resolveModelProvider({ MODEL_PROVIDER: name }).model,
     ),
     ["deepseek-v4-pro", "deepseek-v4-pro", "gpt-5.5", "openai/gpt-5.1"],
+  );
+});
+
+// ─── Свой OpenAI-совместимый эндпоинт (custom) ────────────────────────────────────────
+// Единственный провайдер без дефолтной модели: какие модели у чужого адреса, знает только
+// его владелец. Подставить сюда чужое имя значило бы уйти в запрос с моделью, которой на
+// том конце нет, и получить отказ провайдера вместо отказа конфигурации.
+
+test("custom refuses a blank model instead of inventing one", () => {
+  for (const raw of [undefined, "", " ", "\t\n", " "]) {
+    assert.throws(
+      () =>
+        resolveModelProvider({
+          MODEL_PROVIDER: "custom",
+          ...(raw === undefined ? {} : { CUSTOM_MODEL: raw }),
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message, missingModelMessage("custom"));
+        return true;
+      },
+      JSON.stringify(raw),
+    );
+  }
+  assert.equal(
+    missingModelMessage("custom"),
+    "MODEL_PROVIDER=custom requires CUSTOM_MODEL — run: iva config",
+  );
+});
+
+test("custom reads its own model, vision model and reasoning answer", () => {
+  assert.deepEqual(
+    resolveModelProvider({
+      MODEL_PROVIDER: "custom",
+      CUSTOM_MODEL: "  vendor/some-model  ",
+    }),
+    {
+      name: "custom",
+      model: "vendor/some-model",
+      // Своей vision-модели нет — картинку смотрит выбранная текстовая, как у codex.
+      visionModel: "vendor/some-model",
+      // reasoning_effort незнакомому эндпоинту не шлём.
+      compatibleReasoning: false,
+    },
+  );
+  assert.equal(
+    resolveModelProvider({
+      MODEL_PROVIDER: "custom",
+      CUSTOM_MODEL: "chat",
+      CUSTOM_VISION_MODEL: "  eyes  ",
+    }).visionModel,
+    "eyes",
+  );
+  // Чужая vision-переменная в custom не заезжает, а префикс мастера Go здесь не срезается.
+  assert.equal(
+    resolveModelProvider({
+      MODEL_PROVIDER: "custom",
+      CUSTOM_MODEL: "opencode-go/chat",
+      OLLAMA_VISION_MODEL: "nope",
+      OPENCODE_VISION_MODEL: "nope",
+    }).visionModel,
+    "opencode-go/chat",
   );
 });
 
@@ -115,7 +191,7 @@ test("every supported provider keeps its own default model", () => {
 
 test("every supported provider keeps its own default vision model", () => {
   assert.deepEqual(
-    MODEL_PROVIDER_NAMES.map(
+    NAMES_WITH_DEFAULT.map(
       (name) => resolveModelProvider({ MODEL_PROVIDER: name }).visionModel,
     ),
     // codex — без своей переменной: у него это дефолтная текстовая модель подписки.
@@ -238,7 +314,7 @@ test("only OpenCode loses the wizard prefix from a configured model", () => {
 test("model provider selection rejects values that would split runtime identity", () => {
   assert.deepEqual(
     [...MODEL_PROVIDER_NAMES],
-    ["ollama", "opencode", "codex", "openrouter"],
+    ["ollama", "opencode", "codex", "openrouter", "custom"],
   );
   const garbage = [
     "ollmaa", // опечатка из issue #161
@@ -275,7 +351,7 @@ test("the refusal names the bad value, every accepted name and the fix", () => {
   const message = invalidModelProviderMessage("ollmaa");
   assert.equal(
     message,
-    'Invalid MODEL_PROVIDER "ollmaa"; expected one of: ollama, opencode, codex, openrouter — run: iva config',
+    'Invalid MODEL_PROVIDER "ollmaa"; expected one of: ollama, opencode, codex, openrouter, custom — run: iva config',
   );
   for (const name of MODEL_PROVIDER_NAMES)
     assert.match(message, new RegExp(name));
@@ -384,7 +460,7 @@ test("runtime startup rejects an invalid provider before choosing a config", () 
     assert.notEqual(result.status, 0, module);
     assert.match(
       result.stderr,
-      /Invalid MODEL_PROVIDER "ollmaa"; expected one of: ollama, opencode, codex, openrouter — run: iva config/,
+      /Invalid MODEL_PROVIDER "ollmaa"; expected one of: ollama, opencode, codex, openrouter, custom — run: iva config/,
       module,
     );
   }
@@ -408,6 +484,74 @@ test("runtime startup rejects an invalid context window", () => {
       assert.match(result.stderr, new RegExp(variable), `${provider}:${value}`);
     }
   }
+});
+
+// Адрес чужого эндпоинта — обязательная часть конфигурации, и знает о нём только
+// agent/provider.ts. Молчаливый старт с пустым baseURL означал бы запросы в никуда и бота,
+// который не отвечает и не объясняет почему.
+test("runtime startup rejects custom without a base URL and starts with one", () => {
+  const load = (env: Record<string, string>) =>
+    runInRepo(
+      `
+        await import("./scripts/lib/ts-esm-hooks.ts");
+        const provider = await import("./agent/provider.ts");
+        console.log(JSON.stringify({
+          name: provider.providerName,
+          base: provider.providerConfig.baseURL,
+          model: provider.providerConfig.textModel,
+          vision: provider.providerConfig.visionModel,
+          window: provider.providerConfig.contextWindow,
+          effort: provider.compatibleThinkingEffort ?? null,
+        }));
+      `,
+      env,
+    );
+
+  for (const base of ["", "   "]) {
+    const refused = load({
+      MODEL_PROVIDER: "custom",
+      CUSTOM_MODEL: "some-model",
+      CUSTOM_BASE_URL: base,
+    });
+    assert.notEqual(refused.status, 0, JSON.stringify(base));
+    assert.match(refused.stderr, /CUSTOM_BASE_URL/u, JSON.stringify(base));
+  }
+
+  // Модель обязательна тем же правилом — и отказ приходит из резолвера, а не из адреса.
+  const noModel = load({
+    MODEL_PROVIDER: "custom",
+    CUSTOM_BASE_URL: "https://api.example.com/v1",
+    CUSTOM_MODEL: " ",
+  });
+  assert.notEqual(noModel.status, 0);
+  assert.match(noModel.stderr, /requires CUSTOM_MODEL/u);
+
+  const ok = load({
+    MODEL_PROVIDER: "custom",
+    CUSTOM_BASE_URL: "  https://api.example.com/v1  ",
+    CUSTOM_MODEL: "some-model",
+    THINKING_EFFORT: "high",
+  });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.deepEqual(JSON.parse(ok.stdout.trim()), {
+    name: "custom",
+    base: "https://api.example.com/v1",
+    model: "some-model",
+    // Своей vision-модели нет — картинку смотрит та же текстовая.
+    vision: "some-model",
+    window: 131072,
+    // reasoning_effort незнакомому эндпоинту не уезжает даже заданным.
+    effort: null,
+  });
+
+  const badWindow = load({
+    MODEL_PROVIDER: "custom",
+    CUSTOM_BASE_URL: "https://api.example.com/v1",
+    CUSTOM_MODEL: "some-model",
+    CUSTOM_CONTEXT_WINDOW: "NaN",
+  });
+  assert.notEqual(badWindow.status, 0);
+  assert.match(badWindow.stderr, /CUSTOM_CONTEXT_WINDOW/u);
 });
 
 test("runtime validates only the selected provider context window", () => {
@@ -491,7 +635,7 @@ test("property: every value outside the list is refused, with the list in the re
       // Перечень в отказе — канонический порядок целиком, а не «одно из».
       assert.ok(
         invalidModelProviderMessage(value).includes(
-          "ollama, opencode, codex, openrouter",
+          "ollama, opencode, codex, openrouter, custom",
         ),
       );
     }),
@@ -528,7 +672,7 @@ test("property: a valid name never picks up another provider's model", () => {
 test("property: an unset model variable falls back to that provider's own default", () => {
   fc.assert(
     fc.property(
-      fc.constantFrom(...MODEL_PROVIDER_NAMES),
+      fc.constantFrom(...NAMES_WITH_DEFAULT),
       // Чужие переменные заполнены, своя — нет: дефолт обязан прийти из своей строки.
       fc.string({ minLength: 1 }),
       (name, noise) => {
@@ -582,7 +726,7 @@ test("property: a blank or padded model variable always means the provider defau
     .map((chars) => chars.join(""));
   fc.assert(
     fc.property(
-      fc.constantFrom(...MODEL_PROVIDER_NAMES),
+      fc.constantFrom(...NAMES_WITH_DEFAULT),
       blank,
       (name, padding) => {
         const selection = resolveModelProvider({
@@ -638,11 +782,12 @@ test("property: a blank or padded vision variable always means the provider defa
         const variable = MODEL_PROVIDERS[name].visionModelVar;
         const selection = resolveModelProvider({
           MODEL_PROVIDER: name,
+          ...minimalEnv(name),
           ...(variable === null ? {} : { [variable]: padding }),
         });
         assert.equal(
           selection.visionModel,
-          // codex без переменной отвечает своей текстовой моделью.
+          // codex и custom без дефолта отвечают своей текстовой моделью.
           MODEL_PROVIDERS[name].defaultVisionModel ?? selection.model,
         );
         assert.equal(selection.visionModel.length > 0, true);
@@ -659,8 +804,11 @@ test("property: a configured vision model arrives trimmed and never from a neigh
       fc.string({ minLength: 1 }).filter((s) => s === s.trim()),
       fc.constantFrom("", " ", "  ", "\t", "\n"),
       (name, model, pad) => {
-        // Все четыре vision-переменные помечены своим провайдером: чужая видна сразу.
-        const env: Record<string, string> = { MODEL_PROVIDER: name };
+        // Каждая vision-переменная помечена своим провайдером: чужая видна сразу.
+        const env: Record<string, string> = {
+          MODEL_PROVIDER: name,
+          ...minimalEnv(name),
+        };
         for (const other of MODEL_PROVIDER_NAMES) {
           const variable = MODEL_PROVIDERS[other].visionModelVar;
           if (variable !== null)
@@ -674,7 +822,10 @@ test("property: a configured vision model arrives trimmed and never from a neigh
           variable === null ? selection.model : `${name}::${model}`,
         );
         // И текстовая модель от vision-переменных не съезжает.
-        assert.equal(selection.model, MODEL_PROVIDERS[name].defaultModel);
+        assert.equal(
+          selection.model,
+          MODEL_PROVIDERS[name].defaultModel ?? `${name}-model`,
+        );
       },
     ),
     RUNS,
@@ -693,6 +844,7 @@ test("property: only OpenCode strips the wizard prefix from the vision model too
         assert.equal(
           resolveModelProvider({
             MODEL_PROVIDER: name,
+            ...minimalEnv(name),
             [variable]: tagged,
           }).visionModel,
           name === "opencode" ? model : tagged,
