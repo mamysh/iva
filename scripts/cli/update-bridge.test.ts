@@ -255,10 +255,20 @@ test("the health probe runs on scratch state, with the service's own environment
   // Everything it wrote landed in scratch state.
   assert.notEqual(probe.store, realpathSync(store));
   assert.notEqual(probe.data, realpathSync(join(iva.home, "data")));
+  const quarantines = readdirSync(join(iva.home, ".eve")).filter((name) =>
+    name.startsWith(".workflow-data.trash-"),
+  );
   assert.equal(
-    readFileSync(join(store, "open-run.json"), "utf8"),
+    quarantines.length,
+    1,
+    `expected exactly one workflow store quarantine, found ${quarantines.length}: ${quarantines.join(", ")}`,
+  );
+  const [quarantine] = quarantines;
+  assert.equal(
+    readFileSync(join(iva.home, ".eve", quarantine, "open-run.json"), "utf8"),
     '{"status":"running"}\n',
   );
+  assert.equal(existsSync(join(store, "open-run.json")), false);
   // The live state was opened once, by the service, on the port and the data
   // directory of the installation - which is what the update then waits for.
   assert.equal(service.store, realpathSync(store));
