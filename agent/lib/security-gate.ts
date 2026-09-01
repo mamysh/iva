@@ -476,8 +476,8 @@ function judgeInbound(
 }
 
 // The shapes the providers of this installation actually issue - agent/provider.ts
-// (ollama, opencode, openrouter, codex/OpenAI) and agent/lib/embeddings.ts (jina,
-// deepinfra) - plus the neighbours that share the same .env. A key body carries
+// (ollama, opencode, openrouter, codex/OpenAI, custom) and agent/lib/embeddings.ts
+// (jina, deepinfra) - plus the neighbours that share the same .env. A key body carries
 // hyphens and underscores (sk-proj-…, sk-or-v1-…, sk-ant-api03-…_…), so a class that
 // stops at the first hyphen lets a live key through whole: that is the leak these
 // patterns close. The lookbehind keeps ordinary prose out ("risk-adjusted-return-…"
@@ -488,6 +488,11 @@ function judgeInbound(
 // bearer_token, dot_env_content. A bare high-entropy blob with no name next to it is
 // deliberately not matched: no rule tells it from ordinary text, and redacting the
 // model's own answers costs more than that miss.
+// The custom provider (MODEL_PROVIDER=custom) is exactly that case and has no pattern
+// here on purpose: the endpoint is the owner's, so its key can look like anything, and
+// a rule invented for it would either miss or redact ordinary text. CUSTOM_API_KEY is
+// therefore covered only by its name - it is in the named_secret inventory next door,
+// like every other prefixless key.
 const API_KEY_PATTERNS: readonly Pattern[] = [
   ["named_secret", NAMED_SECRET_PATTERN],
   ["openai", /(?<![A-Za-z0-9])sk-(?!ant-|or-)[A-Za-z0-9_-]{20,}/g],
