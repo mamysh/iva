@@ -4,24 +4,25 @@ Iva runs on your server with your keys. Here is every external service it talks 
 
 ## Model providers
 
-| Provider                          | Price                       | Text models                                                                                                                                      | Vision                                                             |
-| --------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| **OpenCode Go** (ex-Zen)          | ~$5/mo                      | ~23 models fetched live at setup — `deepseek-v4-pro` (default), `kimi-k3`, `kimi-k2.7-code`, `glm-5.2`, `minimax-m3`, `qwen3.7-max`, `grok-4.5`… | `qwen3.7-plus`, override with `OPENCODE_VISION_MODEL`              |
-| **Ollama Cloud**                  | ~$20/mo                     | ~19 models fetched live — `deepseek-v4-pro` (default), `kimi-k3`, `glm-5.2`, `minimax-m3`, `gpt-oss:120b`…                                       | `gemma4:31b`, override with `OLLAMA_VISION_MODEL`                  |
-| **OpenRouter**                    | pay-as-you-go               | 300+ models across vendors — pick any slug (`vendor/model`)                                                                                      | `google/gemini-2.5-flash`, override with `OPENROUTER_VISION_MODEL` |
-| **OpenAI (ChatGPT subscription)** | your existing Plus/Pro/Team | the models your plan exposes (`gpt-5.x`, `-codex`), fetched live                                                                                 | same subscription (multimodal), no variable                        |
+| Provider                          | Price                        | Text models                                                                                                                                      | Vision                                                             |
+| --------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| **OpenCode Go** (ex-Zen)          | ~$5/mo                       | ~23 models fetched live at setup — `deepseek-v4-pro` (default), `kimi-k3`, `kimi-k2.7-code`, `glm-5.2`, `minimax-m3`, `qwen3.7-max`, `grok-4.5`… | `qwen3.7-plus`, override with `OPENCODE_VISION_MODEL`              |
+| **Ollama Cloud**                  | ~$20/mo                      | ~19 models fetched live — `deepseek-v4-pro` (default), `kimi-k3`, `glm-5.2`, `minimax-m3`, `gpt-oss:120b`…                                       | `gemma4:31b`, override with `OLLAMA_VISION_MODEL`                  |
+| **OpenRouter**                    | pay-as-you-go                | 300+ models across vendors — pick any slug (`vendor/model`)                                                                                      | `google/gemini-2.5-flash`, override with `OPENROUTER_VISION_MODEL` |
+| **OpenAI (ChatGPT subscription)** | your existing Plus/Pro/Team  | the models your plan exposes (`gpt-5.x`, `-codex`), fetched live                                                                                 | same subscription (multimodal), no variable                        |
+| **Custom (OpenAI-compatible)**    | whatever your endpoint costs | whatever your endpoint serves — the wizard reads `GET {base}/models` when there is one, otherwise you type the id                                | the chat model itself, or a slug in `CUSTOM_VISION_MODEL`          |
 
-The first three are plain API keys; the last rides your personal OpenAI subscription:
+The first three are plain API keys, `codex` rides your personal OpenAI subscription, and `custom` is an address you supply:
 
 - 🔌 **OpenAI-compatible** — Go, Ollama and OpenRouter share the same wire format, so switching is one line in `.env`
 - 🌍 **Any IP** — all answer from any server location, no region blocks
 - 💸 **No markup** — you pay the provider directly; Iva adds nothing on top
 
 ```bash
-MODEL_PROVIDER=opencode   # or ollama / openrouter / codex, then `iva restart`
+MODEL_PROVIDER=opencode   # or ollama / openrouter / codex / custom, then `iva restart`
 ```
 
-Those four names, spelled exactly. Anything else — `ollmaa`, `OLLAMA` — stops the agent at startup with the list of accepted names, instead of running Ollama under a name nobody configured ([troubleshooting.md](troubleshooting.md)).
+Those five names, spelled exactly. Anything else — `ollmaa`, `OLLAMA` — stops the agent at startup with the list of accepted names, instead of running Ollama under a name nobody configured ([troubleshooting.md](troubleshooting.md)).
 
 Start with Go: a quarter of the price, ~23 models to switch between (the wizard pulls the live list, so new ones like `kimi-k3` appear on their own). Keys, model pick and context-window settings live in [configuration.md](configuration.md).
 
@@ -50,9 +51,40 @@ One key for [300+ models](https://openrouter.ai/models) (Anthropic, OpenAI, Goog
 
 Set `OPENROUTER_CONTEXT_WINDOW` to the model's real window. Vision runs through `google/gemini-2.5-flash` regardless of your text model (billed to your OpenRouter credit); `OPENROUTER_VISION_MODEL` takes any other image-capable slug.
 
+### Your own OpenAI-compatible endpoint (`custom`)
+
+Anything that speaks OpenAI `chat/completions` and you can reach: your own proxy, a vendor plan sold as an OpenAI-compatible key, vLLM, LiteLLM, a llama.cpp server on the same box. Before this existed the only way in was patching the provider table, and every `iva update` threw the patch away — now it is four lines of `.env` and nothing in the tree.
+
+```bash
+MODEL_PROVIDER=custom
+CUSTOM_BASE_URL=https://api.example.com/v1   # the base IN FULL, /v1 suffix included
+CUSTOM_API_KEY=sk-whatever-your-vendor-issues   # optional — leave empty for a keyless endpoint
+CUSTOM_MODEL=vendor-model-name
+CUSTOM_CONTEXT_WINDOW=131072                 # the real window of that model
+iva restart
+```
+
+The address convention is Ollama's: `https://ollama.com/v1`, not `https://ollama.com`. Iva appends `/chat/completions` and `/models` to what you wrote, so the `/v1`-style suffix belongs in the variable. `iva config` and the `/model` wizard both take it as text and refuse anything that is not a full `http(s)` address — a scheme-less `api.example.com/v1` would otherwise fail later as a fake network error.
+
+Nothing about this endpoint is guessed. `CUSTOM_BASE_URL` and `CUSTOM_MODEL` have no defaults, and a blank one stops the agent at startup naming the variable — Iva will not borrow another provider's model or invent a host. `CUSTOM_API_KEY` is the exception: leave it empty and no `Authorization` header is sent at all, which is what a self-hosted server usually wants; `iva doctor` does not count it as missing.
+
+Model selection follows whatever the endpoint offers. The wizard asks `GET {base}/models` first and shows the live list as buttons; endpoints that don't implement it (the OpenAI-compatible contract doesn't require it) fall through to typing the model id yourself, and that id is accepted as-is. A `401`/`403` is still a refusal — a wrong key does not become a "typed id".
+
+Two deliberate omissions. `THINKING_EFFORT` is not sent to `custom`: `reasoning_effort` is not part of what OpenAI compatibility guarantees, and a blind extra field risks an HTTP 400 on every turn — pick `ollama`, `opencode` or `codex` if you want adjustable thinking. And the outbound security gate has no pattern for `CUSTOM_API_KEY`'s shape, because an arbitrary vendor's key has none; it is redacted by its name like every other prefixless key ([security.md](security.md)).
+
+A local example, keyless:
+
+```bash
+MODEL_PROVIDER=custom
+CUSTOM_BASE_URL=http://127.0.0.1:8000/v1
+CUSTOM_API_KEY=
+CUSTOM_MODEL=Qwen/Qwen3-32B-Instruct
+CUSTOM_CONTEXT_WINDOW=32768
+```
+
 ## Vision
 
-Attachments are never inlined into the model request. A photo lands in the vault, the agent gets its file path, and the provider's own vision model writes the description — OCR plus visual detail — into the daily transcript. Same key as the text model, no extra subscription. Each provider's default is a `*_VISION_MODEL` line in `.env` and a step in `iva config`. Being on a provider's model list is not the same as reading images: on Go the default is `qwen3.7-plus`, and several of the larger models there refuse a picture outright.
+Attachments are never inlined into the model request. A photo lands in the vault, the agent gets its file path, and the provider's own vision model writes the description — OCR plus visual detail — into the daily transcript. Same key as the text model, no extra subscription. Each provider's default is a `*_VISION_MODEL` line in `.env` and a step in `iva config`; `custom` has no default there, so an endpoint whose chat model reads images needs nothing, and one whose model doesn't needs a `CUSTOM_VISION_MODEL` and a `CUSTOM_API_KEY` to call it with. Being on a provider's model list is not the same as reading images: on Go the default is `qwen3.7-plus`, and several of the larger models there refuse a picture outright.
 
 ## VPS sizing
 

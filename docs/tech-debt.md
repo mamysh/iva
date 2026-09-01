@@ -82,7 +82,7 @@ builds the tree. Three shapes, in descending order of preference:
   The newest pair is the model provider: `agent/lib/model-provider.ts` holds the names the
   runtime accepts, each provider's model variable, its default model and the rule that turns
   a raw `.env` value into the model actually requested; `scripts/lib/model-catalog.ts` holds
-  the same four names in `CATALOG` — with the labels, endpoints and model lists only the
+  the same names in `CATALOG` — with the labels, endpoints and model lists only the
   wizard needs — plus `catalogModel`, the same rule again. The wizard, `iva doctor`, `iva
 update` and the `/menu` screens load without the authored tree, so they cannot import the
   first half; the runtime must not carry the catalog's live-fetch code. `scripts/lib/model-catalog.test.ts`
