@@ -126,6 +126,21 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/main/install.sh | b
 
 Do not reset or clean the checkout. If the histories cannot be combined safely, the existing version and user files remain in place and the full reason is recorded under `data/logs/`.
 
+### Update says "local commits conflict with the update"
+
+Cause: the checkout in `~/iva` carries commits of your own (hand edits, agent-made changes) that no longer merge with upstream. `/update` refuses rather than guess.
+
+Return the code to upstream while keeping your memory and settings. The vault, `.env` and `data/` are not touched; your commits stay on a backup branch:
+
+```bash
+cd ~/iva
+git branch backup-my-changes
+git reset --hard origin/main
+iva update
+```
+
+Afterwards ask Iva to bring back what you still need from `backup-my-changes`, one change at a time. If turns still hang after that, `iva reset` clears the stuck session state (memory stays intact). There is no menu button for this on purpose: the button would live inside the process it resets, and a conflict needs a person to decide what to keep.
+
 ### Update says my version is too old
 
 Symptoms: `iva update` — in the terminal or in the chat — answers `Your Iva (0.3.x) is too old to update itself` and stops. Cause: every release names the oldest updater able to install it (`update-compat.json`, field `minUpdater`), and the installed CLI is older than that. It stops before touching anything: the installation keeps running the version it ran before, and no unit, version or data was written.
