@@ -17,6 +17,7 @@ import type {
   TelegramMessage,
 } from "eve/channels/telegram";
 import type { RouteHandlerArgs, Session } from "eve/channels";
+import type { MessageStreamEvent } from "eve/client";
 import {
   createQueueItem,
   enqueueItem,
@@ -114,6 +115,7 @@ type DeliveryOptions = {
   completedUpdatesFile?: string;
   observeResponse?: (response: Response) => void;
   handler?: TelegramRouteHandler;
+  sessionEvents?: readonly MessageStreamEvent[];
 };
 type DrainReadyQueueHeads = (
   options: Record<string, unknown>,
@@ -138,6 +140,7 @@ const fakeSession = (
     sessionId: id,
     status: "accepted",
   }),
+  events: readonly MessageStreamEvent[] = [],
 ): Session => ({
   id,
   respond,
@@ -153,12 +156,14 @@ const fakeSession = (
   compact: () => {
     throw new Error("not used");
   },
-  getEventStream: () => {
-    throw new Error("not used");
-  },
-  getStreamTailIndex: () => {
-    throw new Error("not used");
-  },
+  getEventStream: async ({ startIndex = 0 } = {}) =>
+    new ReadableStream<MessageStreamEvent>({
+      start(controller) {
+        for (const event of events.slice(startIndex)) controller.enqueue(event);
+        controller.close();
+      },
+    }),
+  getStreamTailIndex: async () => events.length - 1,
   reset: () => {
     throw new Error("not used");
   },
@@ -204,6 +209,49 @@ const hitlCallbackUpdate = (updateId: number): TestCallbackUpdate => ({
   },
 });
 
+const inputRequestedEvent = (requestId: string): MessageStreamEvent => ({
+  type: "input.requested",
+  data: {
+    requests: [
+      {
+        action: {
+          callId: `call-${requestId}`,
+          input: {},
+          kind: "tool-call",
+          toolName: "ask_question",
+        },
+        allowFreeform: true,
+        display: "text",
+        kind: "question",
+        prompt: "Continue?",
+        requestId,
+      },
+    ],
+    sequence: 0,
+    stepIndex: 0,
+    turnId: "turn-pending",
+  },
+  meta: { at: "2026-09-02T00:00:00.000Z", id: `event-${requestId}` },
+});
+
+const inputResolvedEvent = (requestId: string): MessageStreamEvent => ({
+  type: "input.resolved",
+  data: {
+    resolutions: [
+      {
+        kind: "question",
+        outcome: "answered",
+        requestId,
+        response: { requestId, text: "done" },
+      },
+    ],
+    sequence: 0,
+    stepIndex: 0,
+    turnId: "turn-pending",
+  },
+  meta: { at: "2026-09-02T00:00:01.000Z", id: `resolved-${requestId}` },
+});
+
 function deferred(): {
   promise: Promise<unknown>;
   resolve: (value: unknown) => void;
@@ -235,6 +283,7 @@ function productionTelegramDelivery(
     webhookSecretHeader = WEBHOOK_SECRET,
     observeResponse,
     handler,
+    sessionEvents = [],
     completedUpdatesFile = join(
       mkdtempSync(join(tmpdir(), "iva-completed-updates-test-")),
       "completed-updates.json",
@@ -290,17 +339,21 @@ function productionTelegramDelivery(
         },
       }),
       resolveSession: async () =>
-        fakeSession(sessionId, async (inputResponses, options) => {
-          const message =
-            "message" in update ? (update.message.text ?? "") : "";
-          const result = await call({ inputResponses, message }, options);
-          return typeof result === "object" &&
-            result !== null &&
-            "status" in result &&
-            result.status === "session_not_active"
-            ? { status: "session_not_active" }
-            : { sessionId, status: "accepted" };
-        }),
+        fakeSession(
+          sessionId,
+          async (inputResponses, options) => {
+            const message =
+              "message" in update ? (update.message.text ?? "") : "";
+            const result = await call({ inputResponses, message }, options);
+            return typeof result === "object" &&
+              result !== null &&
+              "status" in result &&
+              result.status === "session_not_active"
+              ? { status: "session_not_active" }
+              : { sessionId, status: "accepted" };
+          },
+          sessionEvents,
+        ),
       to: () => {
         throw new Error("not used");
       },
@@ -828,6 +881,85 @@ const inputResponsesOf = (input: unknown): unknown[] =>
     ? ((input as { inputResponses?: unknown[] }).inputResponses ?? [])
     : [];
 
+test("a reply without pending input starts a turn with the quote context", async () => {
+  const replyContext = JSON.stringify({
+    type: "telegram_reply",
+    text: "старый ответ бота",
+  });
+  const attempts: Array<{ input: unknown; options: unknown }> = [];
+  const delivery = productionTelegramDelivery(
+    async (_update, input, options) => {
+      attempts.push({ input, options });
+      return { id: "reply-turn" };
+    },
+    {
+      onMessage: () => ({ auth: null, context: [replyContext] }),
+      sessionEvents: [
+        inputRequestedEvent("already-resolved"),
+        inputResolvedEvent("already-resolved"),
+      ],
+    },
+  );
+
+  assert.equal(await delivery(replyToBotUpdate(1100, "и что дальше?")), true);
+  assert.equal(attempts.length, 1);
+  assert.equal(inputResponsesOf(attempts[0].input).length, 0);
+  assert.match(
+    JSON.stringify((attempts[0].options as { context?: unknown }).context),
+    /старый ответ бота/u,
+  );
+});
+
+test("a reply with pending input still responds without starting a turn", async () => {
+  const attempts: unknown[] = [];
+  const delivery = productionTelegramDelivery(
+    async (_update, input) => {
+      attempts.push(input);
+      return { status: "accepted" };
+    },
+    { sessionEvents: [inputRequestedEvent("pending-reply")] },
+  );
+
+  assert.equal(await delivery(replyToBotUpdate(1101, "да")), true);
+  assert.equal(attempts.length, 1);
+  assert.equal(inputResponsesOf(attempts[0]).length, 1);
+});
+
+test("a thrown reply response reroutes once with the prepared context", async () => {
+  const replyContext = JSON.stringify({
+    type: "telegram_reply",
+    text: "старый ответ бота",
+  });
+  const attempts: Array<{ input: unknown; options: unknown }> = [];
+  const priorError = console.error;
+  console.error = () => {};
+  try {
+    const delivery = productionTelegramDelivery(
+      async (_update, input, options) => {
+        attempts.push({ input, options });
+        if (inputResponsesOf(input).length > 0)
+          throw new Error("reply response failed");
+        return { id: "rerouted-turn" };
+      },
+      {
+        onMessage: () => ({ auth: null, context: [replyContext] }),
+        sessionEvents: [inputRequestedEvent("pending-throw")],
+      },
+    );
+    assert.equal(await delivery(replyToBotUpdate(1102, "и что дальше?")), true);
+  } finally {
+    console.error = priorError;
+  }
+
+  assert.equal(attempts.length, 2);
+  assert.equal(inputResponsesOf(attempts[0].input).length, 1);
+  assert.equal(inputResponsesOf(attempts[1].input).length, 0);
+  assert.match(
+    JSON.stringify((attempts[1].options as { context?: unknown }).context),
+    /старый ответ бота/u,
+  );
+});
+
 test("a reply to a closed session is delivered as a new turn exactly once", async () => {
   const attempts: unknown[] = [];
   const priorError = console.error;
@@ -835,12 +967,15 @@ test("a reply to a closed session is delivered as a new turn exactly once", asyn
   console.error = (...parts: unknown[]) =>
     logs.push(parts.map(String).join(" "));
   try {
-    const delivery = productionTelegramDelivery(async (_update, input) => {
-      attempts.push(input);
-      if (inputResponsesOf(input).length > 0)
-        return { status: "session_not_active" };
-      return { id: "new-turn" };
-    });
+    const delivery = productionTelegramDelivery(
+      async (_update, input) => {
+        attempts.push(input);
+        if (inputResponsesOf(input).length > 0)
+          return { status: "session_not_active" };
+        return { id: "new-turn" };
+      },
+      { sessionEvents: [inputRequestedEvent("pending-closed")] },
+    );
     assert.equal(await delivery(replyToBotUpdate(1101, "и что дальше?")), true);
   } finally {
     console.error = priorError;
@@ -873,6 +1008,7 @@ test("a media-only reply can reroute with its prepared context", async () => {
       return { id: "new-media-turn" };
     },
     {
+      sessionEvents: [inputRequestedEvent("pending-media")],
       handler: async (_request, args) => {
         args.waitUntil(
           args.from("telegram:1::").respond([{ requestId: "media-reply" }], {
@@ -902,13 +1038,16 @@ test("a new turn refused by an unavailable eve is retained, then delivered on th
   const priorError = console.error;
   console.error = () => {};
   try {
-    const delivery = productionTelegramDelivery(async (_update, input) => {
-      attempts.push(input);
-      if (inputResponsesOf(input).length > 0)
-        return { status: "session_not_active" };
-      if (eveIsDown) throw new Error("eve is restarting");
-      return { id: "new-turn" };
-    });
+    const delivery = productionTelegramDelivery(
+      async (_update, input) => {
+        attempts.push(input);
+        if (inputResponsesOf(input).length > 0)
+          return { status: "session_not_active" };
+        if (eveIsDown) throw new Error("eve is restarting");
+        return { id: "new-turn" };
+      },
+      { sessionEvents: [inputRequestedEvent("pending-unavailable")] },
+    );
     const update = replyToBotUpdate(1102, "и что дальше?");
     // Сессия не найдена, но новый ход упал по недоступности eve — сообщение владельца
     // не теряется (ADR-0002): транзиентный отказ, мост сохраняет апдейт.
@@ -983,10 +1122,13 @@ test("an ordinary send failure stays transient and never claims the closed-sessi
   const priorError = console.error;
   console.error = () => {};
   try {
-    const delivery = productionTelegramDelivery(async () => {
-      attempts++;
-      throw new Error("eve is restarting");
-    });
+    const delivery = productionTelegramDelivery(
+      async () => {
+        attempts++;
+        throw new Error("eve is restarting");
+      },
+      { sessionEvents: [] },
+    );
     assert.equal(
       await delivery(replyToBotUpdate(1103, "и что дальше?")),
       false,

@@ -55,6 +55,8 @@ After upgrading a legacy group with no recorded Eve token, send `/new` as a repl
 
 The notice `The conversation grew large, so I started a fresh one. Memory is intact.` means replay exceeded 30 seconds. Russian installations show `Диалог разросся, начала новый. Память на месте.` Iva finishes the current turn before resetting only that chat. Vault memory remains intact. Send the next message normally.
 
+Replying to an Iva message starts a normal turn when no human-input request is pending; when one is pending, the reply answers it.
+
 ### Bot silent or stuck after an update
 
 An update now resets every open session before services restart. Each chat starts with fresh context; Vault and long-term History stay intact. Telegram messages queued while services were stopped are also preserved.

@@ -8,7 +8,12 @@ import type {
   TelegramMessage,
 } from "eve/channels/telegram";
 import { parseTelegramUpdate } from "eve/channels/telegram";
-import type { ChannelSource, RouteHandlerArgs, TurnPolicy } from "eve/channels";
+import type {
+  ChannelSource,
+  RouteHandlerArgs,
+  Session,
+  TurnPolicy,
+} from "eve/channels";
 import {
   acquireLock,
   loadJsonStrict,
@@ -198,6 +203,32 @@ async function metadataFromRequest(request: Request): Promise<RequestMetadata> {
   }
 }
 
+async function hasPendingInputRequests(session: Session): Promise<boolean> {
+  const tailIndex = await session.getStreamTailIndex();
+  if (tailIndex < 0) return false;
+
+  const pending = new Set<string>();
+  const reader = (await session.getEventStream({ startIndex: 0 })).getReader();
+  try {
+    for (let index = 0; index <= tailIndex; index++) {
+      const event = await reader.read();
+      if (event.done) {
+        throw new Error("Telegram session event stream ended before its tail");
+      }
+      if (event.value.type === "input.requested") {
+        for (const request of event.value.data.requests)
+          pending.add(request.requestId);
+      } else if (event.value.type === "input.resolved") {
+        for (const resolution of event.value.data.resolutions)
+          pending.delete(resolution.requestId);
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return pending.size > 0;
+}
+
 function validCompletedLedger(value: unknown): CompletedLedger {
   if (
     !isRecord(value) ||
@@ -330,15 +361,39 @@ export async function handleAcceptedTelegramWebhook<TState>(
       ) => {
         const active = await args.resolveSession(address);
         if (active !== undefined) {
-          const result = await active.respond(inputResponses, {
-            auth: options.auth,
-            ...(options.context === undefined
-              ? {}
-              : { context: options.context }),
-            ...(options.outputSchema === undefined
-              ? {}
-              : { outputSchema: options.outputSchema }),
-          });
+          if (reroute !== null && !(await hasPendingInputRequests(active))) {
+            console.error(
+              `[telegram] reply has no pending input; delivering as a new message (update ${updateLabel})`,
+            );
+            return send(reroute.message, {
+              ...options,
+              state: reroute.state as TState,
+            } as Parameters<ChannelSource<TState>["send"]>[1]);
+          }
+
+          let result;
+          try {
+            result = await active.respond(inputResponses, {
+              auth: options.auth,
+              ...(options.context === undefined
+                ? {}
+                : { context: options.context }),
+              ...(options.outputSchema === undefined
+                ? {}
+                : { outputSchema: options.outputSchema }),
+            });
+          } catch (error) {
+            if (reroute === null) throw error;
+            const reason =
+              error instanceof Error ? error.message : String(error);
+            console.error(
+              `[telegram] reply response failed; delivering as a new message (update ${updateLabel}): ${reason}`,
+            );
+            return send(reroute.message, {
+              ...options,
+              state: reroute.state as TState,
+            } as Parameters<ChannelSource<TState>["send"]>[1]);
+          }
           if (result.status === "accepted") {
             accepted = true;
             return args.attachSession(result.sessionId);
