@@ -233,7 +233,7 @@ night pipeline, a second copy inside TypeScript is not.
 On a text message the pipeline can add context to the turn and nothing else: eve's
 `TelegramInboundResult` is `{ auth, context } | null`, so `message.text` is delivered to the
 model by the channel regardless of what `sanitizeInbound` found. Checked against the pinned
-eve 0.47.3. The only lever beside it is
+eve 0.49.0. The only lever beside it is
 `null`, which drops the entire update: too blunt to spend on a false positive, and from 0.31.0
 it no longer applies to an authorized message at all. So for Telegram **text** the gate is an
 annotation: the cleaned copy, the injection
@@ -292,3 +292,5 @@ system: drain `stream({ follow: false })` before every send into the parked
 session, and refuse a result whose `message.received` is not this Turn's prompt
 (per-execution nonce, `sentNotBefore` at send time). Remove both when a released
 eve correlates `result()` with the sent turn.
+
+eve 0.49.0 wants peer `ai ^7.0.82`, but Iva overrides `ai` to 7.0.39; eve also bundles Workflow SDK 5.0.0-beta and Zod 4.5, and its bundled `@ai-sdk/code-mode` imports `experimental_toolCaller`, which 7.0.39 lacks, so that module does not link. This is harmless while Iva enables no Workflow/code-mode tool, but any such tool would crash server start; revisit this dependency separately by upgrading `ai` to at least 7.0.82.

@@ -167,7 +167,7 @@ Default model is deepseek-v4-pro, 131k context. On Go it runs about $14–15/mo 
 
 #### v0.4.0
 
-- 🧭 **Iva now runs on eve 0.47.3**: messages address the active session by `sessionId`, so Stop, `/stop`, and `/new` no longer depend on the old continuation mechanism. The update resets conversation contexts; your vault memory stays intact.
+- 🧭 **Iva now uses eve's session API**: messages address the active session by `sessionId`, so Stop, `/stop`, and `/new` no longer depend on the old continuation mechanism. The update resets conversation contexts; your vault memory stays intact.
 - 🚦 **New messages queue by default**: `/menu` can select “Queue”, which waits for the current reply, or “Interrupt”, which sends the message into the active reply. The choice survives a restart.
 - 🧠 **Nightly Rollup and plugins run on the new runtime**: manual Rollup uses the active session, code plugins build with the same eve version, and `web_fetch` reports the actual HTTP status instead of inferring it from error text.
 - 🛟 **Update rollback protects local changes more carefully**: a recovery ref is removed only after a verified result, never deletes foreign state, and stays available after an ambiguous verification failure.
@@ -195,7 +195,7 @@ Full history — [CHANGELOG.md](CHANGELOG.md).
 
 ## Built on
 
-[eve](https://eve.dev/docs/introduction) 0.47.3, Vercel's agent framework, runs the agent; Node 24's built-in SQLite runs the search index — no separate database. Iva grew out of [agent-second-brain](https://github.com/smixs/agent-second-brain) and [autograph](https://github.com/smixs/autograph) — that story is in [docs/memory.md](docs/memory.md).
+[eve](https://eve.dev/docs/introduction) 0.49.0, Vercel's agent framework, runs the agent; Node 24's built-in SQLite runs the search index — no separate database. Iva grew out of [agent-second-brain](https://github.com/smixs/agent-second-brain) and [autograph](https://github.com/smixs/autograph) — that story is in [docs/memory.md](docs/memory.md).
 
 ## Thanks
 

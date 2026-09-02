@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registration promises. */
-// eve 0.47.3: result() читает поток с курсора экземпляра и останавливается на
+// В eve 0.49.0 result() всё ещё читает поток с курсора экземпляра и останавливается на
 // первой границе хода, не сверяя её с только что отправленным сообщением (vercel/eve#2461).
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -67,7 +67,7 @@ function isTurnBoundary(event: StreamEvent): boolean {
   );
 }
 
-// Модель result() eve 0.47.3: collect Turn events с курсора до первой границы.
+// Модель result() eve 0.49.0: collect Turn events с курсора до первой границы.
 function resultFromCursor(
   stream: readonly StreamEvent[],
   streamIndex: number,
