@@ -33,6 +33,12 @@ type StatusPatch = Record<string, unknown>;
 // Поле нужно только для отката на 0.3.x. Удалить после стабилизации 0.4.x.
 export const RETIRED_SESSION_ROUTING_FIELD = "continuationToken";
 
+export type TelegramSessionRetirement = {
+  replayMs: number;
+  sessionId: string;
+  turnId: string;
+};
+
 const errorCode = (error: unknown): string | undefined =>
   error !== null && typeof error === "object" && "code" in error
     ? typeof error.code === "string"
@@ -255,4 +261,63 @@ export function setChatStatusIf(
   patch: StatusPatch,
 ): StatusRecord | null {
   return updateChatStatus(chatKey, patch, expected);
+}
+
+export function parseTelegramSessionRetirement(
+  value: unknown,
+): TelegramSessionRetirement | null {
+  if (!isRecord(value)) return null;
+  const { replayMs, sessionId, turnId } = value;
+  if (
+    typeof replayMs !== "number" ||
+    !Number.isFinite(replayMs) ||
+    replayMs < 0 ||
+    typeof sessionId !== "string" ||
+    sessionId.length === 0 ||
+    typeof turnId !== "string" ||
+    turnId.length === 0
+  ) {
+    return null;
+  }
+  return { replayMs, sessionId, turnId };
+}
+
+// Хук знает sessionId, а Bridge адресует reset по chatKey. Единственный мост между
+// ними - уже существующий run-status.d, где running-сессия привязана к chatKey.
+export function markTelegramSessionForRetirement(
+  sessionId: string,
+  turnId: string,
+  replayMs: number,
+  {
+    listStatusesImpl = listChatStatuses,
+    setStatusIfImpl = setChatStatusIf,
+  }: {
+    listStatusesImpl?: typeof listChatStatuses;
+    setStatusIfImpl?: typeof setChatStatusIf;
+  } = {},
+): boolean {
+  for (const { chatKey, status } of listStatusesImpl()) {
+    if (
+      status.status !== "running" ||
+      status.sessionId !== sessionId ||
+      status.turnId !== turnId ||
+      status.retireAfterTurn !== undefined
+    ) {
+      continue;
+    }
+    const updated = setStatusIfImpl(
+      chatKey,
+      {
+        status: "running",
+        generation: status.generation,
+        updatedAt: status.updatedAt,
+        sessionId,
+        turnId,
+        retireAfterTurn: undefined,
+      },
+      { retireAfterTurn: { replayMs, sessionId, turnId } },
+    );
+    if (updated) return true;
+  }
+  return false;
 }

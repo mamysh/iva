@@ -1,4 +1,5 @@
 import { defineHook, type HookContext } from "eve/hooks";
+import { markTelegramSessionForRetirement } from "../lib/run-status.js";
 import { appendTrace } from "../lib/trace.js";
 import { parentTurnId, subagentTurnId } from "../lib/usage.js";
 
@@ -49,6 +50,19 @@ const CONTENT_FIELDS = [
 ] as const;
 
 type StreamEvent = { readonly type: string; readonly data?: unknown };
+type ReplayContext = {
+  readonly session?: { readonly id?: unknown };
+  readonly channel?: { readonly kind?: unknown };
+};
+type MarkRetirement = (
+  sessionId: string,
+  turnId: string,
+  replayMs: number,
+) => boolean;
+
+// 30s leaves headroom before the durable workflow replay ceiling of 240s.
+export const TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS = 30_000;
+const MAX_TRACKED_REPLAY_TURNS = 128;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -65,6 +79,78 @@ function isScalar(value: unknown): boolean {
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
+
+export function createTelegramReplayRetirementObserver({
+  now = Date.now,
+  markImpl = markTelegramSessionForRetirement,
+}: {
+  now?: () => number;
+  markImpl?: MarkRetirement;
+} = {}) {
+  const turns = new Map<
+    string,
+    { startedAt: number; settled: boolean; marked: boolean }
+  >();
+  const remember = (
+    key: string,
+    value: { startedAt: number; settled: boolean; marked: boolean },
+  ) => {
+    turns.set(key, value);
+    while (turns.size > MAX_TRACKED_REPLAY_TURNS) {
+      const oldest = turns.keys().next().value;
+      if (oldest === undefined) break;
+      turns.delete(oldest);
+    }
+  };
+
+  return (event: StreamEvent, ctx: ReplayContext): void => {
+    if (ctx.channel?.kind !== "telegram") return;
+    const sessionId = text(ctx.session?.id);
+    const data = isRecord(event.data) ? event.data : {};
+    const turnId = text(data.turnId);
+    if (sessionId.length === 0 || turnId.length === 0) return;
+    const key = `${sessionId}\u0000${turnId}`;
+    const current = turns.get(key);
+
+    if (event.type === "turn.started") {
+      if (current) return;
+      remember(key, { startedAt: now(), settled: false, marked: false });
+      return;
+    }
+
+    if (
+      event.type === "turn.completed" ||
+      event.type === "turn.cancelled" ||
+      event.type === "turn.failed"
+    ) {
+      if (current) current.settled = true;
+      else remember(key, { startedAt: now(), settled: true, marked: false });
+      return;
+    }
+
+    if (
+      event.type !== "message.received" ||
+      !current ||
+      current.settled ||
+      current.marked
+    ) {
+      return;
+    }
+
+    // replayMs = hook time at message.received - hook time at first turn.started.
+    // The cut points span durable replay until the current turn is ready.
+    const replayMs = now() - current.startedAt;
+    if (
+      Number.isFinite(replayMs) &&
+      replayMs > TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS &&
+      markImpl(sessionId, turnId, replayMs)
+    ) {
+      current.marked = true;
+    }
+  };
+}
+
+const observeTelegramReplay = createTelegramReplayRetirementObserver();
 
 // Одна запрошенная моделью операция: что это и как называется. Аргументы остаются в
 // содержимом целиком — в data едет только имя.
@@ -157,6 +243,11 @@ export default defineHook({
     // `*` ловит каждое принятое событие рантайма — отдельная подписка на конкретный тип
     // здесь запрещена: она пришла бы вместе с подстановочной и удвоила строку.
     "*": (event, ctx) => {
+      try {
+        observeTelegramReplay(event, ctx);
+      } catch (error) {
+        console.error("[telegram] replay retirement was not marked:", error);
+      }
       // Один try на весь обработчик: журнал не имеет права уронить ход НИ НА ЧЁМ —
       // ни на чужом геттере в payload, ни на обрезанном subagent.event, ни на
       // контексте без канала. Писатель внутри тоже глотает свои ошибки, но событие

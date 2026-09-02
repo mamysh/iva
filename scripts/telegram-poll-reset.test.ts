@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import fc from "fast-check";
 
 type ChatStatus = {
   status: string;
@@ -89,6 +90,7 @@ type PollModule = {
   reconcileScopedResetIntents: (
     options?: ReconcileResetOptions,
   ) => Promise<number>;
+  retireSettledSessions: (options?: Record<string, unknown>) => Promise<number>;
   writeQueueAtomic: (
     queue: QueueDocument | Record<string, string[]>,
     options?: WriteQueueOptions,
@@ -99,6 +101,7 @@ const dataDir = mkdtempSync(join(tmpdir(), "iva-scoped-reset-"));
 process.env.ASSISTANT_DATA_DIR = dataDir;
 process.env.TELEGRAM_BOT_TOKEN = "test-token";
 process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN = "test-secret";
+await import("./lib/ts-esm-hooks.ts");
 
 const [pollModule, runStatusModule] = (await Promise.all([
   import(`./telegram-poll.mjs?reset-test=${Date.now()}`),
@@ -113,6 +116,7 @@ const {
   performScopedReset,
   persistPrivateResetIntent,
   reconcileScopedResetIntents,
+  retireSettledSessions,
   writeQueueAtomic,
 } = pollModule as PollModule;
 const status = runStatusModule as RunStatusModule;
@@ -516,4 +520,214 @@ test("intent reconciliation logs its reset outcome too", async () => {
   });
 
   assert.deepEqual(lines, ["reset for chat 429888768: -> reset (address)"]);
+});
+
+test("slow replay retires once and only after the turn settles", async () => {
+  const key = "retire-once:";
+  const marker = {
+    replayMs: 30_001,
+    sessionId: "session-retire",
+    turnId: "turn-retire",
+  };
+  let current: ChatStatus = {
+    status: "running",
+    generation: 1,
+    updatedAt: 1,
+    sessionId: marker.sessionId,
+    turnId: marker.turnId,
+    retireAfterTurn: marker,
+  };
+  const resets: string[] = [];
+  const resetOptions: Array<{ clearQueue?: boolean } | undefined> = [];
+  const notices: string[] = [];
+  const traces: Record<string, unknown>[] = [];
+  let failNextReset = true;
+  const options = {
+    listStatusesImpl: () => [{ chatKey: key, status: current }],
+    statusImpl: () => current,
+    resetImpl: async (
+      _chatKey: string,
+      target: { sessionId: string },
+      resetOptionsArg?: { clearQueue?: boolean },
+    ) => {
+      resetOptions.push(resetOptionsArg);
+      if (failNextReset) {
+        failNextReset = false;
+        throw new Error("eve unavailable");
+      }
+      resets.push(target.sessionId);
+      current = {
+        ...current,
+        status: "idle",
+        generation: Number(current.generation) + 1,
+        updatedAt: Number(current.updatedAt) + 1,
+        sessionId: undefined,
+        turnId: undefined,
+      };
+    },
+    setStatusIfImpl: (
+      _chatKey: string,
+      _expected: Record<string, unknown>,
+      patch: Record<string, unknown>,
+    ) => {
+      current = { ...current, ...patch };
+      if (patch.retireAfterTurn === null) delete current.retireAfterTurn;
+      return current;
+    },
+    sendImpl: async (_chatKey: string, text: string) => notices.push(text),
+    traceImpl: (event: Record<string, unknown>) => traces.push(event),
+    trImpl: (en: string) => en,
+    logImpl: () => {},
+  };
+
+  assert.equal(await retireSettledSessions(options), 0);
+  assert.deepEqual(resets, []);
+
+  current = {
+    ...current,
+    status: "idle",
+    generation: 2,
+    updatedAt: 2,
+    sessionId: undefined,
+    turnId: undefined,
+  };
+  assert.equal(await retireSettledSessions(options), 0);
+  assert.deepEqual(current.retireAfterTurn, marker);
+  assert.equal(await retireSettledSessions(options), 1);
+  assert.equal(await retireSettledSessions(options), 0);
+
+  assert.deepEqual(resets, [marker.sessionId]);
+  assert.deepEqual(resetOptions, [
+    { clearQueue: false },
+    { clearQueue: false },
+  ]);
+  assert.deepEqual(notices, [
+    "The conversation grew large, so I started a fresh one. Memory is intact.",
+  ]);
+  assert.deepEqual(traces, [
+    {
+      source: "telegram",
+      kind: "turn",
+      name: "retired",
+      turn: marker.turnId,
+      session: marker.sessionId,
+      data: { replayMs: marker.replayMs, sessionId: marker.sessionId },
+    },
+  ]);
+});
+
+const RETIRE_ORDER_PBT_SEED = 1_903_627;
+
+test(`retirement never runs mid-turn or twice (fast-check seed ${RETIRE_ORDER_PBT_SEED})`, async () => {
+  const traceHook = await import("../agent/hooks/trace.ts");
+  const eventType = fc.constantFrom(
+    "turn.started" as const,
+    "message.received" as const,
+    "turn.completed" as const,
+    "turn.cancelled" as const,
+    "turn.failed" as const,
+  );
+
+  await fc.assert(
+    fc.asyncProperty(
+      fc.integer({ min: 0, max: 10_000_000 }),
+      fc.array(eventType, { minLength: 1, maxLength: 20 }),
+      async (replayMs, events) => {
+        let now = 0;
+        let current: ChatStatus = {
+          status: "idle",
+          generation: 1,
+          updatedAt: 1,
+        };
+        let resetCount = 0;
+        const markerFor = (
+          sessionId: string,
+          turnId: string,
+          replayMs: number,
+        ) => {
+          if (current.retireAfterTurn !== undefined) return false;
+          current = {
+            ...current,
+            retireAfterTurn: { replayMs, sessionId, turnId },
+          };
+          return true;
+        };
+        const observe = traceHook.createTelegramReplayRetirementObserver({
+          now: () => now,
+          markImpl: markerFor,
+        });
+        const propertyContext = {
+          session: {
+            id: "property-session",
+            turn: { id: "property-turn", sequence: 1 },
+          },
+          channel: { kind: "telegram" },
+        };
+        const options = {
+          listStatusesImpl: () => [
+            { chatKey: "property-chat:", status: current },
+          ],
+          statusImpl: () => current,
+          resetImpl: async () => {
+            assert.equal(current.status, "idle");
+            resetCount += 1;
+          },
+          setStatusIfImpl: (
+            _chatKey: string,
+            _expected: Record<string, unknown>,
+            patch: Record<string, unknown>,
+          ) => {
+            current = { ...current, ...patch };
+            if (patch.retireAfterTurn === null) delete current.retireAfterTurn;
+            return current;
+          },
+          sendImpl: async () => {},
+          traceImpl: () => {},
+          trImpl: (en: string) => en,
+        };
+
+        for (const event of events) {
+          now =
+            event === "turn.started"
+              ? 0
+              : event === "message.received"
+                ? replayMs
+                : replayMs + 1;
+          if (event === "turn.started") {
+            current = {
+              ...current,
+              status: "running",
+              sessionId: "property-session",
+              turnId: "property-turn",
+            };
+          }
+          const data = {
+            sequence: 1,
+            turnId: "property-turn",
+            ...(event === "message.received" ? { message: "property" } : {}),
+            ...(event === "turn.failed"
+              ? { code: "FAILED", details: {}, message: "failed" }
+              : {}),
+          };
+          observe({ type: event, data }, propertyContext);
+          if (
+            event === "turn.completed" ||
+            event === "turn.cancelled" ||
+            event === "turn.failed"
+          ) {
+            current = {
+              ...current,
+              status: "idle",
+              sessionId: undefined,
+              turnId: undefined,
+            };
+          }
+          await retireSettledSessions(options);
+        }
+
+        assert.ok(resetCount <= 1);
+      },
+    ),
+    { numRuns: 250, seed: RETIRE_ORDER_PBT_SEED },
+  );
 });

@@ -22,11 +22,13 @@ import {
 import {
   getChatStatus,
   listChatStatuses,
+  parseTelegramSessionRetirement,
   RUN_STALE_MS,
   setChatStatus,
   setChatStatusIf,
 } from "#lib/run-status.ts";
 import { tr } from "#lib/i18n.ts";
+import { appendTrace, type TraceInput } from "#lib/trace.ts";
 import { DATA_DIR, SECRET, RESET_ROUTE, log } from "./config.ts";
 import { tg } from "./transport.ts";
 
@@ -56,6 +58,11 @@ type SetStatusIfImpl = (
   expected: Record<string, unknown>,
   patch: Record<string, unknown>,
 ) => unknown;
+type RetirementResetImpl = (
+  chatKey: string,
+  target: TelegramResetTarget,
+  options?: { clearQueue?: boolean },
+) => Promise<unknown>;
 export type QueuePhase =
   | { state: "delivering"; baselineGeneration: number }
   | {
@@ -430,6 +437,142 @@ async function clearFailedDirectIngress(
     }
   }
   return true;
+}
+
+function sameRetirement(
+  left: ReturnType<typeof parseTelegramSessionRetirement>,
+  right: ReturnType<typeof parseTelegramSessionRetirement>,
+): boolean {
+  return Boolean(
+    left &&
+    right &&
+    left.replayMs === right.replayMs &&
+    left.sessionId === right.sessionId &&
+    left.turnId === right.turnId,
+  );
+}
+
+export async function retireSettledSessions({
+  listStatusesImpl = listChatStatuses,
+  statusImpl = getChatStatus,
+  setStatusIfImpl = setChatStatusIf,
+  resetImpl = performScopedReset,
+  sendImpl = sendStaleRunNotice,
+  traceImpl = appendTrace,
+  trImpl = tr,
+  logImpl = log,
+}: {
+  listStatusesImpl?: () => StatusRecord[] | Promise<StatusRecord[]>;
+  statusImpl?: StatusImpl;
+  setStatusIfImpl?: SetStatusIfImpl;
+  resetImpl?: RetirementResetImpl;
+  sendImpl?: (chatKey: string, text: string) => Promise<unknown>;
+  traceImpl?: (event: TraceInput) => void;
+  trImpl?: (en: string, ru: string) => string;
+  logImpl?: LogImpl;
+} = {}): Promise<number> {
+  const safeLog = (...args: unknown[]) => {
+    try {
+      logImpl(...args);
+    } catch {
+      // Retirement must never stop Telegram's polling loop.
+    }
+  };
+  let records: StatusRecord[];
+  try {
+    records = await listStatusesImpl();
+  } catch (error) {
+    safeLog("session retirement scan failed:", errorMessage(error));
+    return 0;
+  }
+
+  let retired = 0;
+  for (const record of records) {
+    const key = record.chatKey;
+    const status = record.status;
+    const marker = parseTelegramSessionRetirement(status?.retireAfterTurn);
+    if (typeof key !== "string" || status?.status !== "idle" || !marker)
+      continue;
+
+    try {
+      await resetImpl(
+        key,
+        { sessionId: marker.sessionId },
+        { clearQueue: false },
+      );
+    } catch (error) {
+      safeLog(
+        `session retirement reset failed for ${key}:`,
+        errorMessage(error),
+      );
+      continue;
+    }
+
+    let current: RunStatus | null;
+    try {
+      current = statusImpl(key);
+    } catch (error) {
+      safeLog(
+        `session retirement status failed for ${key}:`,
+        errorMessage(error),
+      );
+      continue;
+    }
+    const currentMarker = parseTelegramSessionRetirement(
+      current?.retireAfterTurn,
+    );
+    if (current?.status !== "idle" || !sameRetirement(marker, currentMarker))
+      continue;
+
+    let cleared: unknown;
+    try {
+      cleared = setStatusIfImpl(
+        key,
+        {
+          status: "idle",
+          generation: current.generation,
+          updatedAt: current.updatedAt,
+        },
+        { retireAfterTurn: null },
+      );
+    } catch (error) {
+      safeLog(`session retirement CAS failed for ${key}:`, errorMessage(error));
+      continue;
+    }
+    if (!cleared) continue;
+    retired++;
+
+    try {
+      traceImpl({
+        source: "telegram",
+        kind: "turn",
+        name: "retired",
+        turn: marker.turnId,
+        session: marker.sessionId,
+        data: { replayMs: marker.replayMs, sessionId: marker.sessionId },
+      });
+    } catch (error) {
+      safeLog(
+        `session retirement trace failed for ${key}:`,
+        errorMessage(error),
+      );
+    }
+    try {
+      await sendImpl(
+        key,
+        trImpl(
+          "The conversation grew large, so I started a fresh one. Memory is intact.",
+          "Диалог разросся, начала новый. Память на месте.",
+        ),
+      );
+    } catch (error) {
+      safeLog(
+        `session retirement notification failed for ${key}:`,
+        errorMessage(error),
+      );
+    }
+  }
+  return retired;
 }
 
 export async function reapStaleRuns({

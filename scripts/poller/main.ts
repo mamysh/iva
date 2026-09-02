@@ -56,7 +56,12 @@ type TelegramResponse = {
   description?: string;
   result?: unknown;
 };
-const { QUEUE_FILE, reapStaleRuns, reconcileScopedResetIntents } = queue;
+const {
+  QUEUE_FILE,
+  reapStaleRuns,
+  reconcileScopedResetIntents,
+  retireSettledSessions,
+} = queue;
 const { drainReadyQueueHeads, routeMessageUpdate } = routing;
 const { reconcileUpdateJobs, removeStaleUpdateJobs } = updateFlow;
 const { handleControl, registerBotCommands } = control;
@@ -70,7 +75,7 @@ export const loadPrivateResetIntents = queue.loadPrivateResetIntents;
 export const clearPrivateResetIntent = queue.clearPrivateResetIntent;
 export const releaseScopedSession = queue.releaseScopedSession;
 export const performScopedReset = queue.performScopedReset;
-export { reconcileScopedResetIntents, reapStaleRuns };
+export { reconcileScopedResetIntents, reapStaleRuns, retireSettledSessions };
 export { routeMessageUpdate, drainReadyQueueHeads };
 export const handleUpdateCheck = updateFlow.handleUpdateCheck;
 export const handleUpdateCallback = updateFlow.handleUpdateCallback;
@@ -175,6 +180,7 @@ export async function main({
     assertTelegramProcessLease(processLease);
     // One head per idle chat/topic per pass. While any queue remains, use a short
     // Telegram long-poll so terminal/stale run-status changes trigger drain quickly.
+    await retireSettledSessions();
     try {
       await reapStaleRuns();
     } catch (error) {

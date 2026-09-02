@@ -27,7 +27,12 @@ const DATA = process.env.ASSISTANT_DATA_DIR;
 // голому node это переписывает тот же резолвер, что и другим тестам authored-дерева.
 await import("../../scripts/lib/ts-esm-hooks.ts");
 const { traceDay, traceFilePath } = await import("./trace.ts");
-const hook = (await import("../hooks/trace.ts")).default;
+const traceHookModule = await import("../hooks/trace.ts");
+const hook = traceHookModule.default;
+const {
+  createTelegramReplayRetirementObserver,
+  TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS,
+} = traceHookModule;
 
 process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 
@@ -336,4 +341,59 @@ void test("хук не роняет ход ни на каком событии",
   // Что смогло — записано, что не смогло — объяснено в логе службы, ход жив.
   assert.ok(journal().length >= before);
   for (const line of journal()) assert.equal(typeof line.kind, "string");
+});
+
+void test("медленный Telegram replay помечает сессию, быстрый не помечает", () => {
+  let now = 1_000;
+  const marked: Array<{
+    replayMs: number;
+    sessionId: string;
+    turnId: string;
+  }> = [];
+  const observe = createTelegramReplayRetirementObserver({
+    now: () => now,
+    markImpl: (sessionId, turnId, replayMs) => {
+      marked.push({ replayMs, sessionId, turnId });
+      return true;
+    },
+  });
+  const telegramContext = (sessionId: string) => ({
+    session: { id: sessionId, turn: { id: "turn_1", sequence: 1 } },
+    channel: { kind: "telegram" },
+  });
+
+  observe(
+    { type: "turn.started", data: { sequence: 1, turnId: "turn_slow" } },
+    telegramContext("session-slow"),
+  );
+  now += TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS + 1;
+  observe(
+    {
+      type: "message.received",
+      data: { message: "slow", sequence: 2, turnId: "turn_slow" },
+    },
+    telegramContext("session-slow"),
+  );
+
+  now = 100_000;
+  observe(
+    { type: "turn.started", data: { sequence: 1, turnId: "turn_fast" } },
+    telegramContext("session-fast"),
+  );
+  now += TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS;
+  observe(
+    {
+      type: "message.received",
+      data: { message: "fast", sequence: 2, turnId: "turn_fast" },
+    },
+    telegramContext("session-fast"),
+  );
+
+  assert.deepEqual(marked, [
+    {
+      replayMs: TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS + 1,
+      sessionId: "session-slow",
+      turnId: "turn_slow",
+    },
+  ]);
 });
