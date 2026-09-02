@@ -126,6 +126,7 @@ test("private reset clears only the target chat status and queue", async () => {
     status: "running",
     sessionId: "session-a",
     turnId: "turn-a",
+    retiredSessionId: "session-retired",
   });
   status.setChatStatus("chat-b:7", {
     status: "running",
@@ -146,6 +147,7 @@ test("private reset clears only the target chat status and queue", async () => {
   assert.equal(reset.status, "idle");
   assert.equal(reset.sessionId, undefined);
   assert.equal(reset.turnId, undefined);
+  assert.equal(reset.retiredSessionId, undefined);
 
   const untouched = status.getChatStatus("chat-b:7");
   assert.equal(untouched.status, "running");
@@ -601,9 +603,51 @@ test("slow replay retires once and only after the turn settles", async () => {
       name: "retired",
       turn: marker.turnId,
       session: marker.sessionId,
-      data: { replayMs: marker.replayMs, sessionId: marker.sessionId },
+      data: { replayMs: marker.replayMs },
     },
   ]);
+});
+
+test("an awaiting-running delivery keeps the retirement marker", async () => {
+  const key = "retire-in-flight:";
+  const marker = {
+    replayMs: 31_000,
+    sessionId: "session-in-flight",
+    turnId: "turn-settled",
+  };
+  let current: ChatStatus = {
+    status: "idle",
+    generation: 8,
+    updatedAt: 8,
+    retireAfterTurn: marker,
+  };
+  let resets = 0;
+
+  assert.equal(
+    await retireSettledSessions({
+      listStatusesImpl: () => [{ chatKey: key, status: current }],
+      statusImpl: () => current,
+      inFlight: new Map([[key, "awaiting-running"]]),
+      setStatusIfImpl: (
+        _chatKey: string,
+        _expected: Record<string, unknown>,
+        patch: Record<string, unknown>,
+      ) => {
+        current = { ...current, ...patch };
+        if (patch.retireAfterTurn === null) delete current.retireAfterTurn;
+        return current;
+      },
+      resetImpl: async () => {
+        resets += 1;
+      },
+      sendImpl: async () => {},
+      traceImpl: () => {},
+      logImpl: () => {},
+    }),
+    0,
+  );
+  assert.equal(resets, 0);
+  assert.deepEqual(current.retireAfterTurn, marker);
 });
 
 test("a new running turn between scan and action keeps the retirement marker", async () => {
