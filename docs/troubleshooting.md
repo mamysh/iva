@@ -57,6 +57,8 @@ The notice `The conversation grew large, so I started a fresh one. Memory is int
 
 Replying to an Iva message starts a normal turn when no human-input request is pending; when one is pending, the reply answers it.
 
+Known limit: while a question or approval is pending, reply to that prompt itself or send a plain message. Replying elsewhere can be lost.
+
 ### Bot silent or stuck after an update
 
 An update now resets every open session before services restart. Each chat starts with fresh context; Vault and long-term History stay intact. Telegram messages queued while services were stopped are also preserved.

@@ -116,6 +116,7 @@ type DeliveryOptions = {
   observeResponse?: (response: Response) => void;
   handler?: TelegramRouteHandler;
   sessionEvents?: readonly MessageStreamEvent[];
+  sessionEventStreamError?: Error;
 };
 type DrainReadyQueueHeads = (
   options: Record<string, unknown>,
@@ -141,6 +142,7 @@ const fakeSession = (
     status: "accepted",
   }),
   events: readonly MessageStreamEvent[] = [],
+  eventStreamError?: Error,
 ): Session => ({
   id,
   respond,
@@ -156,13 +158,15 @@ const fakeSession = (
   compact: () => {
     throw new Error("not used");
   },
-  getEventStream: async ({ startIndex = 0 } = {}) =>
-    new ReadableStream<MessageStreamEvent>({
+  getEventStream: async ({ startIndex = 0 } = {}) => {
+    if (eventStreamError !== undefined) throw eventStreamError;
+    return new ReadableStream<MessageStreamEvent>({
       start(controller) {
         for (const event of events.slice(startIndex)) controller.enqueue(event);
         controller.close();
       },
-    }),
+    });
+  },
   getStreamTailIndex: async () => events.length - 1,
   reset: () => {
     throw new Error("not used");
@@ -284,6 +288,7 @@ function productionTelegramDelivery(
     observeResponse,
     handler,
     sessionEvents = [],
+    sessionEventStreamError,
     completedUpdatesFile = join(
       mkdtempSync(join(tmpdir(), "iva-completed-updates-test-")),
       "completed-updates.json",
@@ -353,6 +358,7 @@ function productionTelegramDelivery(
               : { sessionId, status: "accepted" };
           },
           sessionEvents,
+          sessionEventStreamError,
         ),
       to: () => {
         throw new Error("not used");
@@ -923,6 +929,36 @@ test("a reply with pending input still responds without starting a turn", async 
   assert.equal(await delivery(replyToBotUpdate(1101, "да")), true);
   assert.equal(attempts.length, 1);
   assert.equal(inputResponsesOf(attempts[0]).length, 1);
+});
+
+test("a reply starts a turn when the pending input scan rejects", async () => {
+  const attempts: unknown[] = [];
+  const logs: string[] = [];
+  const priorError = console.error;
+  console.error = (...parts: unknown[]) =>
+    logs.push(parts.map(String).join(" "));
+  try {
+    const delivery = productionTelegramDelivery(
+      async (_update, input) => {
+        attempts.push(input);
+        return { id: "reply-turn" };
+      },
+      {
+        sessionEvents: [inputRequestedEvent("unreadable")],
+        sessionEventStreamError: new Error("injected stream failure"),
+      },
+    );
+
+    assert.equal(await delivery(replyToBotUpdate(1102, "дальше")), true);
+  } finally {
+    console.error = priorError;
+  }
+
+  assert.equal(attempts.length, 1);
+  assert.equal(inputResponsesOf(attempts[0]).length, 0);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /pending input scan failed after \d+ms/u);
+  assert.match(logs[0], /injected stream failure/u);
 });
 
 test("a thrown reply response reroutes once with the prepared context", async () => {

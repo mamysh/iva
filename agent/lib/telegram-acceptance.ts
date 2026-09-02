@@ -213,7 +213,8 @@ async function hasPendingInputRequests(session: Session): Promise<boolean> {
     for (let index = 0; index <= tailIndex; index++) {
       const event = await reader.read();
       if (event.done) {
-        throw new Error("Telegram session event stream ended before its tail");
+        pending.clear();
+        break;
       }
       if (event.value.type === "input.requested") {
         for (const request of event.value.data.requests)
@@ -361,14 +362,37 @@ export async function handleAcceptedTelegramWebhook<TState>(
       ) => {
         const active = await args.resolveSession(address);
         if (active !== undefined) {
-          if (reroute !== null && !(await hasPendingInputRequests(active))) {
-            console.error(
-              `[telegram] reply has no pending input; delivering as a new message (update ${updateLabel})`,
-            );
-            return send(reroute.message, {
-              ...options,
-              state: reroute.state as TState,
-            } as Parameters<ChannelSource<TState>["send"]>[1]);
+          if (reroute !== null) {
+            const scanStartedAt = Date.now();
+            let pendingInput = false;
+            let scanError: unknown;
+            try {
+              pendingInput = await hasPendingInputRequests(active);
+            } catch (error) {
+              scanError = error;
+            }
+            const scanElapsedMs = Date.now() - scanStartedAt;
+            if (!pendingInput) {
+              if (scanError === undefined) {
+                console.error(
+                  `[telegram] reply has no pending input after ${scanElapsedMs}ms; delivering as a new message (update ${updateLabel})`,
+                );
+              } else {
+                const reason =
+                  scanError instanceof Error
+                    ? scanError.message
+                    : typeof scanError === "string"
+                      ? scanError
+                      : "unknown error";
+                console.error(
+                  `[telegram] pending input scan failed after ${scanElapsedMs}ms; delivering reply as a new message (update ${updateLabel}): ${reason}`,
+                );
+              }
+              return send(reroute.message, {
+                ...options,
+                state: reroute.state as TState,
+              } as Parameters<ChannelSource<TState>["send"]>[1]);
+            }
           }
 
           let result;
