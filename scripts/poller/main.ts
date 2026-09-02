@@ -180,7 +180,11 @@ export async function main({
     assertTelegramProcessLease(processLease);
     // One head per idle chat/topic per pass. While any queue remains, use a short
     // Telegram long-poll so terminal/stale run-status changes trigger drain quickly.
-    await retireSettledSessions();
+    try {
+      await retireSettledSessions();
+    } catch (error) {
+      log("session retirement failed:", errorMessage(error));
+    }
     try {
       await reapStaleRuns();
     } catch (error) {

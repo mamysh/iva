@@ -455,6 +455,7 @@ function sameRetirement(
 export async function retireSettledSessions({
   listStatusesImpl = listChatStatuses,
   statusImpl = getChatStatus,
+  setStatusImpl = setChatStatus,
   setStatusIfImpl = setChatStatusIf,
   resetImpl = performScopedReset,
   sendImpl = sendStaleRunNotice,
@@ -464,6 +465,7 @@ export async function retireSettledSessions({
 }: {
   listStatusesImpl?: () => StatusRecord[] | Promise<StatusRecord[]>;
   statusImpl?: StatusImpl;
+  setStatusImpl?: (chatKey: string, patch: Record<string, unknown>) => unknown;
   setStatusIfImpl?: SetStatusIfImpl;
   resetImpl?: RetirementResetImpl;
   sendImpl?: (chatKey: string, text: string) => Promise<unknown>;
@@ -494,20 +496,6 @@ export async function retireSettledSessions({
     if (typeof key !== "string" || status?.status !== "idle" || !marker)
       continue;
 
-    try {
-      await resetImpl(
-        key,
-        { sessionId: marker.sessionId },
-        { clearQueue: false },
-      );
-    } catch (error) {
-      safeLog(
-        `session retirement reset failed for ${key}:`,
-        errorMessage(error),
-      );
-      continue;
-    }
-
     let current: RunStatus | null;
     try {
       current = statusImpl(key);
@@ -533,15 +521,40 @@ export async function retireSettledSessions({
           generation: current.generation,
           updatedAt: current.updatedAt,
         },
-        { retireAfterTurn: null },
+        {
+          retireAfterTurn: null,
+          retiredSessionId: marker.sessionId,
+        },
       );
     } catch (error) {
       safeLog(`session retirement CAS failed for ${key}:`, errorMessage(error));
       continue;
     }
     if (!cleared) continue;
-    retired++;
 
+    try {
+      await resetImpl(
+        key,
+        { sessionId: marker.sessionId },
+        { clearQueue: false },
+      );
+    } catch (error) {
+      safeLog(
+        `session retirement reset failed for ${key}:`,
+        errorMessage(error),
+      );
+      try {
+        setStatusImpl(key, { retiredSessionId: null });
+      } catch (statusError) {
+        safeLog(
+          `session retirement retry state failed for ${key}:`,
+          errorMessage(statusError),
+        );
+      }
+      continue;
+    }
+
+    retired++;
     try {
       traceImpl({
         source: "telegram",

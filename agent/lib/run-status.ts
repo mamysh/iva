@@ -301,6 +301,7 @@ export function markTelegramSessionForRetirement(
       status.status !== "running" ||
       status.sessionId !== sessionId ||
       status.turnId !== turnId ||
+      status.retiredSessionId === sessionId ||
       status.retireAfterTurn !== undefined
     ) {
       continue;

@@ -541,7 +541,6 @@ test("slow replay retires once and only after the turn settles", async () => {
   const resetOptions: Array<{ clearQueue?: boolean } | undefined> = [];
   const notices: string[] = [];
   const traces: Record<string, unknown>[] = [];
-  let failNextReset = true;
   const options = {
     listStatusesImpl: () => [{ chatKey: key, status: current }],
     statusImpl: () => current,
@@ -551,10 +550,6 @@ test("slow replay retires once and only after the turn settles", async () => {
       resetOptionsArg?: { clearQueue?: boolean },
     ) => {
       resetOptions.push(resetOptionsArg);
-      if (failNextReset) {
-        failNextReset = false;
-        throw new Error("eve unavailable");
-      }
       resets.push(target.sessionId);
       current = {
         ...current,
@@ -591,16 +586,11 @@ test("slow replay retires once and only after the turn settles", async () => {
     sessionId: undefined,
     turnId: undefined,
   };
-  assert.equal(await retireSettledSessions(options), 0);
-  assert.deepEqual(current.retireAfterTurn, marker);
   assert.equal(await retireSettledSessions(options), 1);
   assert.equal(await retireSettledSessions(options), 0);
 
   assert.deepEqual(resets, [marker.sessionId]);
-  assert.deepEqual(resetOptions, [
-    { clearQueue: false },
-    { clearQueue: false },
-  ]);
+  assert.deepEqual(resetOptions, [{ clearQueue: false }]);
   assert.deepEqual(notices, [
     "The conversation grew large, so I started a fresh one. Memory is intact.",
   ]);
@@ -616,6 +606,128 @@ test("slow replay retires once and only after the turn settles", async () => {
   ]);
 });
 
+test("a new running turn between scan and action keeps the retirement marker", async () => {
+  const marker = {
+    replayMs: 31_000,
+    sessionId: "session-race",
+    turnId: "turn-old",
+  };
+  const scanned: ChatStatus = {
+    status: "idle",
+    generation: 4,
+    updatedAt: 4,
+    retireAfterTurn: marker,
+  };
+  const current: ChatStatus = {
+    ...scanned,
+    status: "running",
+    generation: 5,
+    updatedAt: 5,
+    sessionId: "session-new",
+    turnId: "turn-new",
+  };
+  let resets = 0;
+
+  assert.equal(
+    await retireSettledSessions({
+      listStatusesImpl: () => [{ chatKey: "retire-race:", status: scanned }],
+      statusImpl: () => current,
+      setStatusIfImpl: () => {
+        throw new Error("CAS must not run for a live turn");
+      },
+      resetImpl: async () => {
+        resets += 1;
+      },
+      sendImpl: async () => {},
+      traceImpl: () => {},
+      logImpl: () => {},
+    }),
+    0,
+  );
+  assert.equal(resets, 0);
+  assert.deepEqual(current.retireAfterTurn, marker);
+});
+
+test("a failed retirement CAS does not reset the session", async () => {
+  const marker = {
+    replayMs: 31_000,
+    sessionId: "session-cas",
+    turnId: "turn-cas",
+  };
+  const current: ChatStatus = {
+    status: "idle",
+    generation: 6,
+    updatedAt: 6,
+    retireAfterTurn: marker,
+  };
+  let resets = 0;
+
+  assert.equal(
+    await retireSettledSessions({
+      listStatusesImpl: () => [{ chatKey: "retire-cas:", status: current }],
+      statusImpl: () => current,
+      setStatusIfImpl: () => null,
+      resetImpl: async () => {
+        resets += 1;
+      },
+      sendImpl: async () => {},
+      traceImpl: () => {},
+      logImpl: () => {},
+    }),
+    0,
+  );
+  assert.equal(resets, 0);
+  assert.deepEqual(current.retireAfterTurn, marker);
+});
+
+test("a failed reset is dropped after the retirement claim", async () => {
+  const marker = {
+    replayMs: 31_000,
+    sessionId: "session-reset-failure",
+    turnId: "turn-reset-failure",
+  };
+  let current: ChatStatus = {
+    status: "idle",
+    generation: 7,
+    updatedAt: 7,
+    retireAfterTurn: marker,
+  };
+  const notices: string[] = [];
+
+  assert.equal(
+    await retireSettledSessions({
+      listStatusesImpl: () => [
+        { chatKey: "retire-reset-failure:", status: current },
+      ],
+      statusImpl: () => current,
+      setStatusIfImpl: (
+        _chatKey: string,
+        _expected: Record<string, unknown>,
+        patch: Record<string, unknown>,
+      ) => {
+        current = { ...current, ...patch };
+        if (patch.retireAfterTurn === null) delete current.retireAfterTurn;
+        return current;
+      },
+      setStatusImpl: (_chatKey: string, patch: Record<string, unknown>) => {
+        current = { ...current, ...patch };
+        if (patch.retiredSessionId === null) delete current.retiredSessionId;
+        return current;
+      },
+      resetImpl: async () => {
+        throw new Error("eve unavailable");
+      },
+      sendImpl: async (_chatKey: string, text: string) => notices.push(text),
+      traceImpl: () => {},
+      logImpl: () => {},
+    }),
+    0,
+  );
+  assert.equal(current.retireAfterTurn, undefined);
+  assert.equal(current.retiredSessionId, undefined);
+  assert.deepEqual(notices, []);
+});
+
 const RETIRE_ORDER_PBT_SEED = 1_903_627;
 
 test(`retirement never runs mid-turn or twice (fast-check seed ${RETIRE_ORDER_PBT_SEED})`, async () => {
@@ -627,12 +739,24 @@ test(`retirement never runs mid-turn or twice (fast-check seed ${RETIRE_ORDER_PB
     "turn.cancelled" as const,
     "turn.failed" as const,
   );
+  const turnId = fc.constantFrom("turn-a", "turn-b", "turn-c");
 
   await fc.assert(
     fc.asyncProperty(
       fc.integer({ min: 0, max: 10_000_000 }),
-      fc.array(eventType, { minLength: 1, maxLength: 20 }),
-      async (replayMs, events) => {
+      fc.array(fc.record({ type: eventType, turnId }), {
+        maxLength: 12,
+      }),
+      async (replayMs, noise) => {
+        const events = [
+          { type: "turn.started" as const, turnId: "turn-a" },
+          { type: "message.received" as const, turnId: "turn-a" },
+          { type: "turn.completed" as const, turnId: "turn-a" },
+          ...noise,
+          { type: "turn.started" as const, turnId: "turn-b" },
+          { type: "message.received" as const, turnId: "turn-b" },
+          { type: "turn.completed" as const, turnId: "turn-b" },
+        ];
         let now = 0;
         let current: ChatStatus = {
           status: "idle",
@@ -645,7 +769,15 @@ test(`retirement never runs mid-turn or twice (fast-check seed ${RETIRE_ORDER_PB
           turnId: string,
           replayMs: number,
         ) => {
-          if (current.retireAfterTurn !== undefined) return false;
+          if (
+            current.status !== "running" ||
+            current.sessionId !== sessionId ||
+            current.turnId !== turnId ||
+            current.retiredSessionId === sessionId ||
+            current.retireAfterTurn !== undefined
+          ) {
+            return false;
+          }
           current = {
             ...current,
             retireAfterTurn: { replayMs, sessionId, turnId },
@@ -674,9 +806,16 @@ test(`retirement never runs mid-turn or twice (fast-check seed ${RETIRE_ORDER_PB
           },
           setStatusIfImpl: (
             _chatKey: string,
-            _expected: Record<string, unknown>,
+            expected: Record<string, unknown>,
             patch: Record<string, unknown>,
           ) => {
+            if (
+              Object.entries(expected).some(
+                ([key, value]) => !Object.is(current[key], value),
+              )
+            ) {
+              return null;
+            }
             current = { ...current, ...patch };
             if (patch.retireAfterTurn === null) delete current.retireAfterTurn;
             return current;
@@ -688,32 +827,34 @@ test(`retirement never runs mid-turn or twice (fast-check seed ${RETIRE_ORDER_PB
 
         for (const event of events) {
           now =
-            event === "turn.started"
+            event.type === "turn.started"
               ? 0
-              : event === "message.received"
+              : event.type === "message.received"
                 ? replayMs
                 : replayMs + 1;
-          if (event === "turn.started") {
+          if (event.type === "turn.started") {
             current = {
               ...current,
               status: "running",
               sessionId: "property-session",
-              turnId: "property-turn",
+              turnId: event.turnId,
             };
           }
           const data = {
             sequence: 1,
-            turnId: "property-turn",
-            ...(event === "message.received" ? { message: "property" } : {}),
-            ...(event === "turn.failed"
+            turnId: event.turnId,
+            ...(event.type === "message.received"
+              ? { message: "property" }
+              : {}),
+            ...(event.type === "turn.failed"
               ? { code: "FAILED", details: {}, message: "failed" }
               : {}),
           };
-          observe({ type: event, data }, propertyContext);
+          observe({ type: event.type, data }, propertyContext);
           if (
-            event === "turn.completed" ||
-            event === "turn.cancelled" ||
-            event === "turn.failed"
+            event.type === "turn.completed" ||
+            event.type === "turn.cancelled" ||
+            event.type === "turn.failed"
           ) {
             current = {
               ...current,
