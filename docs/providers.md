@@ -30,7 +30,7 @@ Two things about the live lists. Both catalogs churn — Ollama Cloud retired `g
 
 ### OpenAI by ChatGPT subscription (`codex`)
 
-Use the OpenAI subscription you already pay for — no separate API key, no per-token bill. Iva signs in the same way the official `codex` CLI does (OAuth against `auth.openai.com`), stores a refreshable token in `data/codex-auth.json` (chmod 600), and calls the subscription's Responses backend directly. The access token is refreshed automatically before it expires.
+Use the OpenAI subscription you already pay for — no separate API key, no per-token bill. Iva signs in the same way the official `codex` CLI does (OAuth against `auth.openai.com`), stores a refreshable token in `data/codex-auth.json` (chmod 600), and calls the subscription's Responses backend directly. The access token is refreshed automatically before it expires. If the backend rejects a still-fresh token after the subscription lapses, Iva forces one refresh and retries once; a second rejection tells you to run `iva login`.
 
 ```bash
 iva login              # device code: opens a link + one-time code (works on a headless VPS)

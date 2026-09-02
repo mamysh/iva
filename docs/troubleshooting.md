@@ -59,6 +59,10 @@ Replying to an Iva message starts a normal turn when no human-input request is p
 
 Known limit: while a question or approval is pending, reply to that prompt itself or send a plain message. Replying elsewhere can be lost.
 
+### Codex rejects auth after the subscription lapses
+
+Iva forces one OAuth refresh and retries once; if `Codex auth rejected (401 token_expired)` remains, run `iva login` and retry the message.
+
 ### Bot silent or stuck after an update
 
 An update now resets every open session before services restart. Each chat starts with fresh context; Vault and long-term History stay intact. Telegram messages queued while services were stopped are also preserved.

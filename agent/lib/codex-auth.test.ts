@@ -24,6 +24,7 @@ import {
   CLIENT_VERSION,
   type CodexAuth,
   codexAuthHeaders,
+  forceRefreshAccessToken,
   getAccessToken,
   ORIGINATOR,
   readAuth,
@@ -308,4 +309,25 @@ test("a failed refresh with nothing fresher throws and keeps the file", async (t
   assert.equal(served, recovered);
   assert.equal(calls.length, 2);
   assert.equal(readAuth(dataDir)?.access_token, recovered);
+});
+
+test("forced refresh bypasses exp, shares an in-flight call, and cools down for 60s", async (t) => {
+  const dataDir = scratchDir(t);
+  storeAuth(dataDir, { access_token: accessToken(3600, "rejected") });
+  const refreshed = accessToken(3600, "forced");
+  const calls = tokenEndpoint(t, () =>
+    Response.json({ access_token: refreshed }),
+  );
+
+  const [first, second] = await Promise.all([
+    forceRefreshAccessToken(dataDir),
+    forceRefreshAccessToken(dataDir),
+  ]);
+  const third = await forceRefreshAccessToken(dataDir);
+
+  assert.equal(calls.length, 1);
+  assert.equal(first.accessToken, refreshed);
+  assert.deepEqual(second, first);
+  assert.deepEqual(third, first);
+  assert.equal(readAuth(dataDir)?.access_token, refreshed);
 });

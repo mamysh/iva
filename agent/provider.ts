@@ -11,7 +11,11 @@ import {
 } from "./lib/attachment-ref.ts";
 import { resolveAttachmentPath } from "./lib/telegram-media-cache.ts";
 import { chatModelSeesImages } from "./vision.ts";
-import { CODEX_BASE_URL, codexAuthHeaders } from "./lib/codex-auth.ts";
+import {
+  CODEX_BASE_URL,
+  codexAuthHeaders,
+  forceRefreshAccessToken,
+} from "./lib/codex-auth.ts";
 import { resolveContextWindow } from "./lib/context-window.ts";
 import {
   resolveModelProvider,
@@ -134,10 +138,57 @@ export const compatibleThinkingEffort: CompatibleEffort | undefined =
 // Кастомный fetch: перед КАЖДЫМ запросом подставляет свежий Bearer + ChatGPT-Account-ID
 // (getAccessToken рефрешит истёкший токен) и форсит store:false — бэкенд подписки stateless,
 // историю eve шлёт целиком каждый ход. Тело патчим здесь же (точка правки, если бэкенд строже).
-export const codexFetch: typeof fetch = async (input, init) => {
+type CodexAuthExpiredError = Error & { code: "CODEX_AUTH_EXPIRED" };
+
+function codexAuthExpiredError(cause?: unknown): CodexAuthExpiredError {
+  return Object.assign(
+    new Error(
+      "Codex auth rejected (401 token_expired); run `iva login` to sign in again",
+      cause === undefined ? undefined : { cause },
+    ),
+    { code: "CODEX_AUTH_EXPIRED" as const },
+  );
+}
+
+function isCodexAuthFailureCode(value: unknown): boolean {
+  return value === "token_expired" || value === "invalid_token";
+}
+
+async function isCodexAuthFailure(response: Response): Promise<boolean> {
+  if (response.status !== 401) return false;
+  let text: string;
+  try {
+    text = await response.clone().text();
+  } catch {
+    return true;
+  }
+  if (text.trim().length === 0) return true;
+  try {
+    const body: unknown = JSON.parse(text);
+    if (
+      isRecord(body) &&
+      (isCodexAuthFailureCode(body.code) ||
+        isCodexAuthFailureCode(body.error) ||
+        (isRecord(body.error) && isCodexAuthFailureCode(body.error.code)))
+    )
+      return true;
+  } catch {
+    /* не-JSON может всё ещё назвать код ошибки */
+  }
+  return /\b(?:token_expired|invalid_token)\b/u.test(text);
+}
+
+async function codexRequestHeaders(
+  init: RequestInit | undefined,
+): Promise<Headers> {
   const headers = new Headers(init?.headers);
-  for (const [k, v] of Object.entries(await codexAuthHeaders()))
-    headers.set(k, v);
+  for (const [key, value] of Object.entries(await codexAuthHeaders()))
+    headers.set(key, value);
+  return headers;
+}
+
+export const codexFetch: typeof fetch = async (input, init) => {
+  let headers = await codexRequestHeaders(init);
   let body = init?.body;
   if (
     typeof body === "string" &&
@@ -169,7 +220,20 @@ export const codexFetch: typeof fetch = async (input, init) => {
       /* не JSON — не трогаем */
     }
   }
-  return fetch(input, { ...init, headers, body });
+  const response = await fetch(input, { ...init, headers, body });
+  if (typeof body !== "string" || !(await isCodexAuthFailure(response)))
+    return response;
+
+  try {
+    await forceRefreshAccessToken();
+    headers = await codexRequestHeaders(init);
+  } catch (cause) {
+    throw codexAuthExpiredError(cause);
+  }
+
+  const retry = await fetch(input, { ...init, headers, body });
+  if (retry.status === 401) throw codexAuthExpiredError();
+  return retry;
 };
 
 // Провайдер-опции codex на этапе СБОРКИ тела (не пост-фактум в codexFetch): store:false

@@ -14,7 +14,7 @@ import type {
   LanguageModelV4StreamResult,
 } from "@ai-sdk/provider";
 import { classifyModelCallError } from "../node_modules/eve/dist/src/harness/model-call-error.js";
-import { writeAuth, type CodexAuth } from "./lib/codex-auth.ts";
+import { writeAuth, type CodexAuth, TOKEN_URL } from "./lib/codex-auth.ts";
 
 process.env.MODEL_PROVIDER = "ollama";
 const {
@@ -38,6 +38,18 @@ type FilePart = {
 const BYTES = new Uint8Array([1, 2, 3]);
 const readImage = () => BYTES;
 const REF = "attachments/2026-08-27/photo-082621.jpg";
+const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+const CODEX_FETCH_TEST_EPOCH_MS = Date.now();
+
+function codexAccessToken(nowMs: number, label: string): string {
+  const b64url = (value: object): string =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  return [
+    b64url({ alg: "none" }),
+    b64url({ exp: Math.floor(nowMs / 1000) + 3600, label }),
+    "signature",
+  ].join(".");
+}
 
 function userText(...texts: string[]): Message {
   return {
@@ -62,6 +74,47 @@ function muteErrors(t: { after: (fn: () => void) => void }): string[] {
     console.error = original;
   });
   return lines;
+}
+
+function installCodexAuth(
+  t: { after: (fn: () => void) => void },
+  nowMs: number,
+): string {
+  const dir = mkdtempSync(join(tmpdir(), "iva-codex-fetch-"));
+  const prevDataDir = process.env.ASSISTANT_DATA_DIR;
+  process.env.ASSISTANT_DATA_DIR = dir;
+  t.after(() => {
+    if (prevDataDir === undefined) delete process.env.ASSISTANT_DATA_DIR;
+    else process.env.ASSISTANT_DATA_DIR = prevDataDir;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const auth: CodexAuth = {
+    id_token: "id-token",
+    access_token: codexAccessToken(nowMs, "stored"),
+    refresh_token: "refresh-token",
+    accountId: "acc_test",
+    planType: "pro",
+  };
+  writeAuth(auth, dir);
+  return dir;
+}
+
+function requestUrl(input: RequestInfo | URL): string {
+  return typeof input === "object" && "url" in input
+    ? input.url
+    : String(input);
+}
+
+function assertCodexAuthExpired(error: unknown): true {
+  assert.ok(error instanceof Error);
+  assert.match(
+    error.message,
+    /^Codex auth rejected \(401 token_expired\); run `iva login`/u,
+  );
+  assert.equal((error as Error & { code?: string }).code, "CODEX_AUTH_EXPIRED");
+  assert.equal(classifyModelCallError(error), "recoverable");
+  return true;
 }
 
 function modelWithDelayedParts(
@@ -533,45 +586,21 @@ await test(`deadline зависит только от первого конте�
 });
 
 await test("codexFetch вырезает safety_identifier из тела /responses", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "iva-codex-fetch-"));
-  const prevDataDir = process.env.ASSISTANT_DATA_DIR;
-  process.env.ASSISTANT_DATA_DIR = dir;
-  t.after(() => {
-    if (prevDataDir === undefined) delete process.env.ASSISTANT_DATA_DIR;
-    else process.env.ASSISTANT_DATA_DIR = prevDataDir;
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  const b64url = (value: object): string =>
-    Buffer.from(JSON.stringify(value)).toString("base64url");
-  const access_token = [
-    b64url({ alg: "none" }),
-    b64url({ exp: Math.floor(Date.now() / 1000) + 3600 }),
-    "signature",
-  ].join(".");
-  const auth: CodexAuth = {
-    id_token: "id-token",
-    access_token,
-    refresh_token: "refresh-token",
-    accountId: "acc_test",
-    planType: "pro",
-  };
-  writeAuth(auth, dir);
+  installCodexAuth(t, Date.now());
 
   const originalFetch = globalThis.fetch;
   let capturedBody: string | undefined;
+  const upstream = new Response(JSON.stringify({}), { status: 200 });
   globalThis.fetch = (_input, init) => {
     capturedBody = typeof init?.body === "string" ? init.body : undefined;
-    return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    return Promise.resolve(upstream);
   };
   t.after(() => {
     globalThis.fetch = originalFetch;
   });
 
-  await codexFetch(
-    new Request("https://chatgpt.com/backend-api/codex/responses", {
-      method: "POST",
-    }),
+  const response = await codexFetch(
+    new Request(CODEX_RESPONSES_URL, { method: "POST" }),
     {
       body: JSON.stringify({
         store: true,
@@ -587,4 +616,91 @@ await test("codexFetch вырезает safety_identifier из тела /respons
   assert.equal("safety_identifier" in body, false);
   assert.equal("previous_response_id" in body, false);
   assert.equal(body.store, false);
+  assert.equal(response, upstream);
+});
+
+await test("codexFetch refreshes and retries auth failures once", async (t) => {
+  let nowMs = CODEX_FETCH_TEST_EPOCH_MS;
+  t.mock.method(Date, "now", () => nowMs);
+  const dataDir = installCodexAuth(t, nowMs);
+  const originalFetch = globalThis.fetch;
+  let backendResponses: Response[] = [];
+  let refreshResponses: Response[] = [];
+  const backendAuthorizations: string[] = [];
+  globalThis.fetch = (input, init) => {
+    const isRefresh = requestUrl(input) === TOKEN_URL;
+    if (!isRefresh)
+      backendAuthorizations.push(
+        new Headers(init?.headers).get("Authorization") ?? "",
+      );
+    const response = (isRefresh ? refreshResponses : backendResponses).shift();
+    assert.ok(
+      response,
+      `unexpected ${isRefresh ? "refresh" : "backend"} request`,
+    );
+    return Promise.resolve(response);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const resetAuth = (): void => {
+    nowMs += 61_000;
+    writeAuth(
+      {
+        access_token: codexAccessToken(nowMs, "stored"),
+        refresh_token: "refresh-token",
+        accountId: "acc_test",
+        planType: "pro",
+      },
+      dataDir,
+    );
+    backendAuthorizations.length = 0;
+  };
+  const refreshed = (): Response =>
+    Response.json({ access_token: codexAccessToken(nowMs, "refreshed") });
+  const request = (body: BodyInit | null | undefined = "{}") =>
+    codexFetch(CODEX_RESPONSES_URL, { method: "POST", body });
+
+  await t.test("token_expired refreshes and the retry succeeds", async () => {
+    backendResponses = [
+      Response.json({ error: { code: "token_expired" } }, { status: 401 }),
+      Response.json({ ok: true }),
+    ];
+    refreshResponses = [refreshed()];
+    assert.equal((await request()).status, 200);
+    assert.equal(backendAuthorizations.length, 2);
+    assert.notEqual(backendAuthorizations[0], backendAuthorizations[1]);
+  });
+
+  await t.test("a second 401 gives recoverable login guidance", async () => {
+    resetAuth();
+    backendResponses = [
+      Response.json({ code: "invalid_token" }, { status: 401 }),
+      Response.json({ code: "token_expired" }, { status: 401 }),
+    ];
+    refreshResponses = [refreshed()];
+    await assert.rejects(request(), assertCodexAuthExpired);
+    assert.equal(backendAuthorizations.length, 2);
+  });
+
+  await t.test("a failed refresh gives the same login guidance", async () => {
+    resetAuth();
+    backendResponses = [new Response("", { status: 401 })];
+    refreshResponses = [new Response("revoked", { status: 401 })];
+    await assert.rejects(request(), assertCodexAuthExpired);
+    assert.equal(backendAuthorizations.length, 1);
+  });
+
+  await t.test("a non-reusable body is not retried", async () => {
+    resetAuth();
+    const upstream = Response.json(
+      { error: { code: "token_expired" } },
+      { status: 401 },
+    );
+    backendResponses = [upstream];
+    refreshResponses = [];
+    assert.equal(await request(null), upstream);
+    assert.equal(backendAuthorizations.length, 1);
+  });
 });

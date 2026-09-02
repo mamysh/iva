@@ -49,6 +49,7 @@ export const ORIGINATOR = "codex_cli_rs";
 // codex, иначе свежие модели не появятся в списке. Проверено: 0.144.0 отдаёт gpt-5.6-{sol,terra,luna}.
 export const CLIENT_VERSION = "0.144.0";
 const REFRESH_SKEW_S = 300; // рефрешим за 5 мин до exp (как окно codex CLI)
+const FORCE_REFRESH_COOLDOWN_MS = 60_000;
 
 const defaultDir = dataDir;
 
@@ -156,16 +157,23 @@ async function refresh(
 // рейс (CLI login + сервер) маловероятен и самолечится: при провале рефреша
 // перечитываем файл — вдруг другой процесс уже обновил.
 let refreshInFlight: Promise<CodexAuth> | null = null;
-export async function getAccessToken(
-  dataDir = defaultDir(),
-): Promise<{ accessToken: string; accountId: string | null }> {
-  let auth = readAuth(dataDir);
-  if (!auth?.access_token) throw new Error("not logged in — run `iva login`");
-  const fresh =
-    jwtExp(auth.access_token) - REFRESH_SKEW_S > Math.floor(Date.now() / 1000);
-  if (fresh)
-    return { accessToken: auth.access_token, accountId: auth.accountId };
+let lastForcedRefreshAt = Number.NEGATIVE_INFINITY;
 
+type AccessToken = { accessToken: string; accountId: string | null };
+
+function accessTokenFrom(auth: CodexAuth): AccessToken {
+  return { accessToken: auth.access_token, accountId: auth.accountId };
+}
+
+function accessTokenIsFresh(accessToken: string): boolean {
+  return jwtExp(accessToken) - REFRESH_SKEW_S > Math.floor(Date.now() / 1000);
+}
+
+async function refreshAccessToken(
+  auth: CodexAuth,
+  dataDir: string,
+  rereadMustDiffer: boolean,
+): Promise<CodexAuth> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       try {
@@ -176,8 +184,8 @@ export async function getAccessToken(
         const reread = readAuth(dataDir); // мог обновить другой процесс
         if (
           reread?.access_token &&
-          jwtExp(reread.access_token) - REFRESH_SKEW_S >
-            Math.floor(Date.now() / 1000)
+          accessTokenIsFresh(reread.access_token) &&
+          (!rereadMustDiffer || reread.access_token !== auth.access_token)
         )
           return reread;
         throw err;
@@ -186,8 +194,32 @@ export async function getAccessToken(
       }
     })();
   }
-  auth = await refreshInFlight;
-  return { accessToken: auth.access_token, accountId: auth.accountId };
+  return refreshInFlight;
+}
+
+export async function getAccessToken(
+  dataDir = defaultDir(),
+): Promise<AccessToken> {
+  const auth = readAuth(dataDir);
+  if (!auth?.access_token) throw new Error("not logged in — run `iva login`");
+  if (accessTokenIsFresh(auth.access_token)) return accessTokenFrom(auth);
+  return accessTokenFrom(await refreshAccessToken(auth, dataDir, false));
+}
+
+// Бэкенд может отвергнуть токен раньше JWT exp. Один forced refresh на минуту
+// даёт ходу одну попытку самолечения, но не бомбит auth.openai.com.
+export async function forceRefreshAccessToken(
+  dataDir = defaultDir(),
+): Promise<AccessToken> {
+  const auth = readAuth(dataDir);
+  if (!auth?.access_token) throw new Error("not logged in — run `iva login`");
+  if (refreshInFlight) return accessTokenFrom(await refreshInFlight);
+
+  const now = Date.now();
+  if (now - lastForcedRefreshAt < FORCE_REFRESH_COOLDOWN_MS)
+    return accessTokenFrom(auth);
+  lastForcedRefreshAt = now;
+  return accessTokenFrom(await refreshAccessToken(auth, dataDir, true));
 }
 
 // Заголовки авторизации для вызова Codex-бэкенда (/responses, /models).
