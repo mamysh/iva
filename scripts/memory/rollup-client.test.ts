@@ -231,7 +231,8 @@ async function runRollup(
         ASSISTANT_HOST: host,
         ASSISTANT_TIMEZONE: "UTC",
         ASSISTANT_VAULT_DIR: paths.vault,
-        ROLLUP_TURN_TIMEOUT_MS: "1000",
+        // eve 0.49 retries session_not_active after 250, 500, and 1000 ms.
+        ROLLUP_TURN_TIMEOUT_MS: "3000",
         TELEGRAM_ALLOWED_USER_IDS: "",
         TELEGRAM_BOT_TOKEN: "",
         TELEGRAM_DIGEST_CHAT_ID: "",
