@@ -182,6 +182,7 @@ export async function completeScopedResetState(
     firstOutputAt: null,
     latencyLogged: null,
     wasCancelled: null,
+    retiredSessionId: null,
     resetAt: Date.now(),
   });
 }
@@ -462,6 +463,7 @@ export async function retireSettledSessions({
   traceImpl = appendTrace,
   trImpl = tr,
   logImpl = log,
+  inFlight = queueInFlight,
 }: {
   listStatusesImpl?: () => StatusRecord[] | Promise<StatusRecord[]>;
   statusImpl?: StatusImpl;
@@ -472,6 +474,7 @@ export async function retireSettledSessions({
   traceImpl?: (event: TraceInput) => void;
   trImpl?: (en: string, ru: string) => string;
   logImpl?: LogImpl;
+  inFlight?: ReadonlyMap<string, unknown>;
 } = {}): Promise<number> {
   const safeLog = (...args: unknown[]) => {
     try {
@@ -509,7 +512,11 @@ export async function retireSettledSessions({
     const currentMarker = parseTelegramSessionRetirement(
       current?.retireAfterTurn,
     );
-    if (current?.status !== "idle" || !sameRetirement(marker, currentMarker))
+    if (
+      current?.status !== "idle" ||
+      !sameRetirement(marker, currentMarker) ||
+      inFlight.has(key)
+    )
       continue;
 
     let cleared: unknown;
@@ -562,7 +569,7 @@ export async function retireSettledSessions({
         name: "retired",
         turn: marker.turnId,
         session: marker.sessionId,
-        data: { replayMs: marker.replayMs, sessionId: marker.sessionId },
+        data: { replayMs: marker.replayMs },
       });
     } catch (error) {
       safeLog(

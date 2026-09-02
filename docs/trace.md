@@ -72,7 +72,7 @@ and **only the Bridge produces it**: callbacks never reach `runTelegramInbound`,
 | `inbound.accepted` / `inbound.dropped`                            | `chatId`, `chatKey`, `parts`, `partChars[]`; content: `context[]`                                                                 |
 | `gate.inbound` / `gate.web`                                       | `surface`, `blocked`, `reason`, `flags[]`, `truncatedChars`, `chars`                                                              |
 | `turn.bound`                                                      | `chatKey`, `updateKey`                                                                                                            |
-| `turn.retired`                                                    | `replayMs`, `sessionId`                                                                                                           |
+| `turn.retired`                                                    | `replayMs`                                                                                                                        |
 | `context.parts`                                                   | `core`, `persona`, `moc`, `daily` — memory file sizes in bytes, `unit`, `approximate`                                             |
 | `eve.turn.started` / `turn.completed` / `turn.cancelled`          | `sequence`                                                                                                                        |
 | `eve.turn.failed` / `eve.step.failed`                             | `sequence`, `stepIndex`, `code`; content: `message`, `details`                                                                    |

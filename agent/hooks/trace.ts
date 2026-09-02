@@ -60,7 +60,7 @@ type MarkRetirement = (
   replayMs: number,
 ) => boolean;
 
-// 30s leaves headroom before the durable workflow replay ceiling of 240s.
+// Workaround for the 240 s replay ceiling; remove when vercel/eve#2876 is resolved upstream.
 export const TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS = 30_000;
 const MAX_TRACKED_REPLAY_TURNS = 128;
 
