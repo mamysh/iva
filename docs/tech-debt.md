@@ -112,7 +112,13 @@ install. There is no CI to hang the check on
 ([ADR-0004](adr/0004-philosophy-is-the-review-bar.md)); the fix is either a pre-release
 habit of reading `npx eve info` or a script that asserts the expected counts.
 
-## 6. `sessionTimeoutMs: false`
+## 6. `sessionTimeoutMs: false` — CLOSED
+
+Closed 2026-09-02: `agent/agent.ts` sets a 24-hour session lifetime. A day of active chat
+grew one durable session to ~6400 events and a 220–660 s replay per turn, past the 240 s
+workflow ceiling; the upstream lifetime is the retirement story.
+
+Original note:
 
 Disabled in `agent/agent.ts` to preserve eve 0.27's behavior (no auto-expiry) after
 the 0.28 default changed to a 30-day session lifetime. This was the safe choice for
