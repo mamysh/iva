@@ -20,6 +20,12 @@ import {
 import { CANONICAL_REASONING_EFFORTS as EFFORTS } from "./lib/reasoning-levels.ts";
 
 type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
+type ModelStreamPart =
+  Awaited<
+    ReturnType<ReturnType<typeof wrapLanguageModel>["doStream"]>
+  >["stream"] extends ReadableStream<infer Part>
+    ? Part
+    : never;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -354,6 +360,128 @@ export const attachImagesMiddleware: LanguageModelMiddleware = {
   },
 };
 
+// Silent provider streams can keep a turn open indefinitely.
+// Remove when eve forwards `timeout.firstChunkMs` to ToolLoopAgent (see vercel/eve#2876 for context).
+export const MODEL_FIRST_CHUNK_TIMEOUT_MS = 90_000;
+
+const CONTENT_BEARING_STREAM_PART_TYPES = new Set([
+  "text-delta",
+  "reasoning-delta",
+  "tool-input-delta",
+  "tool-call",
+  "tool-input-start",
+  "text-start",
+  "reasoning-start",
+]);
+
+type ModelFirstChunkTimeoutError = Error & {
+  code: "MODEL_FIRST_CHUNK_TIMEOUT";
+};
+
+function makeModelFirstChunkTimeoutError(): ModelFirstChunkTimeoutError {
+  return Object.assign(
+    new Error(
+      `Model produced no output for ${MODEL_FIRST_CHUNK_TIMEOUT_MS / 1_000}s`,
+    ),
+    { code: "MODEL_FIRST_CHUNK_TIMEOUT" as const },
+  );
+}
+
+export const modelFirstChunkDeadlineMiddleware: LanguageModelMiddleware = {
+  async wrapStream({ model, params }) {
+    const timeoutError = makeModelFirstChunkTimeoutError();
+    const timeoutController = new AbortController();
+    const abortSignal = params.abortSignal
+      ? AbortSignal.any([params.abortSignal, timeoutController.signal])
+      : timeoutController.signal;
+    let outputController:
+      ReadableStreamDefaultController<ModelStreamPart> | undefined;
+    let cancelProviderStream: (reason?: unknown) => Promise<void> = () =>
+      Promise.resolve();
+    let ended = false;
+    let timedOut = false;
+    let rejectDeadline: (reason: unknown) => void = () => undefined;
+
+    const deadlineReached = new Promise<never>((_resolve, reject) => {
+      rejectDeadline = reject;
+    });
+    const clearDeadline = () => {
+      clearTimeout(deadline);
+      params.abortSignal?.removeEventListener("abort", clearDeadline);
+    };
+    const deadline = setTimeout(() => {
+      if (ended) return;
+      ended = true;
+      timedOut = true;
+      timeoutController.abort(timeoutError);
+      outputController?.error(timeoutError);
+      void cancelProviderStream(timeoutError).catch(() => undefined);
+      rejectDeadline(timeoutError);
+    }, MODEL_FIRST_CHUNK_TIMEOUT_MS);
+
+    if (params.abortSignal?.aborted) clearDeadline();
+    else
+      params.abortSignal?.addEventListener("abort", clearDeadline, {
+        once: true,
+      });
+
+    const providerResult = model.doStream({ ...params, abortSignal });
+    let result: Awaited<typeof providerResult>;
+    try {
+      result = await Promise.race([providerResult, deadlineReached]);
+    } catch (error) {
+      clearDeadline();
+      if (timedOut) {
+        void providerResult.then(
+          ({ stream }) => stream.cancel(timeoutError),
+          () => undefined,
+        );
+      }
+      throw error;
+    }
+
+    const { stream, ...rest } = result;
+    const reader = stream.getReader();
+    cancelProviderStream = (reason) => reader.cancel(reason);
+
+    return {
+      ...rest,
+      stream: new ReadableStream<ModelStreamPart>({
+        start(controller) {
+          outputController = controller;
+          void (async () => {
+            try {
+              for (;;) {
+                const part = await reader.read();
+                if (ended) return;
+                if (part.done) {
+                  ended = true;
+                  clearDeadline();
+                  controller.close();
+                  return;
+                }
+                if (CONTENT_BEARING_STREAM_PART_TYPES.has(part.value.type))
+                  clearDeadline();
+                controller.enqueue(part.value);
+              }
+            } catch (error) {
+              if (ended) return;
+              ended = true;
+              clearDeadline();
+              controller.error(error);
+            }
+          })();
+        },
+        cancel(reason) {
+          ended = true;
+          clearDeadline();
+          return reader.cancel(reason);
+        },
+      }),
+    };
+  },
+};
+
 /**
  * Текстовая модель активного провайдера. Общая для КАЖДОГО узла графа: корень и субагенты
  * обязаны говорить с одним провайдером, свои createOpenAICompatible/env в субагентах не заводим.
@@ -361,7 +489,7 @@ export const attachImagesMiddleware: LanguageModelMiddleware = {
 export function makeTextModel() {
   return wrapLanguageModel({
     model: makeBareTextModel(),
-    middleware: attachImagesMiddleware,
+    middleware: [attachImagesMiddleware, modelFirstChunkDeadlineMiddleware],
   });
 }
 

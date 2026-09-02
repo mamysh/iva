@@ -43,6 +43,8 @@ iva restart
 
 Cause: a wedged turn lives in `.workflow-data`, and eve re-enqueues it on every start — plain `iva restart` brings it right back.
 
+If Iva reports `Model produced no output for 90s`, the provider stream stayed silent; retry, or switch the model.
+
 ```bash
 iva reset   # stop services, quarantine workflow + Telegram busy/queue state, restart
 ```

@@ -5,11 +5,25 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate as waitForImmediate } from "node:timers/promises";
+import fc from "fast-check";
+import { wrapLanguageModel } from "ai";
+import { MockLanguageModelV4 } from "ai/test";
+import type {
+  LanguageModelV4StreamPart,
+  LanguageModelV4StreamResult,
+} from "@ai-sdk/provider";
+import { classifyModelCallError } from "../node_modules/eve/dist/src/harness/model-call-error.js";
 import { writeAuth, type CodexAuth } from "./lib/codex-auth.ts";
 
 process.env.MODEL_PROVIDER = "ollama";
-const { attachImagesMiddleware, attachVaultImages, codexFetch } =
-  await import("./provider.ts");
+const {
+  attachImagesMiddleware,
+  attachVaultImages,
+  codexFetch,
+  MODEL_FIRST_CHUNK_TIMEOUT_MS,
+  modelFirstChunkDeadlineMiddleware,
+} = await import("./provider.ts");
 const { MAX_ATTACHED_IMAGES, MAX_IMAGE_BYTES } =
   await import("./lib/attachment-ref.ts");
 
@@ -48,6 +62,62 @@ function muteErrors(t: { after: (fn: () => void) => void }): string[] {
     console.error = original;
   });
   return lines;
+}
+
+function modelWithDelayedParts(
+  parts: LanguageModelV4StreamPart[],
+  delayMs: number | undefined,
+  onSignal?: (signal: AbortSignal | undefined) => void,
+) {
+  return wrapLanguageModel({
+    model: new MockLanguageModelV4({
+      doStream: (options) => {
+        onSignal?.(options.abortSignal);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        return Promise.resolve({
+          stream: new ReadableStream<LanguageModelV4StreamPart>({
+            start(controller) {
+              if (delayMs === undefined) {
+                for (const part of parts) controller.enqueue(part);
+                return;
+              }
+              timer = setTimeout(() => {
+                for (const part of parts) controller.enqueue(part);
+              }, delayMs);
+            },
+            cancel() {
+              clearTimeout(timer);
+            },
+          }),
+        } satisfies LanguageModelV4StreamResult);
+      },
+    }),
+    middleware: modelFirstChunkDeadlineMiddleware,
+  });
+}
+
+function streamPart(
+  type: LanguageModelV4StreamPart["type"],
+): LanguageModelV4StreamPart {
+  switch (type) {
+    case "stream-start":
+      return { type, warnings: [] };
+    case "response-metadata":
+      return { type };
+    case "text-start":
+    case "reasoning-start":
+      return { type, id: "part" };
+    case "text-delta":
+    case "reasoning-delta":
+    case "tool-input-delta":
+      return { type, id: "part", delta: "x" };
+    case "tool-input-start":
+      return { type, id: "part", toolName: "tool" };
+    case "tool-call":
+      return { type, toolCallId: "call", toolName: "tool", input: "{}" };
+    default:
+      throw new Error(`unsupported test stream part: ${type}`);
+  }
 }
 
 await test("ссылка в user-сообщении превращается в file-part", () => {
@@ -259,6 +329,148 @@ await test("промпт без ссылок уходит нетронутым �
   });
 
   assert.equal(result, params);
+});
+
+await test("метаданные без контента обрываются по deadline и не отравляют сессию", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let providerSignal: AbortSignal | undefined;
+  const model = modelWithDelayedParts(
+    [streamPart("stream-start")],
+    undefined,
+    (signal) => {
+      providerSignal = signal;
+    },
+  );
+  const { stream } = await model.doStream({ prompt: [] });
+  const reader = stream.getReader();
+
+  assert.deepEqual(await reader.read(), {
+    done: false,
+    value: { type: "stream-start", warnings: [] },
+  });
+  const pending = reader.read();
+  const rejectsWithTimeout = assert.rejects(pending, (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /^Model produced no output for 90s/u);
+    assert.equal(
+      (error as Error & { code?: string }).code,
+      "MODEL_FIRST_CHUNK_TIMEOUT",
+    );
+    assert.equal(classifyModelCallError(error), "recoverable");
+    return true;
+  });
+  t.mock.timers.tick(MODEL_FIRST_CHUNK_TIMEOUT_MS);
+  await waitForImmediate();
+
+  await rejectsWithTimeout;
+  assert.equal(providerSignal?.aborted, true);
+});
+
+await test("контент до deadline проходит без изменений и снимает таймер", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const delta = streamPart("text-delta");
+  let providerSignal: AbortSignal | undefined;
+  const model = modelWithDelayedParts(
+    [delta],
+    MODEL_FIRST_CHUNK_TIMEOUT_MS - 1,
+    (signal) => {
+      providerSignal = signal;
+    },
+  );
+  const { stream } = await model.doStream({ prompt: [] });
+  const reader = stream.getReader();
+  const pending = reader.read();
+
+  t.mock.timers.tick(MODEL_FIRST_CHUNK_TIMEOUT_MS - 1);
+  await waitForImmediate();
+  assert.deepEqual(await pending, { done: false, value: delta });
+  t.mock.timers.tick(2);
+  await waitForImmediate();
+
+  assert.equal(providerSignal?.aborted, false);
+  await reader.cancel();
+});
+
+const DEADLINE_SEED = 20_260_902;
+const metadataPartType = fc.constantFrom<LanguageModelV4StreamPart["type"]>(
+  "stream-start",
+  "response-metadata",
+);
+const contentPartType = fc.constantFrom<LanguageModelV4StreamPart["type"]>(
+  "text-delta",
+  "reasoning-delta",
+  "tool-input-delta",
+  "tool-call",
+  "tool-input-start",
+  "text-start",
+  "reasoning-start",
+);
+
+await test(`deadline зависит только от первого контента (seed ${DEADLINE_SEED})`, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await fc.assert(
+    fc.asyncProperty(
+      fc.array(fc.oneof(metadataPartType, contentPartType), {
+        maxLength: 12,
+      }),
+      fc.integer({ min: 0, max: MODEL_FIRST_CHUNK_TIMEOUT_MS + 1 }),
+      async (types, firstPartOffset) => {
+        const parts = types.map(streamPart);
+        const hasContent = types.some((type) =>
+          [
+            "text-delta",
+            "reasoning-delta",
+            "tool-input-delta",
+            "tool-call",
+            "tool-input-start",
+            "text-start",
+            "reasoning-start",
+          ].includes(type),
+        );
+        const shouldTimeOut =
+          !hasContent || firstPartOffset >= MODEL_FIRST_CHUNK_TIMEOUT_MS;
+        const model = modelWithDelayedParts(parts, firstPartOffset);
+        const { stream } = await model.doStream({ prompt: [] });
+        const reader = stream.getReader();
+        const seen: LanguageModelV4StreamPart[] = [];
+        let failure: unknown;
+        const consuming = (async () => {
+          try {
+            for (;;) {
+              const part = await reader.read();
+              if (part.done) return;
+              seen.push(part.value);
+            }
+          } catch (error) {
+            failure = error;
+          }
+        })();
+
+        if (firstPartOffset < MODEL_FIRST_CHUNK_TIMEOUT_MS) {
+          t.mock.timers.tick(firstPartOffset);
+          await waitForImmediate();
+          t.mock.timers.tick(MODEL_FIRST_CHUNK_TIMEOUT_MS - firstPartOffset);
+        } else {
+          t.mock.timers.tick(MODEL_FIRST_CHUNK_TIMEOUT_MS);
+        }
+        await waitForImmediate();
+
+        if (shouldTimeOut) {
+          await consuming;
+          assert.equal(
+            (failure as Error & { code?: string })?.code,
+            "MODEL_FIRST_CHUNK_TIMEOUT",
+          );
+        } else {
+          assert.equal(failure, undefined);
+          assert.deepEqual(seen, parts);
+          await reader.cancel();
+          await consuming;
+        }
+      },
+    ),
+    { seed: DEADLINE_SEED, numRuns: 100 },
+  );
 });
 
 await test("codexFetch вырезает safety_identifier из тела /responses", async (t) => {
