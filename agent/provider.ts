@@ -361,7 +361,7 @@ export const attachImagesMiddleware: LanguageModelMiddleware = {
 };
 
 // Silent provider streams can keep a turn open indefinitely.
-// Remove when eve forwards `timeout.firstChunkMs` to ToolLoopAgent (see vercel/eve#2876 for context).
+// Remove when eve forwards ai SDK `timeout.firstChunkMs` to ToolLoopAgent (vercel/ai#17315 added the option; no eve issue yet).
 export const MODEL_FIRST_CHUNK_TIMEOUT_MS = 90_000;
 
 const CONTENT_BEARING_STREAM_PART_TYPES = new Set([
@@ -372,6 +372,8 @@ const CONTENT_BEARING_STREAM_PART_TYPES = new Set([
   "tool-input-start",
   "text-start",
   "reasoning-start",
+  "file",
+  "source",
 ]);
 
 type ModelFirstChunkTimeoutError = Error & {
@@ -433,7 +435,7 @@ export const modelFirstChunkDeadlineMiddleware: LanguageModelMiddleware = {
       clearDeadline();
       if (timedOut) {
         void providerResult.then(
-          ({ stream }) => stream.cancel(timeoutError),
+          ({ stream }) => stream.cancel(timeoutError).catch(() => undefined),
           () => undefined,
         );
       }

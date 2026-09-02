@@ -115,6 +115,19 @@ function streamPart(
       return { type, id: "part", toolName: "tool" };
     case "tool-call":
       return { type, toolCallId: "call", toolName: "tool", input: "{}" };
+    case "file":
+      return {
+        type,
+        mediaType: "text/plain",
+        data: { type: "data", data: "ZmlsZQ==" },
+      };
+    case "source":
+      return {
+        type,
+        sourceType: "url",
+        id: "source",
+        url: "https://example.com",
+      };
     default:
       throw new Error(`unsupported test stream part: ${type}`);
   }
@@ -366,6 +379,48 @@ await test("метаданные без контента обрываются п
   assert.equal(providerSignal?.aborted, true);
 });
 
+await test("поздний ошибочный stream не создаёт unhandled rejection", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  t.after(() => process.off("unhandledRejection", onUnhandled));
+
+  let resolveProvider!: (result: LanguageModelV4StreamResult) => void;
+  const model = wrapLanguageModel({
+    model: new MockLanguageModelV4({
+      doStream: () =>
+        new Promise<LanguageModelV4StreamResult>((resolve) => {
+          resolveProvider = resolve;
+        }),
+    }),
+    middleware: modelFirstChunkDeadlineMiddleware,
+  });
+  const result = Promise.resolve(model.doStream({ prompt: [] }));
+  const rejectsWithTimeout = assert.rejects(result, (error: unknown) => {
+    assert.equal(
+      (error as Error & { code?: string }).code,
+      "MODEL_FIRST_CHUNK_TIMEOUT",
+    );
+    return true;
+  });
+
+  await waitForImmediate();
+  t.mock.timers.tick(MODEL_FIRST_CHUNK_TIMEOUT_MS);
+  await waitForImmediate();
+  await rejectsWithTimeout;
+  resolveProvider({
+    stream: new ReadableStream<LanguageModelV4StreamPart>({
+      start(controller) {
+        controller.error(new Error("provider stream already failed"));
+      },
+    }),
+  });
+  await waitForImmediate();
+
+  assert.deepEqual(unhandled, []);
+});
+
 await test("контент до deadline проходит без изменений и снимает таймер", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const delta = streamPart("text-delta");
@@ -404,6 +459,8 @@ const contentPartType = fc.constantFrom<LanguageModelV4StreamPart["type"]>(
   "tool-input-start",
   "text-start",
   "reasoning-start",
+  "file",
+  "source",
 );
 
 await test(`deadline зависит только от первого контента (seed ${DEADLINE_SEED})`, async (t) => {
@@ -425,6 +482,8 @@ await test(`deadline зависит только от первого конте�
             "tool-input-start",
             "text-start",
             "reasoning-start",
+            "file",
+            "source",
           ].includes(type),
         );
         const shouldTimeOut =
