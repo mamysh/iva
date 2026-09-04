@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 
-// Контракт хунков patches/eve+0.49.0.patch, бэкпорт vercel/eve#2841 (issue #2839).
+// Контракт хунков patches/eve+0.51.1.patch, бэкпорт vercel/eve#2841 (issue #2839).
 // Точка удаления: бамп eve, где оба теста зелёные на чистом апстриме без патча.
 const eveRoot = dirname(
   createRequire(import.meta.url).resolve("eve/package.json"),
@@ -69,7 +69,7 @@ test("the tool loop announces skills as a system message, not a user message", (
   );
   assert.match(
     site[0],
-    /addSystem\(/,
+    /addSystem\(\{role:`system`,content:[a-zA-Z_$][\w$]*\}\)/,
     `announcement is not a system message: ${site[0]}`,
   );
   assert.doesNotMatch(

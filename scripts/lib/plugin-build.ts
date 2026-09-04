@@ -33,10 +33,10 @@ const MOUNT_DIR = "agent/extensions";
 /** Folder eve reads connections from; the file name in it is the connection name. */
 const CONNECTION_DIR = "agent/connections";
 /**
- * What eve 0.49.0 accepts as a connection file name (its CONNECTION_SLUG_PATTERN):
+ * What eve 0.51.1 accepts as a connection file name (its CONNECTION_SLUG_PATTERN):
  * lowercase letters, digits and dashes, starting with a letter. No underscores and no
  * dots - so `<namespace>__<server>` is not a name eve would register. Verified against
- * the installed package on 2026-09-02.
+ * the installed package on 2026-09-04.
  */
 const CONNECTION_SLUG = /^[a-z][a-z0-9-]{0,63}$/u;
 /**
@@ -62,14 +62,14 @@ const EVE_BUILD = ["extension", "build"];
  * only dependency is that peer gets a second copy of eve of its own, and its extension is
  * then built against that eve instead of the one about to run it - the compatibility
  * ADR-0009 promises. Declaring is enough for eve: its package boundary resolves the
- * declaration up the tree and finds the version's own eve (verified on 0.49.0 on
- * 2026-09-02).
+ * declaration up the tree and finds the version's own eve (verified on 0.51.1 on
+ * 2026-09-04).
  */
 const PLUGIN_INSTALL = ["--omit=dev", "--omit=peer", "--no-audit", "--no-fund"];
 const LOCKFILES = ["package-lock.json", "npm-shrinkwrap.json"];
 /**
- * The lowercase subset of eve 0.49.0's EXTENSION_SLUG_PATTERN. Agent Plugin names are
- * lowercase already. Verified against the installed package on 2026-09-02.
+ * The lowercase subset of eve 0.51.1's EXTENSION_SLUG_PATTERN. Agent Plugin names are
+ * lowercase already. Verified against the installed package on 2026-09-04.
  */
 const MOUNT_SLUG = /^[a-z][a-z0-9_]{0,63}$/u;
 /** Enough of a failed step to explain it, little enough to fit a chat message. */
@@ -438,7 +438,7 @@ export async function codePlugins(dataDir: string): Promise<CodePlugins> {
  * (scripts/lib/version-update.test.ts, scripts/authored-tree-guard.test.ts).
  */
 export function mountSource(plugin: CodePlugin): string {
-  // The trailing `/.` is load-bearing on eve 0.49.0. Without it, the authored asset
+  // The trailing `/.` is load-bearing on eve 0.51.1. Without it, the authored asset
   // loader reads the dotted `sh.iva` directory as an `.iva` asset and fails with EISDIR.
   // Discovery resolves the same canonical package root, while the bundler sees a package.
   const code = `"../../${plugin.directory}/${CODE_DIR}/."`;
@@ -547,7 +547,7 @@ export function connectionSource(spec: {
  * that - it only needs a package.json next to the mount specifier - but the bundler is
  * not: rolldown applies `exports` to bare specifiers only, so a relative mount resolves
  * through `main`, and without one the whole agent build dies with UNRESOLVED_IMPORT on
- * the generated mount (verified on eve 0.49.0 on 2026-09-02). Pointing the mount straight at
+ * the generated mount (verified on eve 0.51.1 on 2026-09-04). Pointing the mount straight at
  * `dist/index.mjs` instead is not the fix: then discovery finds no package and the
  * extension is never mounted at all.
  *

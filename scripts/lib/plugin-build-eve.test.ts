@@ -2,7 +2,7 @@
 // СБОРКА ПЛАГИНА НАСТОЯЩИМ eve. Единственный тест здесь, который не подменяет ни eve, ни
 // его сборку агента: остальные тесты рельсов гоняют фейковый раннер, и именно поэтому они
 // пропустили то, что ловит этот — сгенерированный mount собирался у discovery и падал у
-// бандлера. На 0.49.0 путь `sh.iva` без `/.` перехватывает asset-loader и падает с EISDIR;
+// бандлера. На 0.51.1 путь `sh.iva` без `/.` перехватывает asset-loader и падает с EISDIR;
 // `eve extension build` также не пишет `main`, нужный относительному спецификатору.
 //
 // Что проверяется на живом eve:
@@ -64,6 +64,7 @@ function version(t: { after(fn: () => void): void }): string {
         private: true,
         type: "module",
         imports: { "#*": "./agent/*" },
+        dependencies: { eve: "0.51.1" },
       },
       null,
       2,
@@ -197,7 +198,7 @@ function recordingRunner(): { run: Runner; steps: string[] } {
 }
 
 test(
-  "plugin names use the exact eve 0.49.0 extension and connection grammar",
+  "plugin names use the exact eve 0.51.1 extension and connection grammar",
   { skip: existsSync(EVE) ? false : "eve is not installed in node_modules" },
   async () => {
     const grammar = (await import(

@@ -153,6 +153,7 @@ class FakeEve {
       response.writeHead(200, {
         "content-type": "application/x-ndjson; charset=utf-8",
         "x-eve-stream-tail-index": String(events.length - 1),
+        "x-eve-stream-version": "25",
       });
       for (const item of events.slice(startIndex)) {
         response.write(`${JSON.stringify(item)}\n`);
@@ -231,7 +232,7 @@ async function runRollup(
         ASSISTANT_HOST: host,
         ASSISTANT_TIMEZONE: "UTC",
         ASSISTANT_VAULT_DIR: paths.vault,
-        // eve 0.49 retries session_not_active after 250, 500, and 1000 ms.
+        // eve 0.51.1 retries session_not_active after 250, 500, and 1000 ms.
         ROLLUP_TURN_TIMEOUT_MS: "3000",
         TELEGRAM_ALLOWED_USER_IDS: "",
         TELEGRAM_BOT_TOKEN: "",

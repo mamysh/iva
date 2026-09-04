@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 🧩 **Ива обновлена до eve 0.51.1** - локальный патч перенесён и заново собран для нового рантайма.
 - 🧹 **Медленные Telegram-сессии теперь завершаются надёжно** - Ива видит реальный kind канала eve, повторяет reset после временного сбоя и не пишет потоковые аргументы тулов в Trace; порог можно задать через `TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS`.
 - ⚡ **Reply отвечает без висяков и дублей** - pending input читается из состояния чата без полного replay, а в рамках одного процесса повторный `updateId` ждёт исход первого запроса и не запускает второй ход.
 - 📖 **Troubleshooting: back to upstream** - the "local commits conflict with the update" case now has a documented recovery: backup branch, `git reset --hard origin/main`, `iva update`; memory and settings survive.

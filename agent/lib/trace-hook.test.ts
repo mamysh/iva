@@ -200,11 +200,11 @@ void test("дельта-события в журнал не попадают", (
   const before = journal().length;
   feed({
     type: "message.appended",
-    data: { messageDelta: "в", messageSoFar: "в", turnId: "turn_3" },
+    data: { messageDelta: "в", turnId: "turn_3" },
   });
   feed({
     type: "reasoning.appended",
-    data: { reasoningDelta: "…", reasoningSoFar: "…", turnId: "turn_3" },
+    data: { reasoningDelta: "…", turnId: "turn_3" },
   });
   feed({
     type: "action.partial",
@@ -212,7 +212,7 @@ void test("дельта-события в журнал не попадают", (
   });
   feed({
     type: "action.input.appended",
-    data: { inputTextDelta: "{", inputTextOffset: 0, turnId: "turn_3" },
+    data: { inputTextDelta: "{", turnId: "turn_3" },
   });
   assert.equal(journal().length, before);
 });
