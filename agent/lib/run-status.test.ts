@@ -239,6 +239,55 @@ test("per-chat status enumeration returns decoded keys and records", () => {
   );
 });
 
+test("pending input update failure logs its chatKey and sessionId", () => {
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = (...parts: unknown[]) =>
+    lines.push(parts.map(String).join(" "));
+  try {
+    assert.equal(
+      status.updateTelegramPendingInputRequests("missing-pending-session", {
+        requested: ["request-1"],
+      }),
+      false,
+    );
+  } finally {
+    console.error = original;
+  }
+  assert.deepEqual(lines, [
+    "[telegram] pending input state update failed for chatKey not-found, session missing-pending-session",
+  ]);
+});
+
+test("pending input I/O failure logs its matched chatKey and sessionId", () => {
+  const key = "pending-io-failure:";
+  const sessionId = "pending-io-session";
+  status.setChatStatus(key, { status: "running", sessionId });
+  const dir = join(dataDir, "run-status.d");
+  const encoded = Buffer.from(key, "utf8").toString("base64url");
+  const lock = join(dir, `${encoded}.json.lock`);
+  writeFileSync(lock, "live-owner", { mode: 0o600 });
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = (...parts: unknown[]) =>
+    lines.push(parts.map(String).join(" "));
+  try {
+    assert.equal(
+      status.updateTelegramPendingInputRequests(sessionId, {
+        requested: ["request-1"],
+      }),
+      false,
+    );
+  } finally {
+    console.error = original;
+    rmSync(lock, { force: true });
+  }
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], new RegExp(`chatKey ${key}`));
+  assert.match(lines[0], new RegExp(`session ${sessionId}`));
+  assert.match(lines[0], /run-status lock timeout/u);
+});
+
 test("a stale per-chat lock is reclaimed after a crashed writer", () => {
   const key = "stale-lock:";
   const encoded = Buffer.from(key, "utf8").toString("base64url");

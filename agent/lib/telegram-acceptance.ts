@@ -8,12 +8,7 @@ import type {
   TelegramMessage,
 } from "eve/channels/telegram";
 import { parseTelegramUpdate } from "eve/channels/telegram";
-import type {
-  ChannelSource,
-  RouteHandlerArgs,
-  Session,
-  TurnPolicy,
-} from "eve/channels";
+import type { ChannelSource, RouteHandlerArgs, TurnPolicy } from "eve/channels";
 import {
   acquireLock,
   loadJsonStrict,
@@ -21,7 +16,7 @@ import {
   saveJsonAtomic,
 } from "./json-store.ts";
 import { dataDir } from "./data-dir.ts";
-import { chatKeyOf } from "./run-status.ts";
+import { chatKeyOf, hasTelegramPendingInputRequests } from "./run-status.ts";
 import { traceInboundOutcome } from "./trace.ts";
 import { TELEGRAM_QUEUE_RECEIPT_FIELD } from "./telegram-parts.ts";
 import { readSettings } from "./settings.ts";
@@ -41,7 +36,7 @@ type AcceptedWebhookHandler<TState> = (
 ) => Promise<Response>;
 type TelegramReroute = {
   message: string;
-  state: TelegramChannelState;
+  state: TelegramChannelState & { chatId: string };
 };
 type RequestMetadata = {
   receipt: string | null;
@@ -56,6 +51,9 @@ const receiptContext = new AsyncLocalStorage<ReceiptContext>();
 const RECEIPT_PATTERN = /^[a-f0-9]{32}$/u;
 const BOT_ID_PATTERN = /^(?<id>[1-9]\d*):/u;
 const COMPLETED_UPDATES_LIMIT = 200;
+// Process-local fence for bridge retries while one acceptance is still running.
+// Remove with vercel/eve#2876, when replay can no longer outlive the 90 s acceptance window.
+const inFlightUpdates = new Map<string, Promise<Response>>();
 let missingWebhookSecretReported = false;
 
 function validReceipt(value: unknown): value is string {
@@ -203,33 +201,6 @@ async function metadataFromRequest(request: Request): Promise<RequestMetadata> {
   }
 }
 
-async function hasPendingInputRequests(session: Session): Promise<boolean> {
-  const tailIndex = await session.getStreamTailIndex();
-  if (tailIndex < 0) return false;
-
-  const pending = new Set<string>();
-  const reader = (await session.getEventStream({ startIndex: 0 })).getReader();
-  try {
-    for (let index = 0; index <= tailIndex; index++) {
-      const event = await reader.read();
-      if (event.done) {
-        pending.clear();
-        break;
-      }
-      if (event.value.type === "input.requested") {
-        for (const request of event.value.data.requests)
-          pending.add(request.requestId);
-      } else if (event.value.type === "input.resolved") {
-        for (const resolution of event.value.data.resolutions)
-          pending.delete(resolution.requestId);
-      }
-    }
-  } finally {
-    await reader.cancel().catch(() => {});
-  }
-  return pending.size > 0;
-}
-
 function validCompletedLedger(value: unknown): CompletedLedger {
   if (
     !isRecord(value) ||
@@ -340,153 +311,180 @@ export async function handleAcceptedTelegramWebhook<TState>(
       headers: { [TELEGRAM_ACCEPTANCE_KIND_HEADER]: "handled" },
     });
   }
-  return receiptContext.run({ receipt, handled: false }, async () => {
-    const background: Promise<unknown>[] = [];
-    let accepted = false;
-    let closedSession = false;
-    const updateLabel = updateId === null ? "unknown" : String(updateId);
+  const inFlightKey =
+    updateId !== null && authenticated && botId !== null
+      ? `${botId}:${updateId}`
+      : null;
+  const existing =
+    inFlightKey === null ? undefined : inFlightUpdates.get(inFlightKey);
+  if (existing) return (await existing).clone();
 
-    const wrappedFrom: RouteHandlerArgs<TState>["from"] = (address) => {
-      const source = args.from(address);
-      const send: ChannelSource<TState>["send"] = async (message, options) => {
-        const active = await source.send(message, {
-          ...options,
-          turnPolicy: telegramTurnPolicy(),
-        });
-        accepted = true;
-        return active;
-      };
-      const respond: ChannelSource<TState>["respond"] = async (
-        inputResponses,
-        options,
-      ) => {
-        const active = await args.resolveSession(address);
-        if (active !== undefined) {
-          if (reroute !== null) {
-            const scanStartedAt = Date.now();
-            let pendingInput = false;
-            let scanError: unknown;
-            try {
-              pendingInput = await hasPendingInputRequests(active);
-            } catch (error) {
-              scanError = error;
-            }
-            const scanElapsedMs = Date.now() - scanStartedAt;
-            if (!pendingInput) {
-              if (scanError === undefined) {
-                console.error(
-                  `[telegram] reply has no pending input after ${scanElapsedMs}ms; delivering as a new message (update ${updateLabel})`,
+  const processing = receiptContext.run(
+    { receipt, handled: false },
+    async () => {
+      const background: Promise<unknown>[] = [];
+      let accepted = false;
+      let closedSession = false;
+      const updateLabel = updateId === null ? "unknown" : String(updateId);
+
+      const wrappedFrom: RouteHandlerArgs<TState>["from"] = (address) => {
+        const source = args.from(address);
+        const send: ChannelSource<TState>["send"] = async (
+          message,
+          options,
+        ) => {
+          const active = await source.send(message, {
+            ...options,
+            turnPolicy: telegramTurnPolicy(),
+          });
+          accepted = true;
+          return active;
+        };
+        const respond: ChannelSource<TState>["respond"] = async (
+          inputResponses,
+          options,
+        ) => {
+          const active = await args.resolveSession(address);
+          if (active !== undefined) {
+            if (reroute !== null) {
+              const scanStartedAt = Date.now();
+              let pendingInput = false;
+              let scanError: unknown;
+              try {
+                pendingInput = hasTelegramPendingInputRequests(
+                  chatKeyOf(
+                    reroute.state.chatId,
+                    reroute.state.messageThreadId,
+                  ),
+                  active.id,
                 );
-              } else {
-                const reason =
-                  scanError instanceof Error
-                    ? scanError.message
-                    : typeof scanError === "string"
-                      ? scanError
-                      : "unknown error";
-                console.error(
-                  `[telegram] pending input scan failed after ${scanElapsedMs}ms; delivering reply as a new message (update ${updateLabel}): ${reason}`,
-                );
+              } catch (error) {
+                scanError = error;
               }
+              const scanElapsedMs = Date.now() - scanStartedAt;
+              if (!pendingInput) {
+                if (scanError === undefined) {
+                  console.error(
+                    `[telegram] reply has no pending input after ${scanElapsedMs}ms; delivering as a new message (update ${updateLabel})`,
+                  );
+                } else {
+                  const reason =
+                    scanError instanceof Error
+                      ? scanError.message
+                      : typeof scanError === "string"
+                        ? scanError
+                        : "unknown error";
+                  console.error(
+                    `[telegram] pending input scan failed after ${scanElapsedMs}ms; delivering reply as a new message (update ${updateLabel}): ${reason}`,
+                  );
+                }
+                return send(reroute.message, {
+                  ...options,
+                  state: reroute.state as TState,
+                } as Parameters<ChannelSource<TState>["send"]>[1]);
+              }
+            }
+
+            let result;
+            try {
+              result = await active.respond(inputResponses, {
+                auth: options.auth,
+                ...(options.context === undefined
+                  ? {}
+                  : { context: options.context }),
+                ...(options.outputSchema === undefined
+                  ? {}
+                  : { outputSchema: options.outputSchema }),
+              });
+            } catch (error) {
+              if (reroute === null) throw error;
+              const reason =
+                error instanceof Error ? error.message : String(error);
+              console.error(
+                `[telegram] reply response failed; delivering as a new message (update ${updateLabel}): ${reason}`,
+              );
               return send(reroute.message, {
                 ...options,
                 state: reroute.state as TState,
               } as Parameters<ChannelSource<TState>["send"]>[1]);
             }
+            if (result.status === "accepted") {
+              accepted = true;
+              return args.attachSession(result.sessionId);
+            }
           }
 
-          let result;
-          try {
-            result = await active.respond(inputResponses, {
-              auth: options.auth,
-              ...(options.context === undefined
-                ? {}
-                : { context: options.context }),
-              ...(options.outputSchema === undefined
-                ? {}
-                : { outputSchema: options.outputSchema }),
-            });
-          } catch (error) {
-            if (reroute === null) throw error;
-            const reason =
-              error instanceof Error ? error.message : String(error);
-            console.error(
-              `[telegram] reply response failed; delivering as a new message (update ${updateLabel}): ${reason}`,
-            );
-            return send(reroute.message, {
-              ...options,
-              state: reroute.state as TState,
-            } as Parameters<ChannelSource<TState>["send"]>[1]);
+          if (reroute === null) {
+            closedSession = true;
+            throw new Error("Telegram response targeted an inactive session");
           }
-          if (result.status === "accepted") {
-            accepted = true;
-            return args.attachSession(result.sessionId);
-          }
-        }
-
-        if (reroute === null) {
-          closedSession = true;
-          throw new Error("Telegram response targeted an inactive session");
-        }
-        console.error(
-          `[telegram] reply to a closed session; delivering as a new message (update ${updateLabel})`,
-        );
-        return send(reroute.message, {
-          ...options,
-          state: reroute.state as TState,
-        } as Parameters<ChannelSource<TState>["send"]>[1]);
-      };
-      return {
-        cancel: source.cancel.bind(source),
-        clear: source.clear.bind(source),
-        compact: source.compact.bind(source),
-        reset: source.reset.bind(source),
-        respond,
-        send,
-      };
-    };
-
-    const wrappedArgs: RouteHandlerArgs<TState> = {
-      ...args,
-      from: wrappedFrom,
-      waitUntil: (task: Promise<unknown>) => {
-        background.push(Promise.resolve(task));
-      },
-    };
-    const response = await handler(request, wrappedArgs);
-
-    if (!response.ok) return response;
-    await Promise.allSettled(background);
-    const handled = receiptContext.getStore()?.handled === true;
-    if (accepted || handled) {
-      if (updateId !== null && authenticated && botId !== null) {
-        try {
-          await recordCompletedUpdate(completedFile, botId, updateId);
-        } catch (error) {
-          // Ход уже принят: ошибка ledger не должна вернуть 5xx и запустить тот же ход снова.
           console.error(
-            "[telegram] не смог записать завершённый update:",
-            error,
+            `[telegram] reply to a closed session; delivering as a new message (update ${updateLabel})`,
           );
+          return send(reroute.message, {
+            ...options,
+            state: reroute.state as TState,
+          } as Parameters<ChannelSource<TState>["send"]>[1]);
+        };
+        return {
+          cancel: source.cancel.bind(source),
+          clear: source.clear.bind(source),
+          compact: source.compact.bind(source),
+          reset: source.reset.bind(source),
+          respond,
+          send,
+        };
+      };
+
+      const wrappedArgs: RouteHandlerArgs<TState> = {
+        ...args,
+        from: wrappedFrom,
+        waitUntil: (task: Promise<unknown>) => {
+          background.push(Promise.resolve(task));
+        },
+      };
+      const response = await handler(request, wrappedArgs);
+
+      if (!response.ok) return response;
+      await Promise.allSettled(background);
+      const handled = receiptContext.getStore()?.handled === true;
+      if (accepted || handled) {
+        if (updateId !== null && authenticated && botId !== null) {
+          try {
+            await recordCompletedUpdate(completedFile, botId, updateId);
+          } catch (error) {
+            // Ход уже принят: ошибка ledger не должна вернуть 5xx и запустить тот же ход снова.
+            console.error(
+              "[telegram] не смог записать завершённый update:",
+              error,
+            );
+          }
         }
+        return new Response(null, {
+          status: 204,
+          headers: {
+            [TELEGRAM_ACCEPTANCE_KIND_HEADER]: accepted ? "turn" : "handled",
+          },
+        });
       }
-      return new Response(null, {
-        status: 204,
-        headers: {
-          [TELEGRAM_ACCEPTANCE_KIND_HEADER]: accepted ? "turn" : "handled",
-        },
+      if (closedSession) {
+        return new Response("Telegram reply targeted a closed session", {
+          status: 409,
+          headers: {
+            [TELEGRAM_ACCEPTANCE_KIND_HEADER]: TELEGRAM_CLOSED_SESSION_KIND,
+          },
+        });
+      }
+      return new Response("Telegram update was not accepted by Eve", {
+        status: 503,
       });
-    }
-    if (closedSession) {
-      return new Response("Telegram reply targeted a closed session", {
-        status: 409,
-        headers: {
-          [TELEGRAM_ACCEPTANCE_KIND_HEADER]: TELEGRAM_CLOSED_SESSION_KIND,
-        },
-      });
-    }
-    return new Response("Telegram update was not accepted by Eve", {
-      status: 503,
-    });
-  });
+    },
+  );
+  if (inFlightKey !== null) inFlightUpdates.set(inFlightKey, processing);
+  try {
+    return await processing;
+  } finally {
+    if (inFlightKey !== null && inFlightUpdates.get(inFlightKey) === processing)
+      inFlightUpdates.delete(inFlightKey);
+  }
 }

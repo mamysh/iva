@@ -32,6 +32,7 @@ import {
   wrapTelegramQueueOnMessage,
 } from "#lib/telegram-acceptance.ts";
 import { TELEGRAM_QUEUE_RECEIPT_FIELD } from "#lib/telegram-parts.ts";
+import { setChatStatus } from "#lib/run-status.ts";
 
 const WEBHOOK_SECRET = "test-secret";
 
@@ -117,6 +118,7 @@ type DeliveryOptions = {
   handler?: TelegramRouteHandler;
   sessionEvents?: readonly MessageStreamEvent[];
   sessionEventStreamError?: Error;
+  onSessionEventStream?: (startIndex: number) => void;
 };
 type DrainReadyQueueHeads = (
   options: Record<string, unknown>,
@@ -143,6 +145,7 @@ const fakeSession = (
   }),
   events: readonly MessageStreamEvent[] = [],
   eventStreamError?: Error,
+  onEventStream?: (startIndex: number) => void,
 ): Session => ({
   id,
   respond,
@@ -159,6 +162,7 @@ const fakeSession = (
     throw new Error("not used");
   },
   getEventStream: async ({ startIndex = 0 } = {}) => {
+    onEventStream?.(startIndex);
     if (eventStreamError !== undefined) throw eventStreamError;
     return new ReadableStream<MessageStreamEvent>({
       start(controller) {
@@ -289,6 +293,7 @@ function productionTelegramDelivery(
     handler,
     sessionEvents = [],
     sessionEventStreamError,
+    onSessionEventStream,
     completedUpdatesFile = join(
       mkdtempSync(join(tmpdir(), "iva-completed-updates-test-")),
       "completed-updates.json",
@@ -359,6 +364,7 @@ function productionTelegramDelivery(
           },
           sessionEvents,
           sessionEventStreamError,
+          onSessionEventStream,
         ),
       to: () => {
         throw new Error("not used");
@@ -625,6 +631,26 @@ test("production Telegram receipt removes exactly one head only after Eve send r
   );
 });
 
+test("the same in-flight update waits for one acceptance instead of starting a second turn", async () => {
+  const acceptance = deferred();
+  let turns = 0;
+  const delivery = productionTelegramDelivery(async () => {
+    turns++;
+    return acceptance.promise;
+  });
+  const update = privateUpdate(500, "slow acceptance");
+
+  const first = delivery(update);
+  await waitFor(() => turns === 1, "the original acceptance");
+  const duplicate = delivery(update);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(turns, 1);
+
+  acceptance.resolve({ id: "accepted-session" });
+  assert.deepEqual(await Promise.all([first, duplicate]), [true, true]);
+  assert.equal(turns, 1);
+});
+
 test("a completed update is handled from disk without invoking the authored handler", async () => {
   const root = mkdtempSync(join(tmpdir(), "iva-completed-ledger-test-"));
   const completedUpdatesFile = join(root, "completed-updates.json");
@@ -887,12 +913,13 @@ const inputResponsesOf = (input: unknown): unknown[] =>
     ? ((input as { inputResponses?: unknown[] }).inputResponses ?? [])
     : [];
 
-test("a reply without pending input starts a turn with the quote context", async () => {
+test("a 20k-event session without pending input reroutes in O(1) without opening the stream", async () => {
   const replyContext = JSON.stringify({
     type: "telegram_reply",
     text: "старый ответ бота",
   });
   const attempts: Array<{ input: unknown; options: unknown }> = [];
+  const streamStarts: number[] = [];
   const delivery = productionTelegramDelivery(
     async (_update, input, options) => {
       attempts.push({ input, options });
@@ -900,14 +927,17 @@ test("a reply without pending input starts a turn with the quote context", async
     },
     {
       onMessage: () => ({ auth: null, context: [replyContext] }),
-      sessionEvents: [
-        inputRequestedEvent("already-resolved"),
-        inputResolvedEvent("already-resolved"),
-      ],
+      sessionEvents: Array.from({ length: 20_000 }, (_, index) =>
+        inputResolvedEvent(`resolved-${index}`),
+      ),
+      onSessionEventStream: (startIndex) => streamStarts.push(startIndex),
     },
   );
 
+  const startedAt = performance.now();
   assert.equal(await delivery(replyToBotUpdate(1100, "и что дальше?")), true);
+  assert.ok(performance.now() - startedAt < 1_000);
+  assert.deepEqual(streamStarts, []);
   assert.equal(attempts.length, 1);
   assert.equal(inputResponsesOf(attempts[0].input).length, 0);
   assert.match(
@@ -923,17 +953,29 @@ test("a reply with pending input still responds without starting a turn", async 
       attempts.push(input);
       return { status: "accepted" };
     },
-    { sessionEvents: [inputRequestedEvent("pending-reply")] },
+    { sessionEvents: [] },
   );
 
-  assert.equal(await delivery(replyToBotUpdate(1101, "да")), true);
-  assert.equal(attempts.length, 1);
-  assert.equal(inputResponsesOf(attempts[0]).length, 1);
+  try {
+    setChatStatus("1:", {
+      pendingInputRequestIds: ["pending-reply"],
+      pendingInputSessionId: "test-session-1101",
+    });
+    assert.equal(await delivery(replyToBotUpdate(1101, "да")), true);
+    assert.equal(attempts.length, 1);
+    assert.equal(inputResponsesOf(attempts[0]).length, 1);
+  } finally {
+    setChatStatus("1:", {
+      pendingInputRequestIds: null,
+      pendingInputSessionId: null,
+    });
+  }
 });
 
-test("a reply starts a turn when the pending input scan rejects", async () => {
+test("a reply reroutes once without touching an unreadable event stream", async () => {
   const attempts: unknown[] = [];
   const logs: string[] = [];
+  const streamStarts: number[] = [];
   const priorError = console.error;
   console.error = (...parts: unknown[]) =>
     logs.push(parts.map(String).join(" "));
@@ -946,6 +988,7 @@ test("a reply starts a turn when the pending input scan rejects", async () => {
       {
         sessionEvents: [inputRequestedEvent("unreadable")],
         sessionEventStreamError: new Error("injected stream failure"),
+        onSessionEventStream: (startIndex) => streamStarts.push(startIndex),
       },
     );
 
@@ -956,9 +999,9 @@ test("a reply starts a turn when the pending input scan rejects", async () => {
 
   assert.equal(attempts.length, 1);
   assert.equal(inputResponsesOf(attempts[0]).length, 0);
+  assert.deepEqual(streamStarts, []);
   assert.equal(logs.length, 1);
-  assert.match(logs[0], /pending input scan failed after \d+ms/u);
-  assert.match(logs[0], /injected stream failure/u);
+  assert.match(logs[0], /reply has no pending input after \d+ms/u);
 });
 
 test("a thrown reply response reroutes once with the prepared context", async () => {
@@ -969,6 +1012,10 @@ test("a thrown reply response reroutes once with the prepared context", async ()
   const attempts: Array<{ input: unknown; options: unknown }> = [];
   const priorError = console.error;
   console.error = () => {};
+  setChatStatus("1:", {
+    pendingInputRequestIds: ["pending-throw"],
+    pendingInputSessionId: "test-session-1102",
+  });
   try {
     const delivery = productionTelegramDelivery(
       async (_update, input, options) => {
@@ -985,6 +1032,10 @@ test("a thrown reply response reroutes once with the prepared context", async ()
     assert.equal(await delivery(replyToBotUpdate(1102, "и что дальше?")), true);
   } finally {
     console.error = priorError;
+    setChatStatus("1:", {
+      pendingInputRequestIds: null,
+      pendingInputSessionId: null,
+    });
   }
 
   assert.equal(attempts.length, 2);
@@ -1002,6 +1053,10 @@ test("a reply to a closed session is delivered as a new turn exactly once", asyn
   const logs: string[] = [];
   console.error = (...parts: unknown[]) =>
     logs.push(parts.map(String).join(" "));
+  setChatStatus("1:", {
+    pendingInputRequestIds: ["pending-closed"],
+    pendingInputSessionId: "test-session-1101",
+  });
   try {
     const delivery = productionTelegramDelivery(
       async (_update, input) => {
@@ -1015,6 +1070,10 @@ test("a reply to a closed session is delivered as a new turn exactly once", asyn
     assert.equal(await delivery(replyToBotUpdate(1101, "и что дальше?")), true);
   } finally {
     console.error = priorError;
+    setChatStatus("1:", {
+      pendingInputRequestIds: null,
+      pendingInputSessionId: null,
+    });
   }
 
   assert.equal(attempts.length, 2, "ровно одна перемаршрутизация");
@@ -1059,7 +1118,18 @@ test("a media-only reply can reroute with its prepared context", async () => {
   const update = replyToBotUpdate(1102);
   update.message.photo = [{ file_id: "f1", width: 90, height: 90 }];
 
-  assert.equal(await delivery(update), true);
+  try {
+    setChatStatus("1:", {
+      pendingInputRequestIds: ["pending-media"],
+      pendingInputSessionId: "test-session-1102",
+    });
+    assert.equal(await delivery(update), true);
+  } finally {
+    setChatStatus("1:", {
+      pendingInputRequestIds: null,
+      pendingInputSessionId: null,
+    });
+  }
   assert.equal(attempts.length, 2, "ровно одна перемаршрутизация");
   assert.equal(inputResponsesOf(attempts[0].input).length, 1);
   assert.equal(inputResponsesOf(attempts[1].input).length, 0);
@@ -1073,6 +1143,10 @@ test("a new turn refused by an unavailable eve is retained, then delivered on th
   let eveIsDown = true;
   const priorError = console.error;
   console.error = () => {};
+  setChatStatus("1:", {
+    pendingInputRequestIds: ["pending-unavailable"],
+    pendingInputSessionId: "test-session-1102",
+  });
   try {
     const delivery = productionTelegramDelivery(
       async (_update, input) => {
@@ -1092,6 +1166,10 @@ test("a new turn refused by an unavailable eve is retained, then delivered on th
     assert.equal(await delivery(update), true);
   } finally {
     console.error = priorError;
+    setChatStatus("1:", {
+      pendingInputRequestIds: null,
+      pendingInputSessionId: null,
+    });
   }
   assert.equal(attempts.length, 4, "по две попытки на каждый проход моста");
   assert.equal(inputResponsesOf(attempts[3]).length, 0);

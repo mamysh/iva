@@ -1,5 +1,8 @@
 import { defineHook, type HookContext } from "eve/hooks";
-import { markTelegramSessionForRetirement } from "../lib/run-status.js";
+import {
+  markTelegramSessionForRetirement,
+  updateTelegramPendingInputRequests,
+} from "../lib/run-status.js";
 import { appendTrace } from "../lib/trace.js";
 import { parentTurnId, subagentTurnId } from "../lib/usage.js";
 
@@ -60,6 +63,7 @@ type MarkRetirement = (
   turnId: string,
   replayMs: number,
 ) => boolean;
+type UpdatePendingInputs = typeof updateTelegramPendingInputRequests;
 
 function replayRetireThreshold(raw: string | undefined): number {
   if (raw === undefined) return 30_000;
@@ -168,7 +172,37 @@ export function createTelegramReplayRetirementObserver({
   };
 }
 
+const requestIds = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.flatMap((entry) =>
+        isRecord(entry) && typeof entry.requestId === "string"
+          ? [entry.requestId]
+          : [],
+      )
+    : [];
+
+export function createTelegramPendingInputObserver({
+  updateImpl = updateTelegramPendingInputRequests,
+}: { updateImpl?: UpdatePendingInputs } = {}) {
+  return (event: StreamEvent, ctx: ReplayContext): void => {
+    if (ctx.channel?.kind !== TELEGRAM_CHANNEL_KIND) return;
+    const sessionId = text(ctx.session?.id);
+    const data = isRecord(event.data) ? event.data : {};
+    const requested =
+      event.type === "input.requested" ? requestIds(data.requests) : [];
+    const resolved =
+      event.type === "input.resolved" ? requestIds(data.resolutions) : [];
+    if (
+      sessionId.length === 0 ||
+      (requested.length === 0 && resolved.length === 0)
+    )
+      return;
+    updateImpl(sessionId, { requested, resolved });
+  };
+}
+
 const observeTelegramReplay = createTelegramReplayRetirementObserver();
+const observeTelegramPendingInput = createTelegramPendingInputObserver();
 
 // Одна запрошенная моделью операция: что это и как называется. Аргументы остаются в
 // содержимом целиком — в data едет только имя.
@@ -261,6 +295,11 @@ export default defineHook({
     // `*` ловит каждое принятое событие рантайма — отдельная подписка на конкретный тип
     // здесь запрещена: она пришла бы вместе с подстановочной и удвоила строку.
     "*": (event, ctx) => {
+      try {
+        observeTelegramPendingInput(event, ctx);
+      } catch (error) {
+        console.error("[telegram] pending input state was not updated:", error);
+      }
       try {
         observeTelegramReplay(event, ctx);
       } catch (error) {

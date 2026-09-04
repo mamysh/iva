@@ -29,6 +29,8 @@ const DATA = process.env.ASSISTANT_DATA_DIR;
 // голому node это переписывает тот же резолвер, что и другим тестам authored-дерева.
 await import("../../scripts/lib/ts-esm-hooks.ts");
 const { traceDay, traceFilePath } = await import("./trace.ts");
+const { getChatStatus, hasTelegramPendingInputRequests, setChatStatus } =
+  await import("./run-status.ts");
 const traceHookModule = await import("../hooks/trace.ts");
 const hook = traceHookModule.default;
 const {
@@ -464,4 +466,45 @@ void test("replay retirement threshold defaults to 30000 and rejects invalid env
   );
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS/);
+});
+
+void test("Telegram input.requested и input.resolved держат pending-состояние без стрима", () => {
+  const chatKey = "pending:";
+  const sessionId = "session-pending";
+  const context = {
+    session: { id: sessionId, turn: { id: "turn_pending", sequence: 1 } },
+    channel: { kind: "channel:telegram" },
+  };
+  setChatStatus(chatKey, {
+    status: "running",
+    sessionId,
+    turnId: "turn_pending",
+  });
+
+  feed(
+    {
+      type: "input.requested",
+      data: { requests: [{ requestId: "request-1" }], turnId: "turn_pending" },
+    },
+    context,
+  );
+  assert.equal(hasTelegramPendingInputRequests(chatKey, sessionId), true);
+  assert.equal(
+    hasTelegramPendingInputRequests(chatKey, "replacement-session"),
+    false,
+  );
+
+  setChatStatus(chatKey, { status: "idle", sessionId: null, turnId: null });
+  feed(
+    {
+      type: "input.resolved",
+      data: {
+        resolutions: [{ requestId: "request-1" }],
+        turnId: "turn_pending",
+      },
+    },
+    context,
+  );
+  assert.equal(hasTelegramPendingInputRequests(chatKey, sessionId), false);
+  assert.equal(getChatStatus(chatKey)?.pendingInputSessionId, undefined);
 });

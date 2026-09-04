@@ -197,6 +197,79 @@ export function listChatStatuses(): Array<{
   return records;
 }
 
+const pendingInputIds = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter(
+        (requestId): requestId is string =>
+          typeof requestId === "string" && requestId.length > 0,
+      )
+    : [];
+
+export function hasTelegramPendingInputRequests(
+  chatKey: string,
+  sessionId: string,
+): boolean {
+  const status = getChatStatus(chatKey);
+  return (
+    status?.pendingInputSessionId === sessionId &&
+    pendingInputIds(status.pendingInputRequestIds).length > 0
+  );
+}
+
+export function updateTelegramPendingInputRequests(
+  sessionId: string,
+  {
+    requested = [],
+    resolved = [],
+  }: { requested?: readonly string[]; resolved?: readonly string[] },
+): boolean {
+  let failedChatKey: string | null = null;
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const records = listChatStatuses();
+      for (const { chatKey, status } of records) {
+        const ownsSession = status.sessionId === sessionId;
+        const ownsPending = status.pendingInputSessionId === sessionId;
+        if (
+          (!ownsSession && !ownsPending) ||
+          (resolved.length > 0 && !ownsPending)
+        )
+          continue;
+        failedChatKey = chatKey;
+
+        const pending = new Set(
+          ownsPending ? pendingInputIds(status.pendingInputRequestIds) : [],
+        );
+        for (const requestId of requested) {
+          if (requestId.length > 0) pending.add(requestId);
+        }
+        for (const requestId of resolved) pending.delete(requestId);
+        const next = [...pending];
+        const updated = setChatStatusIf(
+          chatKey,
+          { generation: status.generation },
+          {
+            pendingInputRequestIds: next.length > 0 ? next : null,
+            pendingInputSessionId: next.length > 0 ? sessionId : null,
+          },
+        );
+        if (updated) return true;
+        break;
+      }
+    }
+  } catch (error) {
+    console.error(
+      `[telegram] pending input state update failed for chatKey ${failedChatKey ?? "not-found"}, session ${sessionId}:`,
+      error,
+    );
+    return false;
+  }
+  console.error(
+    `[telegram] pending input state update failed for chatKey ${failedChatKey ?? "not-found"}, session ${sessionId}`,
+  );
+  return false;
+}
+
 // true, когда по chatKey реально идёт ход (running и не протух).
 export function isRunning(chatKey: string, now = Date.now()): boolean {
   const st = getChatStatus(chatKey);
