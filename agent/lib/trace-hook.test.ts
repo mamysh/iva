@@ -19,6 +19,7 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import fc from "fast-check";
 
 const root = mkdtempSync(join(tmpdir(), "iva-trace-hook-"));
 process.env.ASSISTANT_DATA_DIR = join(root, "data");
@@ -390,6 +391,19 @@ void test("медленный Telegram replay помечает сессию, HTT
   });
 
   observe(
+    { type: "turn.started", data: { sequence: 0, turnId: "turn_base" } },
+    telegramContext("session-slow"),
+  );
+  now += 1_000;
+  observe(
+    {
+      type: "message.received",
+      data: { message: "base", sequence: 0, turnId: "turn_base" },
+    },
+    telegramContext("session-slow"),
+  );
+
+  observe(
     { type: "turn.started", data: { sequence: 1, turnId: "turn_slow" } },
     telegramContext("session-slow"),
   );
@@ -397,7 +411,7 @@ void test("медленный Telegram replay помечает сессию, HTT
   observe(
     {
       type: "message.received",
-      data: { message: "slow", sequence: 2, turnId: "turn_slow" },
+      data: { message: "slow", sequence: 1, turnId: "turn_slow" },
     },
     telegramContext("session-slow"),
   );
@@ -442,6 +456,104 @@ void test("медленный Telegram replay помечает сессию, HTT
       turnId: "turn_slow",
     },
   ]);
+});
+
+function replayMarks(
+  replays: readonly number[],
+  sessionId: string,
+  firstSequence = 0,
+) {
+  let now = 0;
+  const marked: Array<{ replayMs: number; turnId: string }> = [];
+  const observe = createTelegramReplayRetirementObserver({
+    now: () => now,
+    markImpl: (_sessionId, turnId, replayMs) => {
+      if (marked.length > 0) return false;
+      marked.push({ replayMs, turnId });
+      return true;
+    },
+  });
+  const context = {
+    session: { id: sessionId },
+    channel: { kind: "channel:telegram" },
+  };
+
+  for (const [index, replayMs] of replays.entries()) {
+    const sequence = firstSequence + index;
+    const turnId = `turn_${sequence}`;
+    observe({ type: "turn.started", data: { sequence, turnId } }, context);
+    now += replayMs;
+    observe({ type: "message.received", data: { sequence, turnId } }, context);
+  }
+
+  return marked;
+}
+
+void test("первая видимая после рестарта sequence 7 помечается по абсолютному порогу", () => {
+  assert.deepEqual(replayMarks([400_000], "restarted-session", 7), [
+    { replayMs: 400_000, turnId: "turn_7" },
+  ]);
+});
+
+void test("трасса Станислава помечает сессию впервые на turn_6", () => {
+  assert.deepEqual(
+    replayMarks(
+      [33, 18, 14, 7, 23, 26, 73, 146, 93, 143, 427].map(
+        (seconds) => seconds * 1_000,
+      ),
+      "stan-session",
+    ),
+    [{ replayMs: 73_000, turnId: "turn_6" }],
+  );
+});
+
+void test("трасса Артёма помечает сессию на replay 87 секунд", () => {
+  assert.deepEqual(replayMarks([2_000, 3_000, 87_000], "art-session"), [
+    { replayMs: 87_000, turnId: "turn_2" },
+  ]);
+});
+
+void test("ровный replay 40 секунд не создаёт цикл retire", () => {
+  assert.deepEqual(
+    replayMarks([40_000, 40_000, 40_000, 40_000], "flat-session"),
+    [],
+  );
+});
+
+const REPLAY_GROWTH_PBT_SEED = 2_609_040_906;
+void test(`retire зависит от роста replay (fast-check seed ${REPLAY_GROWTH_PBT_SEED})`, () => {
+  fc.assert(
+    fc.property(
+      fc.oneof(fc.constant(0), fc.integer({ min: 1, max: 1_000 })),
+      fc.array(fc.integer({ min: 0, max: 1_000_000 }), {
+        minLength: 1,
+        maxLength: 20,
+      }),
+      (firstSequence, replays) => {
+        const marks = replayMarks(replays, "property-session", firstSequence);
+        const boundary =
+          firstSequence === 0
+            ? Math.max(TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS, 2 * replays[0])
+            : TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS;
+        const markedIndex = replays.findIndex(
+          (replayMs, index) =>
+            !(firstSequence === 0 && index === 0) && replayMs > boundary,
+        );
+        assert.deepEqual(
+          marks,
+          markedIndex === -1
+            ? []
+            : [
+                {
+                  replayMs: replays[markedIndex],
+                  turnId: `turn_${firstSequence + markedIndex}`,
+                },
+              ],
+        );
+      },
+    ),
+    { seed: REPLAY_GROWTH_PBT_SEED, numRuns: 250 },
+  );
 });
 
 void test("replay retirement threshold defaults to 30000 and rejects invalid env", () => {

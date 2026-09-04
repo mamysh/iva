@@ -80,6 +80,8 @@ function replayRetireThreshold(raw: string | undefined): number {
 export const TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS = replayRetireThreshold(
   process.env.TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS,
 );
+// Session startup is baseline cost, not replay growth worth retiring for.
+const TELEGRAM_REPLAY_RETIRE_BASELINE_MULTIPLIER = 2;
 const MAX_TRACKED_REPLAY_TURNS = 128;
 
 // Eve derives every authored channel kind from its file name with this prefix.
@@ -113,6 +115,7 @@ export function createTelegramReplayRetirementObserver({
     string,
     { startedAt: number; settled: boolean; marked: boolean }
   >();
+  const baselines = new Map<string, number>();
   const remember = (
     key: string,
     value: { startedAt: number; settled: boolean; marked: boolean },
@@ -122,6 +125,14 @@ export function createTelegramReplayRetirementObserver({
       const oldest = turns.keys().next().value;
       if (oldest === undefined) break;
       turns.delete(oldest);
+    }
+  };
+  const rememberBaseline = (sessionId: string, replayMs: number) => {
+    baselines.set(sessionId, replayMs);
+    while (baselines.size > MAX_TRACKED_REPLAY_TURNS) {
+      const oldest = baselines.keys().next().value;
+      if (oldest === undefined) break;
+      baselines.delete(oldest);
     }
   };
 
@@ -162,9 +173,16 @@ export function createTelegramReplayRetirementObserver({
     // replayMs = hook time at message.received - hook time at first turn.started.
     // The cut points span durable replay until the current turn is ready.
     const replayMs = now() - current.startedAt;
+    if (!Number.isFinite(replayMs)) return;
+    const baselineMs = baselines.get(sessionId);
+    if (data.sequence === 0) {
+      if (baselineMs === undefined) rememberBaseline(sessionId, replayMs);
+      return;
+    }
     if (
-      Number.isFinite(replayMs) &&
       replayMs > TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS &&
+      (baselineMs === undefined ||
+        replayMs > baselineMs * TELEGRAM_REPLAY_RETIRE_BASELINE_MULTIPLIER) &&
       markImpl(sessionId, turnId, replayMs)
     ) {
       current.marked = true;
