@@ -8,6 +8,7 @@
 // authored-дерева (hooks, channels, instructions, schedules, tools) тестов нет вовсе.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -15,8 +16,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const root = mkdtempSync(join(tmpdir(), "iva-trace-hook-"));
 process.env.ASSISTANT_DATA_DIR = join(root, "data");
@@ -41,8 +43,24 @@ const handle = hook.events?.["*"] as unknown as Handler;
 
 const ctx = {
   session: { id: "wrun_7", turn: { id: "turn_3", sequence: 3 }, auth: {} },
-  channel: { kind: "telegram" },
+  channel: { kind: "channel:telegram" },
 };
+
+void test("Telegram fixture matches the channel kind built by installed eve", () => {
+  const eveRoot = dirname(
+    createRequire(import.meta.url).resolve("eve/package.json"),
+  );
+  const source = readFileSync(
+    join(eveRoot, "dist/src/runtime/resolve-channel.js"),
+    "utf8",
+  );
+  const template = /`channel:\$\{[^}]+\.name\}`/.exec(source)?.[0];
+  assert.ok(template, "eve no longer derives authored channel kinds from channel:<name>");
+  const installedKind = template
+    .slice(1, -1)
+    .replace(/\$\{[^}]+\}/, "telegram");
+  assert.equal(ctx.channel.kind, installedKind);
+});
 
 function feed(event: unknown, context: unknown = ctx): void {
   handle(event, context);
@@ -135,7 +153,7 @@ void test("шаг модели, вызов тула и ответ ложатся
     assert.equal(event.kind, "eve");
     assert.equal(event.turn, "turn_3");
     assert.equal(event.session, "wrun_7");
-    assert.equal(event.source, "telegram");
+    assert.equal(event.source, "channel:telegram");
   }
 
   const [requested] = only("actions.requested");
@@ -186,6 +204,10 @@ void test("дельта-события в журнал не попадают", (
   feed({
     type: "action.partial",
     data: { result: { output: "частично" }, turnId: "turn_3" },
+  });
+  feed({
+    type: "action.input.appended",
+    data: { inputDelta: "{", inputSoFar: "{", turnId: "turn_3" },
   });
   assert.equal(journal().length, before);
 });
@@ -343,7 +365,7 @@ void test("хук не роняет ход ни на каком событии",
   for (const line of journal()) assert.equal(typeof line.kind, "string");
 });
 
-void test("медленный Telegram replay помечает сессию, быстрый не помечает", () => {
+void test("медленный Telegram replay помечает сессию, HTTP и быстрый replay — нет", () => {
   let now = 1_000;
   const marked: Array<{
     replayMs: number;
@@ -359,7 +381,7 @@ void test("медленный Telegram replay помечает сессию, б�
   });
   const telegramContext = (sessionId: string) => ({
     session: { id: sessionId, turn: { id: "turn_1", sequence: 1 } },
-    channel: { kind: "telegram" },
+    channel: { kind: "channel:telegram" },
   });
 
   observe(
@@ -389,6 +411,25 @@ void test("медленный Telegram replay помечает сессию, б�
     telegramContext("session-fast"),
   );
 
+  now = 200_000;
+  observe(
+    { type: "turn.started", data: { sequence: 1, turnId: "turn-http" } },
+    {
+      session: { id: "session-http", turn: { id: "turn-http", sequence: 1 } },
+      channel: { kind: "http" },
+    },
+  );
+  now += TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS + 1;
+  observe(
+    {
+      type: "message.received",
+      data: { message: "slow", sequence: 2, turnId: "turn-http" },
+    },
+    {
+      session: { id: "session-http", turn: { id: "turn-http", sequence: 1 } },
+      channel: { kind: "http" },
+    },
+  );
   assert.deepEqual(marked, [
     {
       replayMs: TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS + 1,
@@ -396,4 +437,28 @@ void test("медленный Telegram replay помечает сессию, б�
       turnId: "turn_slow",
     },
   ]);
+});
+
+void test("replay retirement threshold defaults to 30000 and rejects invalid env", () => {
+  assert.equal(TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS, 30_000);
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "./scripts/lib/ts-esm-hooks.ts",
+      "--input-type=module",
+      "--eval",
+      'import("./agent/hooks/trace.ts")',
+    ],
+    {
+      cwd: join(import.meta.dirname, "../.."),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS: "abc",
+      },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS/);
 });

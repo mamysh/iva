@@ -724,7 +724,7 @@ test("a failed retirement CAS does not reset the session", async () => {
   assert.deepEqual(current.retireAfterTurn, marker);
 });
 
-test("a failed reset is dropped after the retirement claim", async () => {
+test("a failed reset keeps the marker and the next pass retires once", async () => {
   const marker = {
     replayMs: 31_000,
     sessionId: "session-reset-failure",
@@ -737,39 +737,72 @@ test("a failed reset is dropped after the retirement claim", async () => {
     retireAfterTurn: marker,
   };
   const notices: string[] = [];
+  const traces: Record<string, unknown>[] = [];
+  let resetAttempts = 0;
 
-  assert.equal(
-    await retireSettledSessions({
-      listStatusesImpl: () => [
-        { chatKey: "retire-reset-failure:", status: current },
-      ],
-      statusImpl: () => current,
-      setStatusIfImpl: (
-        _chatKey: string,
-        _expected: Record<string, unknown>,
-        patch: Record<string, unknown>,
-      ) => {
-        current = { ...current, ...patch };
-        if (patch.retireAfterTurn === null) delete current.retireAfterTurn;
-        return current;
-      },
-      setStatusImpl: (_chatKey: string, patch: Record<string, unknown>) => {
-        current = { ...current, ...patch };
-        if (patch.retiredSessionId === null) delete current.retiredSessionId;
-        return current;
-      },
-      resetImpl: async () => {
-        throw new Error("eve unavailable");
-      },
-      sendImpl: async (_chatKey: string, text: string) => notices.push(text),
-      traceImpl: () => {},
-      logImpl: () => {},
-    }),
-    0,
-  );
-  assert.equal(current.retireAfterTurn, undefined);
+  const options = {
+    listStatusesImpl: () => [
+      { chatKey: "retire-reset-failure:", status: current },
+    ],
+    statusImpl: () => current,
+    setStatusIfImpl: (
+      _chatKey: string,
+      expected: Record<string, unknown>,
+      patch: Record<string, unknown>,
+    ) => {
+      if (
+        Object.entries(expected).some(
+          ([key, value]) => !Object.is(current[key], value),
+        )
+      ) {
+        return null;
+      }
+      current = {
+        ...current,
+        ...patch,
+        generation: Number(current.generation) + 1,
+        updatedAt: Number(current.updatedAt) + 1,
+      };
+      if (patch.retireAfterTurn === null) delete current.retireAfterTurn;
+      return current;
+    },
+    setStatusImpl: (_chatKey: string, patch: Record<string, unknown>) => {
+      current = { ...current, ...patch };
+      if (patch.retiredSessionId === null) delete current.retiredSessionId;
+      return current;
+    },
+    resetImpl: async () => {
+      resetAttempts += 1;
+      if (resetAttempts === 1) throw new Error("eve unavailable");
+    },
+    sendImpl: async (_chatKey: string, text: string) => notices.push(text),
+    traceImpl: (event: Record<string, unknown>) => traces.push(event),
+    trImpl: (en: string) => en,
+    logImpl: () => {},
+  };
+
+  assert.equal(await retireSettledSessions(options), 0);
+  assert.deepEqual(current.retireAfterTurn, marker);
   assert.equal(current.retiredSessionId, undefined);
   assert.deepEqual(notices, []);
+  assert.deepEqual(traces, []);
+
+  assert.equal(await retireSettledSessions(options), 1);
+  assert.equal(await retireSettledSessions(options), 0);
+  assert.equal(current.retireAfterTurn, undefined);
+  assert.equal(current.retiredSessionId, marker.sessionId);
+  assert.equal(resetAttempts, 2);
+  assert.equal(notices.length, 1);
+  assert.deepEqual(traces, [
+    {
+      source: "telegram",
+      kind: "turn",
+      name: "retired",
+      turn: marker.turnId,
+      session: marker.sessionId,
+      data: { replayMs: marker.replayMs },
+    },
+  ]);
 });
 
 const RETIRE_ORDER_PBT_SEED = 1_903_627;
@@ -837,7 +870,7 @@ test(`retirement never runs mid-turn or twice (fast-check seed ${RETIRE_ORDER_PB
             id: "property-session",
             turn: { id: "property-turn", sequence: 1 },
           },
-          channel: { kind: "telegram" },
+          channel: { kind: "channel:telegram" },
         };
         const options = {
           listStatusesImpl: () => [
