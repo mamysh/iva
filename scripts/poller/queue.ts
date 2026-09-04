@@ -57,7 +57,7 @@ type SetStatusIfImpl = (
   chatKey: string,
   expected: Record<string, unknown>,
   patch: Record<string, unknown>,
-) => unknown;
+) => RunStatus | null;
 type RetirementResetImpl = (
   chatKey: string,
   target: TelegramResetTarget,
@@ -456,7 +456,6 @@ function sameRetirement(
 export async function retireSettledSessions({
   listStatusesImpl = listChatStatuses,
   statusImpl = getChatStatus,
-  setStatusImpl = setChatStatus,
   setStatusIfImpl = setChatStatusIf,
   resetImpl = performScopedReset,
   sendImpl = sendStaleRunNotice,
@@ -467,7 +466,6 @@ export async function retireSettledSessions({
 }: {
   listStatusesImpl?: () => StatusRecord[] | Promise<StatusRecord[]>;
   statusImpl?: StatusImpl;
-  setStatusImpl?: (chatKey: string, patch: Record<string, unknown>) => unknown;
   setStatusIfImpl?: SetStatusIfImpl;
   resetImpl?: RetirementResetImpl;
   sendImpl?: (chatKey: string, text: string) => Promise<unknown>;
@@ -519,7 +517,7 @@ export async function retireSettledSessions({
     )
       continue;
 
-    let cleared: unknown;
+    let cleared: RunStatus | null;
     try {
       cleared = setStatusIfImpl(
         key,
@@ -530,7 +528,6 @@ export async function retireSettledSessions({
         },
         {
           retireAfterTurn: null,
-          retiredSessionId: marker.sessionId,
         },
       );
     } catch (error) {
@@ -551,7 +548,16 @@ export async function retireSettledSessions({
         errorMessage(error),
       );
       try {
-        setStatusImpl(key, { retiredSessionId: null });
+        setStatusIfImpl(
+          key,
+          {
+            status: "idle",
+            generation: cleared.generation,
+            updatedAt: cleared.updatedAt,
+            retireAfterTurn: undefined,
+          },
+          { retireAfterTurn: marker },
+        );
       } catch (statusError) {
         safeLog(
           `session retirement retry state failed for ${key}:`,
@@ -559,6 +565,27 @@ export async function retireSettledSessions({
         );
       }
       continue;
+    }
+
+    try {
+      const resetStatus = statusImpl(key);
+      if (resetStatus?.status === "idle") {
+        setStatusIfImpl(
+          key,
+          {
+            status: "idle",
+            generation: resetStatus.generation,
+            updatedAt: resetStatus.updatedAt,
+            retireAfterTurn: undefined,
+          },
+          { retiredSessionId: marker.sessionId },
+        );
+      }
+    } catch (statusError) {
+      safeLog(
+        `session retirement completion state failed for ${key}:`,
+        errorMessage(statusError),
+      );
     }
 
     retired++;

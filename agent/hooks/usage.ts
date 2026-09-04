@@ -3,7 +3,7 @@ import { resolveModelProvider } from "../lib/model-provider.js";
 import { appendUsage, subagentTurnId } from "../lib/usage.js";
 
 // Учёт фактического расхода токенов. ОДИН хук ловит весь расход одного eve-агента без
-// двойного счёта: основной чат (channel.kind="telegram") и фоновые джобы через eve/client —
+// двойного счёта: основной Telegram Channel и фоновые джобы через eve/client —
 // daily-digest, memory rollup (kind="http"). Шаги субагента (planner) приходят завёрнутыми
 // в "subagent.event" → слушаем оба события. Пишем по строке на шаг в data/usage.jsonl;
 // читают мост (/usage) и CLI (`iva usage`).

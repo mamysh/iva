@@ -766,11 +766,6 @@ test("a failed reset keeps the marker and the next pass retires once", async () 
       if (patch.retireAfterTurn === null) delete current.retireAfterTurn;
       return current;
     },
-    setStatusImpl: (_chatKey: string, patch: Record<string, unknown>) => {
-      current = { ...current, ...patch };
-      if (patch.retiredSessionId === null) delete current.retiredSessionId;
-      return current;
-    },
     resetImpl: async () => {
       resetAttempts += 1;
       if (resetAttempts === 1) throw new Error("eve unavailable");

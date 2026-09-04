@@ -10,8 +10,8 @@ import { parentTurnId, subagentTurnId } from "../lib/usage.js";
 //
 // ВАЖНО: в отличие от transcript.ts раунды tool-calls НЕ фильтруются — в журнале обязан
 // быть КАЖДЫЙ шаг. Зато отброшены дельта-события (`message.appended`, `reasoning.appended`,
-// `action.partial`): они несут накопительный `…SoFar` сотни раз за ход, поэтому журнал рос
-// бы квадратично, ничего нового не сообщая — итоговый текст приходит в `*.completed`.
+// `action.partial`, `action.input.appended`): это промежуточный поток из сотен событий за
+// ход, поэтому журнал рос бы без пользы — итог приходит в `*.completed`.
 //
 // Шаги инлайн-субагента (planner) приходят завёрнутыми в `subagent.event`: разворачиваем и
 // пишем внутреннее событие ключом хода РОДИТЕЛЯ с суффиксом (тот же subagentTurnId, что у
@@ -20,6 +20,7 @@ const DELTA_EVENTS = new Set([
   "message.appended",
   "reasoning.appended",
   "action.partial",
+  "action.input.appended",
 ]);
 
 // Короткие поля события: имена, индексы, коды, статусы. Пишутся всегда.
@@ -60,9 +61,26 @@ type MarkRetirement = (
   replayMs: number,
 ) => boolean;
 
+function replayRetireThreshold(raw: string | undefined): number {
+  if (raw === undefined) return 30_000;
+  const value = Number(raw);
+  if (raw.trim().length === 0 || !Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS must be a positive number, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
+}
+
 // Workaround for the 240 s replay ceiling; remove when vercel/eve#2876 is resolved upstream.
-export const TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS = 30_000;
+export const TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS = replayRetireThreshold(
+  process.env.TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS,
+);
 const MAX_TRACKED_REPLAY_TURNS = 128;
+
+// Eve derives every authored channel kind from its file name with this prefix.
+const authoredChannelKind = (name: string) => `channel:${name}`;
+const TELEGRAM_CHANNEL_KIND = authoredChannelKind("telegram");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -104,7 +122,7 @@ export function createTelegramReplayRetirementObserver({
   };
 
   return (event: StreamEvent, ctx: ReplayContext): void => {
-    if (ctx.channel?.kind !== "telegram") return;
+    if (ctx.channel?.kind !== TELEGRAM_CHANNEL_KIND) return;
     const sessionId = text(ctx.session?.id);
     const data = isRecord(event.data) ? event.data : {};
     const turnId = text(data.turnId);

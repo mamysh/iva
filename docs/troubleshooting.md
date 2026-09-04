@@ -53,7 +53,7 @@ From Telegram, `/new` resets only the current chat or forum topic. `/restart` re
 
 After upgrading a legacy group with no recorded Eve token, send `/new` as a reply to Iva's latest message once. Future resets use the exact token stored by the new channel events.
 
-The notice `The conversation grew large, so I started a fresh one. Memory is intact.` means replay exceeded 30 seconds. Russian installations show `Диалог разросся, начала новый. Память на месте.` Iva finishes the current turn before resetting only that chat. Vault memory remains intact. Send the next message normally.
+The notice `The conversation grew large, so I started a fresh one. Memory is intact.` means replay exceeded 30 seconds. Russian installations show `Диалог разросся, начала новый. Память на месте.` Iva finishes the current turn before resetting only that chat. Vault memory remains intact. Send the next message normally. For a smoke test, set `TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS` to a positive number of milliseconds.
 
 Replying to an Iva message starts a normal turn when no human-input request is pending; when one is pending, the reply answers it.
 

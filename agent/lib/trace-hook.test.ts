@@ -55,7 +55,10 @@ void test("Telegram fixture matches the channel kind built by installed eve", ()
     "utf8",
   );
   const template = /`channel:\$\{[^}]+\.name\}`/.exec(source)?.[0];
-  assert.ok(template, "eve no longer derives authored channel kinds from channel:<name>");
+  assert.ok(
+    template,
+    "eve no longer derives authored channel kinds from channel:<name>",
+  );
   const installedKind = template
     .slice(1, -1)
     .replace(/\$\{[^}]+\}/, "telegram");
@@ -207,7 +210,7 @@ void test("дельта-события в журнал не попадают", (
   });
   feed({
     type: "action.input.appended",
-    data: { inputDelta: "{", inputSoFar: "{", turnId: "turn_3" },
+    data: { inputTextDelta: "{", inputTextOffset: 0, turnId: "turn_3" },
   });
   assert.equal(journal().length, before);
 });
@@ -415,7 +418,7 @@ void test("медленный Telegram replay помечает сессию, HTT
   observe(
     { type: "turn.started", data: { sequence: 1, turnId: "turn-http" } },
     {
-      session: { id: "session-http", turn: { id: "turn-http", sequence: 1 } },
+      session: { id: "session-http" },
       channel: { kind: "http" },
     },
   );
@@ -426,7 +429,7 @@ void test("медленный Telegram replay помечает сессию, HTT
       data: { message: "slow", sequence: 2, turnId: "turn-http" },
     },
     {
-      session: { id: "session-http", turn: { id: "turn-http", sequence: 1 } },
+      session: { id: "session-http" },
       channel: { kind: "http" },
     },
   );

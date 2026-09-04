@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 🧹 **Медленные Telegram-сессии теперь завершаются надёжно** - Ива видит реальный kind канала eve, повторяет reset после временного сбоя и не пишет потоковые аргументы тулов в Trace; порог можно задать через `TELEGRAM_REPLAY_RETIRE_THRESHOLD_MS`.
 - 📖 **Troubleshooting: back to upstream** - the "local commits conflict with the update" case now has a documented recovery: backup branch, `git reset --hard origin/main`, `iva update`; memory and settings survive.
 - 🔐 **Codex сам восстанавливает доступ после возврата подписки** - при HTTP 401 `token_expired` Ива один раз обновляет OAuth-токен и повторяет ход, а при повторном отказе просит запустить `iva login`.
 - 🧩 **Ива обновлена до eve 0.49.0** - локальный патч перенесён и заново собран для новой версии рантайма.
