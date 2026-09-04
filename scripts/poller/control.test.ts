@@ -30,12 +30,47 @@ type ControlModule = {
       ) => Promise<{ message_id: number } | null>;
       ackImpl?: (id: string, text?: string) => Promise<unknown>;
       cancelImpl?: (input: CancelCall) => Promise<unknown>;
+      performResetImpl?: (
+        chatKey: string,
+        target: Record<string, unknown>,
+        options: {
+          clearQueue?: boolean;
+          discardThroughUpdateId?: number;
+        },
+      ) => Promise<unknown>;
+      resetRetryPendingImpl?: (chatKey: string) => boolean;
+      resetIntentPendingImpl?: (chatKey: string) => boolean;
     },
   ) => Promise<boolean>;
   OUT_OF_BAND_COMMANDS: string[];
 };
 type RunStatusModule = {
   setChatStatus: (chatKey: string, patch: Record<string, unknown>) => void;
+};
+type QueueModule = {
+  clearPrivateResetIntent: (chatKey: string) => Promise<void>;
+  loadPrivateResetIntents: () => Promise<
+    Array<{ chatKey: string; discardThroughUpdateId?: number }>
+  >;
+  performScopedReset: (
+    chatKey: string,
+    target: Record<string, unknown>,
+    options: {
+      clearQueue?: boolean;
+      requestResetImpl?: () => Promise<unknown>;
+      persistIntentImpl?: () => Promise<unknown>;
+      retryAfterMs?: number;
+    },
+  ) => Promise<unknown>;
+};
+type MainModule = {
+  handleControlSafely: (
+    update: ControlUpdate,
+    deps: {
+      handleControlImpl: (update: ControlUpdate) => Promise<boolean>;
+      logImpl: (...args: unknown[]) => void;
+    },
+  ) => Promise<boolean | "retry">;
 };
 type FlowState = Record<string, unknown>;
 type WizardsModule = {
@@ -61,15 +96,20 @@ process.env.IVA_PORT = "8723";
 delete process.env.ASSISTANT_HOST;
 delete process.env.AGENT_LANGUAGE; // без настроек язык моста — ru
 
-const [controlModule, runStatusModule, wizardsModule] = (await Promise.all([
-  import(`./control.ts?control-test=${Date.now()}`),
-  import(`#lib/run-status.ts?control-test=${Date.now()}`),
-  import("./wizards.ts"),
-])) as [unknown, unknown, unknown];
+const [controlModule, runStatusModule, wizardsModule, queueModule, mainModule] =
+  (await Promise.all([
+    import(`./control.ts?control-test=${Date.now()}`),
+    import(`#lib/run-status.ts?control-test=${Date.now()}`),
+    import("./wizards.ts"),
+    import("./queue.ts"),
+    import("./main.ts"),
+  ])) as [unknown, unknown, unknown, unknown, unknown];
 const { handleAwaitNonText, handleControl, OUT_OF_BAND_COMMANDS } =
   controlModule as ControlModule;
 const status = runStatusModule as RunStatusModule;
 const { flows } = wizardsModule as WizardsModule;
+const queue = queueModule as QueueModule;
+const main = mainModule as MainModule;
 
 const CANCEL_ROUTE = "http://127.0.0.1:8723/eve/v1/telegram/cancel";
 const trustedFrom = { id: 42, is_bot: false };
@@ -108,6 +148,159 @@ function stopCommand(): ControlUpdate {
     },
   };
 }
+
+test("a second /new during reset backoff is consumed without pinning offset", async () => {
+  const firstReplies: string[] = [];
+  const first = await handleControl(
+    {
+      update_id: 7,
+      message: {
+        message_id: 7,
+        date: 1,
+        chat,
+        from: trustedFrom,
+        text: "/new",
+      },
+    },
+    {
+      replyImpl: async (_chatId, text) => {
+        firstReplies.push(text);
+        return null;
+      },
+      performResetImpl: (key, target, options) =>
+        queue.performScopedReset(key, target, {
+          ...options,
+          requestResetImpl: async () => {
+            throw new Error("eve reset timed out");
+          },
+        }),
+    },
+  );
+  assert.equal(first, true);
+  assert.equal(firstReplies.length, 1);
+  assert.equal(
+    (await queue.loadPrivateResetIntents())[0]?.discardThroughUpdateId,
+    7,
+  );
+
+  const secondReplies: string[] = [];
+  let resetAttempts = 0;
+  const second = await main.handleControlSafely(
+    {
+      update_id: 8,
+      message: {
+        message_id: 8,
+        date: 1,
+        chat,
+        from: trustedFrom,
+        text: "/new",
+      },
+    },
+    {
+      handleControlImpl: (update) =>
+        handleControl(update, {
+          replyImpl: async (_chatId, text) => {
+            secondReplies.push(text);
+            return null;
+          },
+          performResetImpl: async () => {
+            resetAttempts += 1;
+          },
+        }),
+      logImpl: () => {},
+    },
+  );
+
+  assert.equal(second, true);
+  assert.equal(resetAttempts, 0);
+  assert.equal(secondReplies.length, 1);
+  assert.match(secondReplies[0] ?? "", /повтор.+запланирован/iu);
+  await queue.clearPrivateResetIntent("7:");
+});
+
+test("an intent-write backoff holds the offset without another status message", async () => {
+  const update = {
+    update_id: 9,
+    message: {
+      message_id: 9,
+      date: 1,
+      chat,
+      from: trustedFrom,
+      text: "/new",
+    },
+  };
+  const first = await main.handleControlSafely(update, {
+    handleControlImpl: (candidate) =>
+      handleControl(candidate, {
+        replyImpl: () => Promise.resolve(null),
+        performResetImpl: (key, target, options) =>
+          queue.performScopedReset(key, target, {
+            ...options,
+            persistIntentImpl: () => Promise.reject(new Error("disk full")),
+          }),
+      }),
+    logImpl: () => {},
+  });
+  assert.equal(first, "retry");
+
+  const secondReplies: string[] = [];
+  let resetAttempts = 0;
+  const second = await main.handleControlSafely(update, {
+    handleControlImpl: (candidate) =>
+      handleControl(candidate, {
+        replyImpl: (_chatId, text) => {
+          secondReplies.push(text);
+          return Promise.resolve(null);
+        },
+        performResetImpl: () => {
+          resetAttempts += 1;
+          return Promise.resolve();
+        },
+      }),
+    logImpl: () => {},
+  });
+
+  assert.equal(second, "retry");
+  assert.equal(resetAttempts, 0);
+  assert.deepEqual(secondReplies, []);
+  await queue.clearPrivateResetIntent("7:");
+});
+
+test("persistent intent-write failure escalates and releases the global offset", async () => {
+  const update = {
+    update_id: 10,
+    message: {
+      message_id: 10,
+      date: 1,
+      chat,
+      from: trustedFrom,
+      text: "/new",
+    },
+  };
+  const results: Array<boolean | "retry"> = [];
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    results.push(
+      await main.handleControlSafely(update, {
+        handleControlImpl: (candidate) =>
+          handleControl(candidate, {
+            replyImpl: () => Promise.resolve(null),
+            performResetImpl: (key, target, options) =>
+              queue.performScopedReset(key, target, {
+                ...options,
+                persistIntentImpl: () =>
+                  Promise.reject(new Error("disk remains read-only")),
+                retryAfterMs: 0,
+              }),
+          }),
+        logImpl: () => {},
+      }),
+    );
+  }
+
+  assert.deepEqual(results.slice(0, 9), Array(9).fill("retry"));
+  assert.equal(results[9], true);
+  await queue.clearPrivateResetIntent("7:");
+});
 
 function recordingDeps() {
   const cancels: CancelCall[] = [];

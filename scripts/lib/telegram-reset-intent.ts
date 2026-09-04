@@ -19,11 +19,13 @@ export interface TelegramResetIntent {
   version: typeof TELEGRAM_RESET_INTENT_VERSION;
   chatKey: string;
   requestedAt: number;
+  discardThroughUpdateId?: number;
 }
 
 interface TelegramResetIntentOptions {
   now?: () => number;
   nonce?: () => string;
+  discardThroughUpdateId?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -60,7 +62,10 @@ function normalizeIntent(value: unknown, source: string): TelegramResetIntent {
     typeof value.chatKey !== "string" ||
     !value.chatKey ||
     !isSafeInteger(value.requestedAt) ||
-    value.requestedAt < 0
+    value.requestedAt < 0 ||
+    (value.discardThroughUpdateId !== undefined &&
+      (!isSafeInteger(value.discardThroughUpdateId) ||
+        value.discardThroughUpdateId < 0))
   ) {
     throw new Error(`invalid Telegram reset intent in ${source}`);
   }
@@ -68,6 +73,9 @@ function normalizeIntent(value: unknown, source: string): TelegramResetIntent {
     version: TELEGRAM_RESET_INTENT_VERSION,
     chatKey: value.chatKey,
     requestedAt: value.requestedAt,
+    ...(value.discardThroughUpdateId === undefined
+      ? {}
+      : { discardThroughUpdateId: value.discardThroughUpdateId }),
   };
 }
 
@@ -93,6 +101,7 @@ export async function persistTelegramResetIntent(
   {
     now = Date.now,
     nonce = () => randomBytes(8).toString("hex"),
+    discardThroughUpdateId,
   }: TelegramResetIntentOptions = {},
 ) {
   const intent = normalizeIntent(
@@ -100,6 +109,9 @@ export async function persistTelegramResetIntent(
       version: TELEGRAM_RESET_INTENT_VERSION,
       chatKey,
       requestedAt: now(),
+      ...(discardThroughUpdateId === undefined
+        ? {}
+        : { discardThroughUpdateId }),
     },
     "new reset request",
   );

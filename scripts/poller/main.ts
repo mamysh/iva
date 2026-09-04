@@ -50,7 +50,7 @@ export function conflictBackoff(consecutiveConflicts: number): {
   return { sleepMs, shouldAlert: consecutiveConflicts >= 10 };
 }
 
-type ErrorLike = { message?: unknown };
+type ErrorLike = { message?: unknown; resetPhase?: unknown };
 type TelegramResponse = {
   ok?: unknown;
   description?: string;
@@ -73,6 +73,7 @@ export const completeScopedResetState = queue.completeScopedResetState;
 export const persistPrivateResetIntent = queue.persistPrivateResetIntent;
 export const loadPrivateResetIntents = queue.loadPrivateResetIntents;
 export const clearPrivateResetIntent = queue.clearPrivateResetIntent;
+export const hasPrivateResetIntent = queue.hasPrivateResetIntent;
 export const releaseScopedSession = queue.releaseScopedSession;
 export const performScopedReset = queue.performScopedReset;
 export { reconcileScopedResetIntents, reapStaleRuns, retireSettledSessions };
@@ -91,6 +92,159 @@ export const resetMessageCopy = wizards.resetMessageCopy;
 export const handleAwaitNonText = control.handleAwaitNonText;
 
 const errorMessage = (error: unknown) => (error as ErrorLike).message;
+let ordinaryControlFailure:
+  { updateId: number; attempts: number; released: boolean } | undefined;
+
+export async function handleControlSafely(
+  update: Parameters<typeof handleControl>[0],
+  {
+    handleControlImpl = handleControl,
+    logImpl = log,
+  }: {
+    handleControlImpl?: typeof handleControl;
+    logImpl?: (...args: unknown[]) => void;
+  } = {},
+): Promise<Awaited<ReturnType<typeof handleControl>> | "retry"> {
+  try {
+    const result = await handleControlImpl(update);
+    if (ordinaryControlFailure?.updateId === update.update_id) {
+      ordinaryControlFailure = undefined;
+    }
+    return result;
+  } catch (error) {
+    const phase = (error as ErrorLike).resetPhase;
+    if (typeof phase !== "string") {
+      if (ordinaryControlFailure?.updateId !== update.update_id) {
+        ordinaryControlFailure = {
+          updateId: update.update_id,
+          attempts: 0,
+          released: false,
+        };
+      }
+      ordinaryControlFailure.attempts += 1;
+      if (ordinaryControlFailure.released) return true;
+      if (
+        ordinaryControlFailure.attempts < queue.RESET_INTENT_ESCALATION_ATTEMPTS
+      ) {
+        return "retry";
+      }
+      ordinaryControlFailure.released = true;
+      try {
+        logImpl(
+          `control failed ${ordinaryControlFailure.attempts} times; releasing update ${update.update_id}:`,
+          errorMessage(error),
+        );
+      } catch {
+        // Control failures must never stop the Telegram polling loop.
+      }
+      return true;
+    }
+    if (ordinaryControlFailure?.updateId === update.update_id) {
+      ordinaryControlFailure = undefined;
+    }
+    try {
+      logImpl(
+        `control ${phase} failed for update ${update.update_id}:`,
+        errorMessage(error),
+      );
+    } catch {
+      // Control failures must never stop the Telegram polling loop.
+    }
+    return "retry";
+  }
+}
+
+export async function processTelegramUpdate(
+  update: Parameters<typeof handleControl>[0],
+  offset: number,
+  delivered: number | null,
+  {
+    handleControlImpl = handleControl,
+    admitImpl = admitTelegramUpdate,
+    saveOffsetImpl = saveOffset,
+    logImpl = log,
+  }: {
+    handleControlImpl?: typeof handleControl;
+    admitImpl?: typeof admitTelegramUpdate;
+    saveOffsetImpl?: (
+      offset: number,
+      delivered: number | null,
+    ) => Promise<void>;
+    logImpl?: (...args: unknown[]) => void;
+  } = {},
+): Promise<{ offset: number; ingressBlocked: boolean }> {
+  if (alreadyDelivered(update.update_id, delivered)) {
+    logImpl(
+      `skip update ${update.update_id} — already delivered before restart`,
+    );
+    const nextOffset = update.update_id + 1;
+    await saveOffsetImpl(nextOffset, delivered);
+    return { offset: nextOffset, ingressBlocked: false };
+  }
+  const controlResult = await handleControlSafely(update, {
+    handleControlImpl,
+    logImpl,
+  });
+  if (controlResult === "retry") {
+    return { offset, ingressBlocked: true };
+  }
+  if (controlResult) {
+    const nextOffset = update.update_id + 1;
+    await saveOffsetImpl(nextOffset, delivered);
+    return { offset: nextOffset, ingressBlocked: false };
+  }
+  const admitted = await admitImpl(update);
+  if (admitted === "write-failed" || admitted === "unownable") {
+    if (admitted === "unownable") {
+      logImpl(`update ${update.update_id} has no durable ingress key`);
+    }
+    return { offset, ingressBlocked: true };
+  }
+  const nextOffset = update.update_id + 1;
+  if (admitted === "terminal-drop") {
+    logImpl(terminalDropLine(update));
+  }
+  await saveOffsetImpl(nextOffset, delivered);
+  return { offset: nextOffset, ingressBlocked: false };
+}
+
+async function reconcileResetIntentsSafely(): Promise<number> {
+  try {
+    return await reconcileScopedResetIntents();
+  } catch (error) {
+    try {
+      log("reset intent scan failed:", errorMessage(error));
+    } catch {
+      // Reconciliation failures must never stop the Telegram polling loop.
+    }
+    return 0;
+  }
+}
+
+let resetIntentReconciliationInFlight: Promise<void> | null = null;
+
+export function scheduleResetIntentReconciliation({
+  reconcileImpl = reconcileResetIntentsSafely,
+  logImpl = log,
+}: {
+  reconcileImpl?: () => Promise<number>;
+  logImpl?: (...args: unknown[]) => void;
+} = {}): boolean {
+  if (resetIntentReconciliationInFlight) return false;
+  resetIntentReconciliationInFlight = reconcileImpl()
+    .then((count) => {
+      if (count > 0) {
+        logImpl(`reconciled ${count} durable private Telegram reset intent(s)`);
+      }
+    })
+    .catch((error: unknown) => {
+      logImpl("reset intent background task failed:", errorMessage(error));
+    })
+    .finally(() => {
+      resetIntentReconciliationInFlight = null;
+    });
+  return true;
+}
 
 async function deleteWebhookOrThrow(
   dropPendingUpdates: boolean,
@@ -149,7 +303,7 @@ export async function main({
       ),
   });
   await migrateQueueFile(TELEGRAM_INBOX_FILE, { strict: true });
-  const reconciledResets = await reconcileScopedResetIntents();
+  const reconciledResets = await reconcileResetIntentsSafely();
   if (reconciledResets > 0) {
     log(
       `reconciled ${reconciledResets} durable private Telegram reset intent(s)`,
@@ -180,6 +334,7 @@ export async function main({
     assertTelegramProcessLease(processLease);
     // One head per idle chat/topic per pass. While any queue remains, use a short
     // Telegram long-poll so terminal/stale run-status changes trigger drain quickly.
+    scheduleResetIntentReconciliation();
     try {
       await retireSettledSessions();
     } catch (error) {
@@ -264,43 +419,11 @@ export async function main({
     }
     let ingressBlocked = false;
     for (const update of updates) {
-      // Переигровка после краша (Telegram = at-least-once): этот апдейт уже уходил в eve
-      // в прошлой жизни процесса — второй раз не доставляем, только двигаем offset.
-      if (alreadyDelivered(update.update_id, delivered)) {
-        log(
-          `skip update ${update.update_id} — already delivered before restart`,
-        );
-        offset = update.update_id + 1;
-        await saveOffset(offset, delivered);
-        continue;
-      }
-      // Control commands (/restart, /help, /new) — the bridge handles them itself, doesn't send to eve.
-      const controlResult = await handleControl(update);
-      if (controlResult === "retry") {
-        // The control owns durable semantic state but not yet its canonical inbox item.
-        // Keep Telegram's ordered offset pinned; admitting the callback itself would lose
-        // the semantic work after a restart because menu flow state is intentionally volatile.
-        ingressBlocked = true;
-        break;
-      }
-      if (controlResult) {
-        offset = update.update_id + 1;
-        await saveOffset(offset, delivered);
-        continue;
-      }
-      const admitted = await admitTelegramUpdate(update);
-      if (admitted === "write-failed" || admitted === "unownable") {
-        if (admitted === "unownable") {
-          log(`update ${update.update_id} has no durable ingress key`);
-        }
-        ingressBlocked = true;
-        break;
-      }
-      offset = update.update_id + 1;
-      if (admitted === "terminal-drop") {
-        log(terminalDropLine(update));
-      }
-      await saveOffset(offset, delivered);
+      const processed = await processTelegramUpdate(update, offset, delivered);
+      offset = processed.offset;
+      if (!processed.ingressBlocked) continue;
+      ingressBlocked = true;
+      break;
     }
     if (ingressBlocked) await sleep(3000);
   }

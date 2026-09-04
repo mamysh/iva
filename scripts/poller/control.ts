@@ -32,7 +32,12 @@ import {
 } from "./config.ts";
 import { downloadTelegramFile, edit, reply, sc, tg } from "./transport.ts";
 import { chatKey } from "./offset.ts";
-import { performScopedReset } from "./queue.ts";
+import {
+  hasPrivateResetIntent,
+  isPrivateResetRetryPending,
+  performScopedReset,
+  RESET_INTENT_ESCALATION_ATTEMPTS,
+} from "./queue.ts";
 import { deliverDirectUpdate } from "./routing.ts";
 import { parseUpdateCallbackData } from "./update-callback.ts";
 import { handleUpdateCallback, handleUpdateCheck } from "./update-flow.ts";
@@ -59,7 +64,11 @@ type PendingFlow = {
 type AwaitText = { file?: boolean; kind?: string; secret?: boolean };
 type TelegramResult = { ok?: boolean; result?: unknown };
 type SentMessage = { message_id: number };
-type ErrorDetails = { message?: unknown; resetPhase?: unknown };
+type ErrorDetails = {
+  message?: unknown;
+  resetPhase?: unknown;
+  resetFailures?: unknown;
+};
 type NonTextIo = {
   deleteSecret: (
     chatId: number | undefined,
@@ -84,6 +93,7 @@ type CancelImpl = (input: {
   sessionId: string;
   turnId?: string;
 }) => Promise<unknown>;
+type PerformResetImpl = typeof performScopedReset;
 // Точки ввода-вывода handleControl, которые подменяются в тестах: ответ в чат,
 // подтверждение нажатия и вызов cancel-роута. Всё остальное остаётся дефолтным.
 export type ControlDeps = {
@@ -93,6 +103,9 @@ export type ControlDeps = {
   ) => Promise<SentMessage | null>;
   ackImpl?: (callbackQueryId: string, text?: string) => Promise<unknown>;
   cancelImpl?: CancelImpl;
+  performResetImpl?: PerformResetImpl;
+  resetRetryPendingImpl?: (chatKey: string) => boolean;
+  resetIntentPendingImpl?: (chatKey: string) => boolean;
 };
 
 const controlTg = tg as unknown as ControlTransport;
@@ -370,6 +383,9 @@ async function handleControl(
     replyImpl = replyTo,
     ackImpl = answerCallback,
     cancelImpl,
+    performResetImpl = performScopedReset,
+    resetRetryPendingImpl = isPrivateResetRetryPending,
+    resetIntentPendingImpl = hasPrivateResetIntent,
   }: ControlDeps = {},
 ) {
   // Bridge-owned inline-button taps (/update, /model, /think) — not eve HITL callbacks.
@@ -563,8 +579,25 @@ async function handleControl(
         BOT_USER_ID ?? undefined,
       )
     : null;
+  const clearsPrivateQueue = msg?.chat?.type === "private";
+  if (clearsPrivateQueue && key && resetRetryPendingImpl(key)) {
+    if (resetIntentPendingImpl(key)) {
+      await replyImpl(
+        chatId,
+        tr(
+          "⚠️ A reset retry is already scheduled.",
+          "⚠️ Повтор сброса уже запланирован.",
+        ),
+      );
+      return true;
+    }
+    // Telegram owns one global ordered offset. Advancing it without durable intent loses /new.
+    throw Object.assign(new Error(`reset retry backoff active for ${key}`), {
+      resetPhase: "backoff",
+    });
+  }
   const resetCopy = resetMessageCopy(cmd, await readEnvFresh(ENV_PATH));
-  const status = await replyTo(chatId, resetCopy.pending);
+  const status = await replyImpl(chatId, resetCopy.pending);
   if (!resetTarget || !key) {
     if (status) {
       await editMessage(
@@ -579,37 +612,56 @@ async function handleControl(
     return replySucceeded(status);
   }
 
-  const clearsPrivateQueue = msg?.chat?.type === "private";
   try {
-    await performScopedReset(key, resetTarget, {
+    await performResetImpl(key, resetTarget, {
       // Group/forum queues are keyed only by chat/topic while Eve sessions also
       // include conversationId. Clearing the shared queue here would lose
       // messages belonging to other group conversation anchors.
       clearQueue: clearsPrivateQueue,
+      discardThroughUpdateId: clearsPrivateQueue ? update.update_id : undefined,
     });
   } catch (e: unknown) {
     const error = errorDetails(e);
     const resetPhase =
       typeof error.resetPhase === "string" ? error.resetPhase : "unknown";
+    const intentEscalated =
+      resetPhase === "intent" &&
+      typeof error.resetFailures === "number" &&
+      error.resetFailures >= RESET_INTENT_ESCALATION_ATTEMPTS;
     log(`scoped reset ${resetPhase} failed for ${key}:`, error.message);
     if (status) {
       await editMessage(
         chatId,
         status.message_id,
-        error.resetPhase === "remote"
+        intentEscalated
           ? tr(
-              "⚠️ Couldn't confirm this conversation reset. Recovery will retry automatically.",
-              "⚠️ Не удалось подтвердить сброс диалога. Восстановление повторит его автоматически.",
+              "⚠️ Conversation reset cannot be saved. Run iva reset on the server, then try /new again.",
+              "⚠️ Не удалось сохранить сброс диалога. Запусти iva reset на сервере, затем повтори /new.",
             )
-          : tr(
-              "⚠️ Conversation reset recovery is incomplete. Iva will retry it before accepting queued work.",
-              "⚠️ Восстановление после сброса не завершено. Iva повторит его до приёма задач из очереди.",
-            ),
+          : error.resetPhase === "remote"
+            ? tr(
+                "⚠️ Couldn't confirm this conversation reset. Recovery will retry automatically.",
+                "⚠️ Не удалось подтвердить сброс диалога. Восстановление повторит его автоматически.",
+              )
+            : error.resetPhase === "backoff"
+              ? tr(
+                  "⚠️ A reset retry is already scheduled.",
+                  "⚠️ Повтор сброса уже запланирован.",
+                )
+              : tr(
+                  "⚠️ Conversation reset recovery is incomplete. Iva will retry it before accepting queued work.",
+                  "⚠️ Восстановление после сброса не завершено. Iva повторит его до приёма задач из очереди.",
+                ),
       );
     }
-    // A private reset request is ambiguous after any I/O failure: Eve may have
-    // committed it even when the response was lost. Stop this polling process so
-    // startup reconciliation consumes the durable intent before any old head.
+    if (
+      intentEscalated ||
+      error.resetPhase === "remote" ||
+      (error.resetPhase === "backoff" && resetIntentPendingImpl(key))
+    )
+      return true;
+    // Other private failures may precede durable intent or cleanup, so retain the
+    // Telegram update for the polling-loop boundary to retry.
     if (clearsPrivateQueue) throw e;
     return true;
   }

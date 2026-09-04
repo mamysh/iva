@@ -24,11 +24,13 @@ void test("reset intent persists, loads, clears, and tolerates missing paths", a
   const intent = await persistTelegramResetIntent(directory, "42:", {
     now: () => 1234,
     nonce: () => "fixed",
+    discardThroughUpdateId: 88,
   });
   assert.deepEqual(intent, {
     version: TELEGRAM_RESET_INTENT_VERSION,
     chatKey: "42:",
     requestedAt: 1234,
+    discardThroughUpdateId: 88,
   });
   assert.deepEqual(await loadTelegramResetIntents(directory), [intent]);
 
@@ -44,6 +46,7 @@ void test("reset intent persists, loads, clears, and tolerates missing paths", a
       version: TELEGRAM_RESET_INTENT_VERSION,
       chatKey: "42:",
       requestedAt: 1234,
+      discardThroughUpdateId: 88,
       [retiredField]: "42::",
     },
   );

@@ -1,6 +1,4 @@
 import {
-  acknowledgeQueueHead,
-  enqueueQueueFile,
   isReplyToBot,
   materializeQueueItem,
   queueCount,
@@ -37,13 +35,15 @@ import {
 import { chatKey } from "./offset.ts";
 import { pacedDeliver, type DeliverOptions } from "./deliver.ts";
 import {
+  acknowledgeTelegramQueueHead,
   acknowledgeQueued,
   clearFailedDirectIngress,
   deleteStaleWorkingMessage,
+  enqueueTelegramQueueUpdate,
+  hasPrivateResetIntent,
   loadQueue,
   QUEUE_DELIVERY_TIMEOUT_MS,
   QUEUE_DRAIN_BUDGET_MS,
-  QUEUE_FILE,
   queueDrainRotation,
   queueInFlight,
   queueSettleUntil,
@@ -219,8 +219,7 @@ export async function routeMessageUpdate(
     queueCountImpl = queueCount,
     replyToBotImpl = isReplyToBot,
     shouldQueueImpl = shouldQueueBusyUpdate,
-    enqueueImpl = (key: string, candidate: TelegramQueueUpdate) =>
-      enqueueQueueFile(QUEUE_FILE, key, candidate, { strict: true }),
+    enqueueImpl = enqueueTelegramQueueUpdate,
     acknowledgeImpl = acknowledgeQueued,
     deliverImpl = pacedDelivery,
     statusImpl = getChatStatus,
@@ -235,6 +234,7 @@ export async function routeMessageUpdate(
     allowedUserIds = ALLOWED,
     botUsername = BOT_USERNAME,
     logImpl = log,
+    resetPendingImpl = hasPrivateResetIntent,
   }: {
     chatKeyImpl?: (update: TelegramQueueUpdate) => string | null;
     loadQueueImpl?: () => MaybePromise<TelegramQueueDocument>;
@@ -274,13 +274,21 @@ export async function routeMessageUpdate(
     allowedUserIds?: ReadonlySet<string>;
     botUsername?: unknown;
     logImpl?: (...parts: unknown[]) => void;
+    resetPendingImpl?: (chatKey: string) => boolean;
   } = {},
 ): Promise<RouteMessageResult> {
   const key = chatKeyImpl(update);
   const turnPolicy = turnPolicyImpl();
-  if (update.message && key !== null && !replyToBotImpl(update.message)) {
+  // Remove this fence when vercel/eve#2876 is fixed in the installed eve.
+  const resetPending = key !== null && resetPendingImpl(key);
+  if (
+    update.message &&
+    key !== null &&
+    (resetPending || !replyToBotImpl(update.message))
+  ) {
     const queue = await loadQueueImpl();
     const mustQueue =
+      resetPending ||
       inFlight.has(key) ||
       (turnPolicy === "queue" &&
         (runningImpl(key) || queueCountImpl(queue, key) > 0));
@@ -334,8 +342,7 @@ export async function drainReadyQueueHeads({
       retry: false,
       timeoutMs,
     }),
-  acknowledgeImpl = (key: string, updateId: number) =>
-    acknowledgeQueueHead(QUEUE_FILE, key, updateId),
+  acknowledgeImpl = acknowledgeTelegramQueueHead,
   legacyAllowedUserIds = ALLOWED,
   now = Date.now,
   settleUntil = queueSettleUntil,
@@ -344,6 +351,7 @@ export async function drainReadyQueueHeads({
   passBudgetMs = QUEUE_DRAIN_BUDGET_MS,
   deliveryTimeoutMs = QUEUE_DELIVERY_TIMEOUT_MS,
   gateWaitMs = RUN_STALE_MS,
+  resetPendingImpl = hasPrivateResetIntent,
 }: {
   loadImpl?: () => MaybePromise<TelegramQueueDocument>;
   runningImpl?: (key: string) => boolean;
@@ -358,6 +366,7 @@ export async function drainReadyQueueHeads({
   passBudgetMs?: number;
   deliveryTimeoutMs?: number;
   gateWaitMs?: number;
+  resetPendingImpl?: (chatKey: string) => boolean;
 } = {}) {
   const snapshot = await loadImpl();
   const keys = [...new Set([...queueKeys(snapshot), ...inFlight.keys()])];
@@ -376,6 +385,8 @@ export async function drainReadyQueueHeads({
       exhausted = true;
       break;
     }
+    // Remove this fence when vercel/eve#2876 is fixed in the installed eve.
+    if (resetPendingImpl(key)) continue;
     const currentStatus = statusImpl(key);
     const currentGeneration = statusGeneration(currentStatus);
     const running = runningImpl(key);

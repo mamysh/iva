@@ -1,7 +1,10 @@
 import { join } from "node:path";
 import {
+  acknowledgeQueueHead,
   clearQueueFileKey,
+  enqueueQueueFile,
   loadQueueFile,
+  TELEGRAM_QUEUE_VERSION,
   writeQueueFileAtomic,
 } from "../lib/telegram-queue.ts";
 import type {
@@ -32,7 +35,11 @@ import { appendTrace, type TraceInput } from "#lib/trace.ts";
 import { DATA_DIR, SECRET, RESET_ROUTE, log } from "./config.ts";
 import { tg } from "./transport.ts";
 
-type ErrorLike = { message?: unknown; resetPhase?: string };
+type ErrorLike = {
+  message?: unknown;
+  resetPhase?: string;
+  resetFailures?: number;
+};
 type RunStatus = Record<string, unknown> & {
   status?: unknown;
   generation?: unknown;
@@ -47,7 +54,11 @@ type ResetRequest = { chatKey: string; target: TelegramResetTarget };
 type ResetRequestImpl = (request: ResetRequest) => Promise<ResetResult>;
 type CompleteStateImpl = (
   chatKey: string,
-  options: { clearQueue?: boolean },
+  options: {
+    clearQueue?: boolean;
+    discardThroughUpdateId?: number;
+    resetRequestedAt?: number;
+  },
 ) => Promise<void>;
 type LogImpl = (...args: unknown[]) => void;
 type QueueFileOptions = NonNullable<Parameters<typeof writeQueueFileAtomic>[2]>;
@@ -76,6 +87,9 @@ const errorMessage = (error: unknown) => (error as ErrorLike).message;
 const withResetPhase = (error: unknown, resetPhase: string) => {
   (error as ErrorLike).resetPhase = resetPhase;
 };
+const withResetFailures = (error: unknown, resetFailures: number) => {
+  (error as ErrorLike).resetFailures = resetFailures;
+};
 
 // ── Durable busy-time FIFO ──────────────────────────────────────────────────
 // Each accepted Telegram update is written as a versioned item (including update_id and
@@ -88,8 +102,104 @@ const queueSettleUntil = new Map<string, number>();
 const queueInFlight = new Map<string, QueuePhase>();
 const queueDrainRotation: { afterKey: string | null } = { afterKey: null };
 const undrainableLegacyLogged = new Set<string>();
+// Remove this backoff when vercel/eve#2876 is fixed in the installed eve.
+const resetIntentRetryAt = new Map<string, number>();
+const resetIntentFailureCount = new Map<string, number>();
+const resetIntentEscalationDelivered = new Set<string>();
+// Remove this delivery fence with the vercel/eve#2876 workaround.
+const pendingResetIntentKeys = new Set<string>();
+const resetIntentKeyRevision = new Map<string, number>();
+const activeResetIntentScans = new Set<{ revision: number }>();
+const resetIntentMutationTails = new Map<string, Promise<void>>();
+let resetIntentRevision = 0;
 const QUEUE_DELIVERY_TIMEOUT_MS = 5_000;
 const QUEUE_DRAIN_BUDGET_MS = 5_000;
+export const RESET_INTENT_RETRY_MS = 30_000;
+const RESET_INTENT_ESCALATED_RETRY_MS = 5 * 60_000;
+export const RESET_INTENT_ESCALATION_ATTEMPTS = 10;
+let queueMutationTail: Promise<void> = Promise.resolve();
+
+async function serializeQueueMutation<T>(
+  mutation: () => Promise<T>,
+): Promise<T> {
+  const previous = queueMutationTail;
+  let release = () => {};
+  queueMutationTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await mutation();
+  } finally {
+    release();
+  }
+}
+
+async function serializeResetIntentMutation<T>(
+  chatKey: string,
+  mutation: () => Promise<T>,
+): Promise<T> {
+  const previous = resetIntentMutationTails.get(chatKey) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  resetIntentMutationTails.set(chatKey, current);
+  await previous;
+  try {
+    return await mutation();
+  } finally {
+    release();
+    if (resetIntentMutationTails.get(chatKey) === current) {
+      resetIntentMutationTails.delete(chatKey);
+    }
+  }
+}
+
+function recordResetIntentMutation(chatKey: string) {
+  resetIntentRevision += 1;
+  if (activeResetIntentScans.size > 0) {
+    resetIntentKeyRevision.set(chatKey, resetIntentRevision);
+  }
+}
+
+function pruneResetIntentRevisions() {
+  let oldestActiveRevision = Number.POSITIVE_INFINITY;
+  for (const scan of activeResetIntentScans) {
+    oldestActiveRevision = Math.min(oldestActiveRevision, scan.revision);
+  }
+  for (const [chatKey, revision] of resetIntentKeyRevision) {
+    if (revision <= oldestActiveRevision)
+      resetIntentKeyRevision.delete(chatKey);
+  }
+}
+
+function resetRetryPending(chatKey: string, now: number): boolean {
+  return (resetIntentRetryAt.get(chatKey) ?? 0) > now;
+}
+
+export function isPrivateResetRetryPending(
+  chatKey: string,
+  now: () => number = Date.now,
+): boolean {
+  return resetRetryPending(chatKey, now());
+}
+
+function deferResetRetry(chatKey: string, now: number, retryAfterMs: number) {
+  resetIntentRetryAt.set(chatKey, now + retryAfterMs);
+}
+
+function recordResetFailure(chatKey: string): number {
+  const failures = (resetIntentFailureCount.get(chatKey) ?? 0) + 1;
+  resetIntentFailureCount.set(chatKey, failures);
+  return failures;
+}
+
+function clearResetRetryState(chatKey: string) {
+  resetIntentRetryAt.delete(chatKey);
+  resetIntentFailureCount.delete(chatKey);
+  resetIntentEscalationDelivered.delete(chatKey);
+}
 
 function statusGeneration(status: RunStatus | null | undefined): number {
   const generation = status?.generation;
@@ -118,22 +228,82 @@ export async function writeQueueAtomic(
 
 // A scoped reset intentionally discards only messages queued for this chat/topic.
 // Other conversations keep both their queues and their Eve histories.
-async function clearChatQueue(chatKey: string) {
-  // Reset cleanup must fail loudly: completeScopedResetState keeps the old
-  // running status until this atomic rewrite succeeds.
-  await clearQueueFileKey(QUEUE_FILE, chatKey);
+export async function clearChatQueue(
+  chatKey: string,
+  discardThroughUpdateId?: number,
+  resetRequestedAt?: number,
+  {
+    clearQueueFileKeyImpl = clearQueueFileKey,
+  }: {
+    clearQueueFileKeyImpl?: (file: string, chatKey: string) => Promise<unknown>;
+  } = {},
+) {
+  await serializeQueueMutation(async () => {
+    // Reset cleanup must fail loudly: completeScopedResetState keeps the old
+    // running status until this atomic rewrite succeeds.
+    if (
+      discardThroughUpdateId === undefined &&
+      resetRequestedAt === undefined
+    ) {
+      await clearQueueFileKeyImpl(QUEUE_FILE, chatKey);
+      return;
+    }
+    const loaded = await loadQueueFile(QUEUE_FILE, { strict: true });
+    const current = Object.hasOwn(loaded.document.queues, chatKey)
+      ? loaded.document.queues[chatKey]
+      : [];
+    const retained = current.filter((item) =>
+      discardThroughUpdateId !== undefined
+        ? item.updateId > discardThroughUpdateId
+        : typeof item.enqueuedAt === "number" &&
+          item.enqueuedAt >= (resetRequestedAt as number),
+    );
+    if (retained.length === current.length && !loaded.migrated) return;
+    const queues = Object.fromEntries(Object.entries(loaded.document.queues));
+    if (retained.length > 0) queues[chatKey] = retained;
+    else delete queues[chatKey];
+    await writeQueueFileAtomic(QUEUE_FILE, {
+      version: TELEGRAM_QUEUE_VERSION,
+      queues,
+    });
+  });
 }
+
+export const enqueueTelegramQueueUpdate = (
+  chatKey: string,
+  update: TelegramQueueUpdate,
+  enqueueImpl: typeof enqueueQueueFile = enqueueQueueFile,
+) =>
+  serializeQueueMutation(() =>
+    enqueueImpl(QUEUE_FILE, chatKey, update, { strict: true }),
+  );
+
+export const acknowledgeTelegramQueueHead = (
+  chatKey: string,
+  updateId: number,
+) =>
+  serializeQueueMutation(() =>
+    acknowledgeQueueHead(QUEUE_FILE, chatKey, updateId),
+  );
 
 export async function completeScopedResetState(
   chatKey: string,
   {
     clearQueue = false,
+    discardThroughUpdateId,
+    resetRequestedAt,
     clearQueueImpl = clearChatQueue,
     setStatusImpl = setChatStatus,
     deleteMessageImpl = deleteStaleWorkingMessage,
   }: {
     clearQueue?: boolean;
-    clearQueueImpl?: (chatKey: string) => Promise<void>;
+    discardThroughUpdateId?: number;
+    resetRequestedAt?: number;
+    clearQueueImpl?: (
+      chatKey: string,
+      discardThroughUpdateId?: number,
+      resetRequestedAt?: number,
+    ) => Promise<void>;
     setStatusImpl?: (
       chatKey: string,
       patch: Record<string, unknown>,
@@ -147,7 +317,9 @@ export async function completeScopedResetState(
   // For private chats the queue belongs to the reset session, so clear it
   // before exposing an idle tombstone. A failed cleanup leaves the old running
   // status in place and lets a repeated /new retry safely.
-  if (clearQueue) await clearQueueImpl(chatKey);
+  if (clearQueue) {
+    await clearQueueImpl(chatKey, discardThroughUpdateId, resetRequestedAt);
+  }
 
   // /new clears sessionId before a late terminal event can finish the Working…
   // message, so delete it here from the pre-reset snapshot.
@@ -187,17 +359,73 @@ export async function completeScopedResetState(
   });
 }
 
-export async function persistPrivateResetIntent(chatKey: string) {
-  return persistTelegramResetIntent(RESET_INTENT_DIR, chatKey);
+export async function persistPrivateResetIntent(
+  chatKey: string,
+  discardThroughUpdateId?: number,
+  {
+    persistImpl = persistTelegramResetIntent,
+  }: { persistImpl?: typeof persistTelegramResetIntent } = {},
+) {
+  return serializeResetIntentMutation(chatKey, async () => {
+    const intent = await persistImpl(RESET_INTENT_DIR, chatKey, {
+      discardThroughUpdateId,
+    });
+    recordResetIntentMutation(chatKey);
+    pendingResetIntentKeys.add(chatKey);
+    return intent;
+  });
 }
 
-export async function loadPrivateResetIntents() {
-  return loadTelegramResetIntents(RESET_INTENT_DIR);
+export async function loadPrivateResetIntents({
+  loadImpl = () => loadTelegramResetIntents(RESET_INTENT_DIR),
+}: {
+  loadImpl?: () => ReturnType<typeof loadTelegramResetIntents>;
+} = {}) {
+  const scan = { revision: resetIntentRevision };
+  activeResetIntentScans.add(scan);
+  try {
+    const intents = await loadImpl();
+    const unchangedIntents = intents.filter(
+      (intent) =>
+        (resetIntentKeyRevision.get(intent.chatKey) ?? 0) <= scan.revision,
+    );
+    const loadedKeys = new Set(unchangedIntents.map(({ chatKey }) => chatKey));
+    for (const { chatKey } of unchangedIntents) {
+      pendingResetIntentKeys.add(chatKey);
+    }
+    for (const chatKey of pendingResetIntentKeys) {
+      if (
+        !loadedKeys.has(chatKey) &&
+        (resetIntentKeyRevision.get(chatKey) ?? 0) <= scan.revision
+      ) {
+        pendingResetIntentKeys.delete(chatKey);
+      }
+    }
+    return unchangedIntents;
+  } finally {
+    activeResetIntentScans.delete(scan);
+    pruneResetIntentRevisions();
+  }
 }
 
-export async function clearPrivateResetIntent(chatKey: string) {
-  return clearTelegramResetIntent(RESET_INTENT_DIR, chatKey);
+export async function clearPrivateResetIntent(
+  chatKey: string,
+  {
+    clearImpl = clearTelegramResetIntent,
+  }: {
+    clearImpl?: typeof clearTelegramResetIntent;
+  } = {},
+) {
+  await serializeResetIntentMutation(chatKey, async () => {
+    await clearImpl(RESET_INTENT_DIR, chatKey);
+    recordResetIntentMutation(chatKey);
+    pendingResetIntentKeys.delete(chatKey);
+    clearResetRetryState(chatKey);
+  });
 }
+
+export const hasPrivateResetIntent = (chatKey: string) =>
+  pendingResetIntentKeys.has(chatKey);
 
 const requestResetFromIntent: ResetRequestImpl = ({ target }) =>
   requestTelegramReset({
@@ -248,36 +476,64 @@ export async function performScopedReset(
   target: TelegramResetTarget,
   {
     clearQueue = false,
+    discardThroughUpdateId,
     persistIntentImpl = persistPrivateResetIntent,
     requestResetImpl = requestResetFromIntent,
     completeStateImpl = completeScopedResetState,
     clearIntentImpl = clearPrivateResetIntent,
     logImpl = log,
+    now = Date.now,
+    retryAfterMs = RESET_INTENT_RETRY_MS,
   }: {
     clearQueue?: boolean;
-    persistIntentImpl?: (chatKey: string) => Promise<unknown>;
+    discardThroughUpdateId?: number;
+    persistIntentImpl?: (
+      chatKey: string,
+      discardThroughUpdateId?: number,
+    ) => Promise<unknown>;
     requestResetImpl?: ResetRequestImpl;
     completeStateImpl?: CompleteStateImpl;
     clearIntentImpl?: (chatKey: string) => Promise<unknown>;
     logImpl?: LogImpl;
+    now?: () => number;
+    retryAfterMs?: number;
   } = {},
 ) {
+  if (clearQueue && resetRetryPending(chatKey, now())) {
+    const error = new Error(`reset retry backoff active for ${chatKey}`);
+    withResetPhase(error, "backoff");
+    throw error;
+  }
   if (clearQueue) {
     try {
-      await persistIntentImpl(chatKey);
+      await persistIntentImpl(chatKey, discardThroughUpdateId);
     } catch (error) {
       withResetPhase(error, "intent");
+      withResetFailures(error, recordResetFailure(chatKey));
+      deferResetRetry(chatKey, now(), retryAfterMs);
       throw error;
     }
   }
-  await releaseScopedSession(chatKey, target, {
-    requestResetImpl,
-    logImpl,
-  });
   try {
-    await completeStateImpl(chatKey, { clearQueue });
+    await releaseScopedSession(chatKey, target, {
+      requestResetImpl,
+      logImpl,
+    });
+  } catch (error) {
+    if (clearQueue) {
+      withResetFailures(error, recordResetFailure(chatKey));
+      deferResetRetry(chatKey, now(), retryAfterMs);
+    }
+    throw error;
+  }
+  try {
+    await completeStateImpl(chatKey, { clearQueue, discardThroughUpdateId });
   } catch (error) {
     withResetPhase(error, "cleanup");
+    if (clearQueue) {
+      withResetFailures(error, recordResetFailure(chatKey));
+      deferResetRetry(chatKey, now(), retryAfterMs);
+    }
     throw error;
   }
   if (clearQueue) {
@@ -285,9 +541,12 @@ export async function performScopedReset(
       await clearIntentImpl(chatKey);
     } catch (error) {
       withResetPhase(error, "intent-cleanup");
+      withResetFailures(error, recordResetFailure(chatKey));
+      deferResetRetry(chatKey, now(), retryAfterMs);
       throw error;
     }
   }
+  clearResetRetryState(chatKey);
 }
 
 export async function reconcileScopedResetIntents({
@@ -296,29 +555,92 @@ export async function reconcileScopedResetIntents({
   completeStateImpl = completeScopedResetState,
   clearIntentImpl = clearPrivateResetIntent,
   logImpl = log,
+  sendImpl = sendStaleRunNotice,
+  trImpl = tr,
+  now = Date.now,
+  retryAfterMs = RESET_INTENT_RETRY_MS,
+  escalatedRetryAfterMs = RESET_INTENT_ESCALATED_RETRY_MS,
+  escalationAttempts = RESET_INTENT_ESCALATION_ATTEMPTS,
 }: {
   loadIntentsImpl?: typeof loadPrivateResetIntents;
   requestResetImpl?: ResetRequestImpl;
   completeStateImpl?: CompleteStateImpl;
   clearIntentImpl?: (chatKey: string) => Promise<unknown>;
   logImpl?: LogImpl;
+  sendImpl?: (chatKey: string, text: string) => Promise<unknown>;
+  trImpl?: (en: string, ru: string) => string;
+  now?: () => number;
+  retryAfterMs?: number;
+  escalatedRetryAfterMs?: number;
+  escalationAttempts?: number;
 } = {}) {
   const intents = await loadIntentsImpl();
+  let reconciled = 0;
   for (const intent of intents) {
     const address = telegramAddressFromChatKey(intent.chatKey);
     if (address === null) {
       logImpl(`invalid Telegram reset intent chat key: ${intent.chatKey}`);
       continue;
     }
+    const attemptedAt = now();
+    if (resetRetryPending(intent.chatKey, attemptedAt)) continue;
     const target = { address } as const;
-    const result = await requestResetImpl({ chatKey: intent.chatKey, target });
-    logResetOutcome(logImpl, intent.chatKey, target, result);
-    await completeStateImpl(intent.chatKey, {
-      clearQueue: true,
-    });
-    await clearIntentImpl(intent.chatKey);
+    try {
+      const result = await requestResetImpl({
+        chatKey: intent.chatKey,
+        target,
+      });
+      logResetOutcome(logImpl, intent.chatKey, target, result);
+      await completeStateImpl(intent.chatKey, {
+        clearQueue: true,
+        discardThroughUpdateId: intent.discardThroughUpdateId,
+        resetRequestedAt: intent.requestedAt,
+      });
+      await clearIntentImpl(intent.chatKey);
+      clearResetRetryState(intent.chatKey);
+      reconciled += 1;
+    } catch (error) {
+      const failures = recordResetFailure(intent.chatKey);
+      deferResetRetry(
+        intent.chatKey,
+        attemptedAt,
+        failures >= escalationAttempts ? escalatedRetryAfterMs : retryAfterMs,
+      );
+      try {
+        logImpl(
+          `reset intent reconciliation failed for ${intent.chatKey}:`,
+          errorMessage(error),
+        );
+      } catch {
+        // Reconciliation must never stop the Telegram polling loop.
+      }
+      if (
+        failures >= escalationAttempts &&
+        !resetIntentEscalationDelivered.has(intent.chatKey)
+      ) {
+        try {
+          await sendImpl(
+            intent.chatKey,
+            trImpl(
+              "⚠️ Conversation reset is still blocked. Run iva reset on the server, then try /new again.",
+              "⚠️ Сброс диалога всё ещё заблокирован. Запусти iva reset на сервере, затем повтори /new.",
+            ),
+          );
+          resetIntentEscalationDelivered.add(intent.chatKey);
+        } catch (noticeError) {
+          try {
+            logImpl(
+              `reset intent escalation failed for ${intent.chatKey}:`,
+              errorMessage(noticeError),
+            );
+          } catch {
+            // Escalation logging must not stop the Telegram polling loop.
+          }
+        }
+      }
+    }
   }
-  return intents.length;
+  return reconciled;
 }
 
 function telegramTargetOf(
