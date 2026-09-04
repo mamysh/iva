@@ -128,8 +128,12 @@ export const thinkingEffort = EFFORTS.includes(effortRaw)
   : undefined;
 const COMPATIBLE_EFFORTS = ["low", "medium", "high"] as const;
 type CompatibleEffort = (typeof COMPATIBLE_EFFORTS)[number];
+// CUSTOM_REASONING=1 (.env): владелец custom-эндпоинта подтверждает, что тот понимает
+// reasoning_effort (Meta Model API, vLLM с reasoning-моделью). По умолчанию — не шлём.
+const customReasoning =
+  selected.name === "custom" && process.env.CUSTOM_REASONING === "1";
 export const compatibleThinkingEffort: CompatibleEffort | undefined =
-  selected.compatibleReasoning &&
+  (selected.compatibleReasoning || customReasoning) &&
   (COMPATIBLE_EFFORTS as readonly string[]).includes(effortRaw)
     ? (effortRaw as CompatibleEffort)
     : undefined;

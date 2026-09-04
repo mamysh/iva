@@ -293,6 +293,7 @@ async function writeEnv(out: Env): Promise<void> {
     "CUSTOM_MODEL",
     "CUSTOM_VISION_MODEL",
     "CUSTOM_CONTEXT_WINDOW",
+    "CUSTOM_REASONING",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_BOT_USERNAME",
     "TELEGRAM_WEBHOOK_SECRET_TOKEN",
