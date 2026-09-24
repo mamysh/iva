@@ -50,6 +50,110 @@ export function jobWakePrompt(fact: JobFact, tr: Translate): string {
   return `${head}\n${instruction}${tail}`;
 }
 
+/** Контекст одного пробуждения: куда писать исход и как говорить в журнал. */
+type WakeRun = {
+  readonly name: string;
+  readonly startedAt: number;
+  readonly deps: JobWakeDeps;
+  readonly now: () => number;
+  readonly log: (...args: unknown[]) => void;
+};
+
+/** Ответ хода или причина его провала. */
+type AgentAnswer = { readonly message: string } | { readonly failure: string };
+
+function reasonOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function agentAnswer(
+  fact: JobFact,
+  deps: JobWakeDeps,
+): Promise<AgentAnswer> {
+  try {
+    const turn = await deps.runTurn(jobWakePrompt(fact, deps.tr));
+    // Провал — только `failed`. `waiting` — нормальный конец хода: eve не шлёт
+    // `session.completed`, после хода сессия остаётся ждать следующего сообщения
+    // (прод c1 13.09: каждое пробуждение падало как «turn waiting»).
+    // Причина провала хода (в том числе упор в лимит токенов сессии eve) остаётся в строке
+    // факта: по ней сторож объясняет владельцу, почему агент не ответил.
+    if (turn.status === "failed")
+      return {
+        failure: turn.message ? `turn failed: ${turn.message}` : "turn failed",
+      };
+    return { message: (turn.message ?? "").trim() };
+  } catch (error) {
+    return { failure: reasonOf(error) };
+  }
+}
+
+/** Исход «пусто»; не записался — ход для сторожа не состоялся (T30 №10). */
+async function settleEmpty(
+  run: WakeRun,
+  line: string,
+): Promise<JobWake["status"]> {
+  const recorded = await recordOutcome(run.deps, run.name, run.startedAt, {
+    at: run.now(),
+    status: "empty",
+    error: null,
+  });
+  run.log(line);
+  return recorded ? "empty" : "failed";
+}
+
+async function sendAnswer(
+  send: JobWakeDeps["send"],
+  message: string,
+): Promise<string | null> {
+  try {
+    return (await send(message)) ? null : "telegram send was refused";
+  } catch (error) {
+    return reasonOf(error);
+  }
+}
+
+async function deliverAnswer(
+  run: WakeRun,
+  message: string,
+): Promise<JobWake["status"]> {
+  const sendError = await sendAnswer(run.deps.send, message);
+  // Ответ, который не доехал, — провал хода, а не состоявшийся ответ: владелец не получил
+  // ничего, и страховка обязана считать такой ход не бывшим (слепая приёмка T20 по v6).
+  const recorded = await recordOutcome(run.deps, run.name, run.startedAt, {
+    at: run.now(),
+    status: sendError === null ? "answered" : "failed",
+    error: sendError,
+  });
+  run.log(
+    sendError
+      ? `wake: ${run.name} answered, but the owner did not get it: ${sendError}`
+      : `wake: ${run.name} answered the owner`,
+  );
+  // Несданный исход = ход не состоялся для сторожа (T30 №10).
+  if (!recorded) return "failed";
+  return sendError === null ? "answered" : "failed";
+}
+
+/** Ход по провалу запуска: ответ уходит владельцу, провал и пустота — в строку факта. */
+async function wakeOnFailure(
+  run: WakeRun,
+  fact: JobFact,
+): Promise<JobWake["status"]> {
+  const answer = await agentAnswer(fact, run.deps);
+  if ("failure" in answer) {
+    await recordOutcome(run.deps, run.name, run.startedAt, {
+      at: run.now(),
+      status: "failed",
+      error: answer.failure,
+    });
+    run.log(`wake: ${run.name} turn failed: ${answer.failure}`);
+    return "failed";
+  }
+  if (answer.message.length === 0)
+    return settleEmpty(run, `wake: ${run.name} answered with an empty message`);
+  return deliverAnswer(run, answer.message);
+}
+
 /**
  * Один ход по факту. Возвращает исход хода; строка факта всегда получает его (кроме
  * случая, когда строки уже нет, — тогда пробуждение не к чему приписать).
@@ -59,81 +163,26 @@ export async function runJobWake(
   startedAt: number,
   deps: JobWakeDeps,
 ): Promise<JobWake["status"]> {
-  const now = deps.now ?? Date.now;
-  const log =
-    deps.log ??
-    ((...args: unknown[]) => console.log(new Date().toISOString(), ...args));
+  const run: WakeRun = {
+    name,
+    startedAt,
+    deps,
+    now: deps.now ?? Date.now,
+    log:
+      deps.log ??
+      ((...args: unknown[]) => console.log(new Date().toISOString(), ...args)),
+  };
   const facts = await readFacts(deps.factsFile);
-  const fact =
-    facts.find((row) => row.name === name && row.startedAt === startedAt) ??
-    null;
-  if (!fact) {
-    log(`wake: ${name}@${startedAt} is not in the facts table`);
-    return "failed";
-  }
-
-  if (fact.ok) {
-    const recorded = await recordOutcome(deps, name, startedAt, {
-      at: now(),
-      status: "empty",
-      error: null,
-    });
-    log(`wake: ${name} succeeded; no agent turn needed`);
-    return recorded ? "empty" : "failed";
-  }
-
-  let message: string;
-  try {
-    const turn = await deps.runTurn(jobWakePrompt(fact, deps.tr));
-    // Провал — только `failed`. `waiting` — нормальный конец хода: eve не шлёт
-    // `session.completed`, после хода сессия остаётся ждать следующего сообщения
-    // (прод c1 13.09: каждое пробуждение падало как «turn waiting»).
-    if (turn.status === "failed") throw new Error(`turn ${turn.status}`);
-    message = (turn.message ?? "").trim();
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    await recordOutcome(deps, name, startedAt, {
-      at: now(),
-      status: "failed",
-      error: reason,
-    });
-    log(`wake: ${name} turn failed: ${reason}`);
-    return "failed";
-  }
-
-  if (message.length === 0) {
-    const recorded = await recordOutcome(deps, name, startedAt, {
-      at: now(),
-      status: "empty",
-      error: null,
-    });
-    log(`wake: ${name} answered with an empty message`);
-    // Исход не записался — ход для сторожа не состоялся: иначе он видит wake=null и шлёт
-    // второе сообщение владельцу (T30 №10).
-    return recorded ? "empty" : "failed";
-  }
-
-  let sendError: string | null = null;
-  try {
-    if (!(await deps.send(message))) sendError = "telegram send was refused";
-  } catch (error) {
-    sendError = error instanceof Error ? error.message : String(error);
-  }
-  // Ответ, который не доехал, — провал хода, а не состоявшийся ответ: владелец не получил
-  // ничего, и страховка обязана считать такой ход не бывшим (слепая приёмка T20 по v6).
-  const recorded = await recordOutcome(deps, name, startedAt, {
-    at: now(),
-    status: sendError === null ? "answered" : "failed",
-    error: sendError,
-  });
-  log(
-    sendError
-      ? `wake: ${name} answered, but the owner did not get it: ${sendError}`
-      : `wake: ${name} answered the owner`,
+  const fact = facts.find(
+    (row) => row.name === name && row.startedAt === startedAt,
   );
-  // Несданный исход = ход не состоялся для сторожа (T30 №10).
-  if (!recorded) return "failed";
-  return sendError === null ? "answered" : "failed";
+  if (!fact) {
+    run.log(`wake: ${name}@${startedAt} is not in the facts table`);
+    return "failed";
+  }
+  if (fact.ok)
+    return settleEmpty(run, `wake: ${name} succeeded; no agent turn needed`);
+  return wakeOnFailure(run, fact);
 }
 
 /** Persists a wake outcome and makes failed persistence visible to the caller. */
@@ -144,7 +193,12 @@ async function recordOutcome(
   wake: JobWake,
 ): Promise<boolean> {
   try {
-    await (deps.recordWake ?? recordWake)(deps.factsFile, name, startedAt, wake);
+    await (deps.recordWake ?? recordWake)(
+      deps.factsFile,
+      name,
+      startedAt,
+      wake,
+    );
     return true;
   } catch (error) {
     // Запись исхода не сдалась: для сторожа хода не было, поэтому вызывающий обязан

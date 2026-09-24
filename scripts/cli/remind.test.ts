@@ -236,6 +236,7 @@ void test("a session reset failure does not fail a delivered Reminder", async ()
                 ]),
                 session: {
                   send: () => Promise.resolve(),
+                  cancel: () => Promise.resolve(),
                   reset: ({ reason }) => {
                     resetReasons.push(reason);
                     return Promise.reject(new Error("reset unavailable"));
@@ -304,6 +305,7 @@ void test("the eve client is built from .env, not process.env", async () => {
                   ]),
                   session: {
                     send: () => Promise.resolve(),
+                    cancel: () => Promise.resolve(),
                     reset: () => Promise.resolve(),
                   },
                 }),

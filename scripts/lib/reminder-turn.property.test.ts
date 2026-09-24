@@ -81,3 +81,71 @@ test("reduceTurnEvents never throws and reports the last boundary", () => {
     { numRuns: 200 },
   );
 });
+
+// Лимит сессии eve: ход встаёт на input.requested с запросом kind "session-limit". Признак
+// липкий при любом порядке, повторах и мусоре вокруг, а чужие запросы (approval, question)
+// и битые данные его не ставят. Сид печатается в имени теста и повторяется через FC_SEED.
+const SEED = Number(process.env.FC_SEED ?? Date.now() % 2 ** 31);
+
+const request = fc.oneof(
+  fc.record({
+    kind: fc.constantFrom("session-limit", "approval", "question", "zzz"),
+    requestId: fc.string(),
+  }),
+  fc.anything(),
+);
+
+const anyEvent = fc.oneof(
+  event,
+  fc.record({
+    type: fc.constant("input.requested"),
+    data: fc.oneof(
+      fc.record({ requests: fc.array(request, { maxLength: 3 }) }),
+      fc.record({ requests: fc.anything() }),
+      fc.anything(),
+    ),
+  }),
+);
+
+function asksLimit(item: { readonly type: string; readonly data?: unknown }) {
+  if (item.type !== "input.requested") return false;
+  const data = item.data as { readonly requests?: unknown } | null | undefined;
+  const requests =
+    typeof data === "object" && data !== null ? data.requests : undefined;
+  return (
+    Array.isArray(requests) &&
+    requests.some(
+      (entry: unknown) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        (entry as { readonly kind?: unknown }).kind === "session-limit",
+    )
+  );
+}
+
+test(`a session-limit request marks the turn under any order and duplicates (seed ${SEED})`, () => {
+  fc.assert(
+    fc.property(
+      fc.array(anyEvent, { maxLength: 30 }),
+      fc.nat(),
+      (events, pick) => {
+        const expected = events.some(asksLimit);
+        assert.equal(reduceTurnEvents(events).sessionLimit, expected);
+        // Повтор любого события и перестановка на границе хода признак не меняют.
+        const duplicated = [...events];
+        if (events.length > 0)
+          duplicated.splice(
+            pick % events.length,
+            0,
+            events[pick % events.length],
+          );
+        assert.equal(reduceTurnEvents(duplicated).sessionLimit, expected);
+        assert.equal(
+          reduceTurnEvents([...events].reverse()).sessionLimit,
+          expected,
+        );
+      },
+    ),
+    { numRuns: 300, seed: SEED },
+  );
+});

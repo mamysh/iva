@@ -40,6 +40,8 @@ export type ReminderClient = {
       readonly response: TurnResponse;
       readonly session: {
         send(message: string): Promise<unknown>;
+        /** Остановка хода сессии вместе с порождёнными им задачами (session.cancel у eve). */
+        cancel(options: { readonly tasks: boolean }): Promise<unknown>;
         reset(options: { readonly reason: string }): Promise<unknown>;
       };
     }>;
@@ -54,11 +56,23 @@ export type ReminderTurn = {
   readonly status: "completed" | "failed" | "waiting";
   /** Ход погашен снаружи (⏹ или /stop): текста от него не ждут. */
   readonly cancelled?: boolean;
+  /**
+   * Ход упёрся в лимит токенов сессии eve и встал на вопрос «Approve/Stop», который в фоне
+   * некому показать: status "failed", message — причина, а не промежуточный текст хода.
+   */
+  readonly sessionLimit?: boolean;
   readonly message?: string;
   readonly feedback: (message: string) => Promise<unknown>;
 };
 
 export class ReminderTurnError extends Error {}
+
+/** Причина провала хода, который встал на запрос лимита сессии eve. */
+const SESSION_LIMIT_FAILURE = "the turn hit the eve session token limit";
+
+// Сколько ждать ответа eve на остановку хода, вставшего на лимит: ответ не пришёл — ход
+// всё равно провален, а сессию снимает reset.
+const SESSION_LIMIT_CANCEL_MS = 30_000;
 
 /**
  * Присмотр чата за ходом: пока запись есть, `/stop` из этого чата гасит его сессию тем же
@@ -124,6 +138,8 @@ type TurnState = {
   readonly message: string | undefined;
   readonly failure: string | undefined;
   readonly cancelled: boolean;
+  /** Ход встал на запрос лимита сессии eve (input.requested kind "session-limit"). */
+  readonly sessionLimit: boolean;
 };
 
 const EMPTY_TURN: TurnState = {
@@ -131,6 +147,7 @@ const EMPTY_TURN: TurnState = {
   message: undefined,
   failure: undefined,
   cancelled: false,
+  sessionLimit: false,
 };
 
 // eve carries the text under `data.message` in message.completed, session.failed and
@@ -140,6 +157,42 @@ function eventText(event: TurnStreamEvent): string | undefined {
   if (typeof data !== "object" || data === null) return undefined;
   const text = (data as { readonly message?: unknown }).message;
   return typeof text === "string" ? text : undefined;
+}
+
+// eve паркует ход на лимите сессии запросом ввода kind "session-limit"
+// (eve/dist/src/harness/session-limit-continuation.js); остальные запросы не про лимит.
+function asksSessionLimit(event: TurnStreamEvent): boolean {
+  const data = event.data;
+  if (typeof data !== "object" || data === null) return false;
+  const requests = (data as { readonly requests?: unknown }).requests;
+  return (
+    Array.isArray(requests) &&
+    requests.some(
+      (request: unknown) =>
+        typeof request === "object" &&
+        request !== null &&
+        (request as { readonly kind?: unknown }).kind === "session-limit",
+    )
+  );
+}
+
+// Метки хода: отмена снаружи, причина провала шага и вопрос лимита сессии. Отмена и лимит
+// липкие: поздние и повторные события их не снимают.
+function applyTurnMark(state: TurnState, event: TurnStreamEvent): TurnState {
+  switch (event.type) {
+    case "input.requested":
+      return asksSessionLimit(event) ? { ...state, sessionLimit: true } : state;
+    // Гасят ход снаружи (⏹, /stop): eve всегда доводит такой ход до session.waiting, но
+    // для вызывающего это не «ход поработал и припарковался», а отмена.
+    case "turn.cancelled":
+      return { ...state, cancelled: true };
+    case "turn.failed": {
+      const failure = eventText(event);
+      return failure === undefined ? state : { ...state, failure };
+    }
+    default:
+      return state;
+  }
 }
 
 function applyTurnEvent(state: TurnState, event: TurnStreamEvent): TurnState {
@@ -160,16 +213,8 @@ function applyTurnEvent(state: TurnState, event: TurnStreamEvent): TurnState {
       return { ...state, status: "completed" };
     case "session.waiting":
       return { ...state, status: "waiting" };
-    // Гасят ход снаружи (⏹, /stop): eve всегда доводит такой ход до session.waiting, но
-    // для вызывающего это не «ход поработал и припарковался», а отмена.
-    case "turn.cancelled":
-      return { ...state, cancelled: true };
-    case "turn.failed": {
-      const failure = eventText(event);
-      return failure === undefined ? state : { ...state, failure };
-    }
     default:
-      return state;
+      return applyTurnMark(state, event);
   }
 }
 
@@ -252,6 +297,12 @@ async function readTurnStream(
     if (step.done) return state;
     state = applyTurnEvent(state, step.value);
     if (onEvent) onEvent();
+    // Вопрос лимита в фоне некому показать: дальше читать нечего, ход останавливает
+    // вызывающий, а стрим отпускается без ожидания.
+    if (state.sessionLimit) {
+      stream.return?.().catch(() => {});
+      return state;
+    }
   }
 }
 
@@ -303,6 +354,39 @@ function turnBoundary(state: TurnState): {
   throw new ReminderTurnError("stream ended without a session boundary");
 }
 
+/**
+ * Ход встал на лимит сессии: он гасится тем же путём, что и ход сводки
+ * (scripts/lib/rollup-turn.ts), — session.cancel с задачами, чтобы порождённая им задача
+ * не работала дальше. Отказ остановки ход не спасает, он виден в журнале.
+ */
+async function stopParkedTurn(
+  session: { cancel(options: { readonly tasks: boolean }): Promise<unknown> },
+  log: (...args: unknown[]) => void,
+): Promise<void> {
+  const deadline = stallAfter(
+    SESSION_LIMIT_CANCEL_MS,
+    `cancel timed out after ${SESSION_LIMIT_CANCEL_MS}ms`,
+  );
+  try {
+    await Promise.race([session.cancel({ tasks: true }), deadline.stalled]);
+  } catch (error) {
+    log("remind: session-limit turn cancel failed:", error);
+  } finally {
+    deadline.stop();
+  }
+}
+
+/** Ход, вставший на лимит сессии, — провал с причиной; промежуточный текст не отдаётся. */
+function limitedTurn(feedback: ReminderTurn["feedback"]): ReminderTurn {
+  return {
+    status: "failed",
+    cancelled: false,
+    sessionLimit: true,
+    message: SESSION_LIMIT_FAILURE,
+    feedback,
+  };
+}
+
 export async function runReminderTurn(
   prompt: string,
   options: ReminderClientOptions,
@@ -329,12 +413,17 @@ export async function runReminderTurn(
       inactivityMs,
       log,
     });
+    const feedback = (message: string) => created.session.send(message);
+    if (state.sessionLimit && !state.cancelled) {
+      await stopParkedTurn(created.session, log);
+      return limitedTurn(feedback);
+    }
     const { status, cancelled } = turnBoundary(state);
     return {
       status,
       cancelled,
       ...(state.message === undefined ? {} : { message: state.message }),
-      feedback: (message) => created.session.send(message),
+      feedback,
     };
   } finally {
     if (session) {
