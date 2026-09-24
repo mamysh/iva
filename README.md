@@ -163,7 +163,20 @@ Default model is deepseek-v4-pro, 131k context. On Go it runs about $14–15/mo 
 ## What's New
 
 <details>
-<summary><b>v0.4.7 · 23.09.2026 — expand the latest releases</b></summary>
+<summary><b>v0.4.8 · 24.09.2026 — expand the latest releases</b></summary>
+
+### 24.09.2026
+
+#### v0.4.8
+
+- 📎 **Iva sends files to the chat again**: since 0.4.1 the bash guard blocked `curl` to api.telegram.org, and when asked for a DOCX or a PDF, Iva answered that she could not send an attachment. The new `send_file` tool sends a file from the vault or the temp folder as a document to the chat and topic where it was asked for; `.env`, `data/` and anything outside those folders stay home, even through a symlink.
+- 🔁 **Iva no longer repeats one broken call hundreds of times**: after three identical tool errors in a row, or eight errors of one tool with different arguments, the turn ends with a short explanation; a successful call resets the count. A busy background agent is not polled in circles either: `AGENT_BUSY` now names the next step (#241).
+- 💾 **Fewer tokens paid twice**: Codex requests carry a cache key tied to the session, so each step of a dialogue reads the previous one from cache. Claude keeps the system prompt and its working folder the same between steps and reads the history from the prompt cache (#236). `glob` returns at most 1000 paths and names the rest, instead of 43584 paths in one call. Token accounting now also counts compaction and vision.
+- 🧭 **Reminder and card refusals say what to fix**: `remind` used to answer "give exactly one of at or cron" without naming the field, and the model tried placeholders dozens of times in a row. Now a refusal names the fields that came, what was expected and ends with one ready call for the case; `write_card` refusals carry a sample call too.
+- ⛔ **A background turn at the eve session limit no longer passes for done**: a reminder, a wake-up after a schedule or `iva remind` that hit the session token limit used to send a stale intermediate text as the result. Now the turn fails with the cause, and a reminder sends its own text with a note that it was not done.
+- 🔑 **Google Workspace connects from the menu again**: gws 0.22.5 prints `redirect_uri` URL-encoded, so the menu found no port in it, waited for the timeout and blamed client_secret. Now the port is read from both the encoded and the raw form.
+- 🌙 **A failed nightly summary continues the day instead of starting over**: a big day is processed in parts with a mark in the raw day, the next run resumes from the last mark, and `rollup.ts daily` catches up unprocessed days of the last week. The nightly run reaches its files again: `read_file`, `grep` and `glob` accept `vault/daily/…` from the project root (#242), and Claude no longer stays silent for 90 seconds while it thinks and calls a tool (#239).
+- 📦 **A token usage package in one command**: `curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/main/diagnose-usage.sh | bash` collects three days of per-step tokens, the skeleton of each turn and failure lines, with the heaviest turns on top. Conversation text, tool inputs and outputs and `.env` values other than the model settings stay out; the package arrives as a file in the bot chat.
 
 ### 23.09.2026
 
@@ -186,19 +199,6 @@ Default model is deepseek-v4-pro, 131k context. On Go it runs about $14–15/mo 
 - ⏳ **The turn status is a loader and a ⏹ button on one line**: in the rich style the word "Working" is gone. The line is the loader, and the ⏹ button sits in that same line. The classic style still keeps the button on its own row under the line, because a plain message cannot hold the button inside the text.
 - 🔘 **The root /menu has no captions, only buttons**: the line under each button that said what it does is gone. The root screen is the title and the button rows.
 - 🔌 **A tool call with no arguments no longer drops the turn**: on Claude, a tool call streamed with an empty argument payload used to fail JSON parsing, so the answer looked unfinished and the turn was retried. Empty arguments are now an empty object, and the answer counts as whole.
-
-### 21.09.2026
-
-#### v0.4.5
-
-- ⏹ **Stop kills the work at once, not just the talk with the model**: the `bash` tool ignored a cancelled turn, so "Stop" ended the model request while the command it had started kept running. Now a stop kills the whole process group immediately, and the web search and embedding requests of the turn are aborted with it.
-- ⏹ **Stop always arrives and tells the truth**: the button and `/stop` no longer answer "nothing is running" to a turn that has been silent for half an hour, the bridge keeps reading messages while it waits for the confirmation, and "Stopped" is said only after the agent confirmed it.
-- 🔁 **A turn that did not stop gets a "Restart Iva" button**: if no confirmation comes within a minute, the owner gets an honest message in the private chat with a button that restarts the service; Iva never restarts herself on her own.
-- ⏰ **A reminder turn has no time cap any more**: the turn was cut at the eighth minute and its process killed at the tenth, so long scheduled jobs never finished. Now it runs as long as events keep coming; three minutes of silence or the owner's `/stop` end it, and a stopped turn sends nothing.
-- 🔎 **Memory finds a card by another spelling**: `write_card` takes `aliases` (up to 8 spellings: Cyrillic and Latin, transliteration, the everyday name), search ranks them highest, and the tool descriptions no longer promise word forms the index does not catch.
-- 🧾 **A fact in a card never changes silently**: an update with a new `description` used to erase the old value without a trace. Now the previous value goes to `## History` in a line dated by code only; swapped numbers and names, a changed sign or a negation count as a change of fact, case and spacing do not.
-- 🗂 **Every memory write is its own commit in the vault's git**: `write_card`, `write_file` inside the vault and `CORE.md` edits each leave a commit with exactly their own paths, so one broken card can be reverted. Someone else's uncommitted work is never swept in, the commit goes only to the vault's own repository, a git failure never fails the write, and Brain commits without a remote too.
-- 🩹 **The "iva repair" advice is replaced with a command that exists**: the nightly alert about unreadable files now advises `iva update --force`.
 
 </details>
 
