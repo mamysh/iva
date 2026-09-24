@@ -30,6 +30,7 @@ import {
 } from "./lib/model-provider.ts";
 import { CANONICAL_REASONING_EFFORTS as EFFORTS } from "./lib/reasoning-levels.ts";
 import { toolNameWireMiddleware } from "./lib/tool-wire-name.ts";
+import { compactionUsageMiddleware, type UsageLabel } from "./lib/usage-tap.ts";
 
 type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 type ModelStreamPart =
@@ -772,6 +773,8 @@ const adjacentUserMessagesMiddleware: LanguageModelMiddleware = {
 export function makeTextModel(options: {
   sessionId?: string;
   chatModelSeesImages: ImageCapability;
+  // Чей шаг ведёт модель: расход компактации eve уходит в usage.jsonl под этим ходом.
+  usage?: UsageLabel;
 }) {
   return wrapLanguageModel({
     model: makeBareTextModel(options.sessionId),
@@ -782,6 +785,7 @@ export function makeTextModel(options: {
       adjacentUserMessagesMiddleware,
       // Порядок свободен: кодирование идемпотентно, других читателей toolName в цепочке нет.
       toolNameWireMiddleware(MODEL_PROVIDERS[providerName].toolNameMax),
+      compactionUsageMiddleware(options.usage),
     ],
   });
 }

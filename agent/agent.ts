@@ -8,6 +8,7 @@ import {
   withReplayableReasoning,
   makeTextModel,
 } from "./provider.js";
+import { stepUsageLabel } from "./lib/usage-tap.js";
 import { chatModelSeesImages } from "./vision.js";
 
 export default defineAgent({
@@ -20,11 +21,13 @@ export default defineAgent({
   // каждом шаге, поэтому кэш промпта у провайдера не сбрасывается.
   model: defineDynamic({
     events: {
-      "step.started": (_event, ctx) => ({
+      "step.started": (event, ctx) => ({
         model: withReplayableReasoning(
           makeTextModel({
             sessionId: ctx.session.id,
             chatModelSeesImages,
+            // Компактация eve зовёт эту же модель до шага; её расход пишется под этим ходом.
+            usage: stepUsageLabel(event, ctx.session.id),
           }),
         ),
         // Кастомный провайдер не отдаёт метаданные окна через AI Gateway — задаём вручную;
