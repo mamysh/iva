@@ -793,7 +793,7 @@ function makeBareTextModel(sessionId?: string) {
   // Остальные провайдеры — OpenAI-совместимый chat/completions через openai-compatible.
   if (providerName === "codex") return makeCodexModel();
   if (providerName === "claude")
-    return makeClaudeCliModel(providerConfig.textModel);
+    return makeClaudeCliModel(providerConfig.textModel, { sessionId });
   return createOpenAICompatible({
     name: `iva-${providerName}`,
     baseURL: providerConfig.baseURL,
