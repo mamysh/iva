@@ -276,7 +276,7 @@ function statusError(
   allowed: string[],
 ): string | null {
   if (status && !allowed.includes(status)) {
-    return `Недопустимый status "${status}" для type "${type}". Разрешены: ${allowed.join(", ")}.`;
+    return `Недопустимый status "${status}" для type "${type}". Разрешены: ${allowed.join(", ")}; или не передавай status. Пример: ${JSON.stringify({ status: allowed[0] })}`;
   }
   return null;
 }
@@ -340,10 +340,26 @@ function noopRefusal(card: CardWrite): CardOutcome | null {
     };
   }
   if (existsSync(card.file)) return null;
-  return {
-    ok: false,
-    error: `NOOP требует существующую карточку ${card.rel}.`,
-  };
+  return { ok: false, error: missingCardError("NOOP", card.rel) };
+}
+
+/** Операция над карточкой, которой нет: новую сущность заводит ADD. */
+function missingCardError(operation: CardOperation, rel: string): string {
+  return (
+    `${operation} требует существующую карточку ${rel}, а её нет. Новую сущность заводит ADD ` +
+    "(history_entry ему не нужен); если карточка лежит под другим заголовком, возьми title оттуда. " +
+    'Остальные поля - как были. Пример: {"operation":"ADD"}'
+  );
+}
+
+/** history_entry при UPDATE: называет операцию и оба исправления. */
+function historyEntryOnUpdateError(): string {
+  return (
+    "history_entry допустим только для SUPERSEDE, а операция - UPDATE. Факт дополняет " +
+    "карточку - убери history_entry, UPDATE допишет body в ## Log. Факт сменил Compiled Truth - " +
+    "пошли operation SUPERSEDE, а в history_entry - факт, который карточка держит сейчас. " +
+    'Остальные поля - как были. Пример: {"operation":"UPDATE"}'
+  );
 }
 
 /** Запросы, которые тул решает до лока и без чтения карточки: NOOP ничего не пишет (и
@@ -402,7 +418,7 @@ function requestStateError(
   request: CardWrite & { existing?: string },
 ): { ok: false; error: string } | null {
   if (request.historyEntry !== undefined && effectiveOperation === "UPDATE") {
-    return { ok: false, error: "history_entry допустим только для SUPERSEDE." };
+    return { ok: false, error: historyEntryOnUpdateError() };
   }
   if (effectiveOperation === "ADD" && request.existing !== undefined) {
     return {
@@ -413,7 +429,7 @@ function requestStateError(
   if (effectiveOperation !== "ADD" && request.existing === undefined) {
     return {
       ok: false,
-      error: `${effectiveOperation} требует существующую карточку ${request.rel}.`,
+      error: missingCardError(effectiveOperation, request.rel),
     };
   }
   return null;

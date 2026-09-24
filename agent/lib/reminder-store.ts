@@ -26,6 +26,8 @@ export const REMINDER_SCHEMA_VERSION = 2;
 export const REMINDER_FIRED_KEEP_MS = 24 * 60 * 60_000;
 
 export class ReminderStoreError extends Error {}
+/** remove по id, которого в таблице нет: тул отвечает на это подсказкой, а не сбоем таблицы. */
+export class ReminderNotFoundError extends ReminderStoreError {}
 
 export type ReminderStatus = "pending" | "fired";
 /** `at` — один точный срок; `cron` — повторяющееся расписание (cron-выражение пользователя). */
@@ -529,7 +531,10 @@ export async function remove(id: string): Promise<Reminder> {
   return mutate(file, async () => {
     const rows = await loadTable(file);
     const index = rows.findIndex((row) => row.id === id);
-    if (index === -1) fail(file, `reminder ${JSON.stringify(id)} not found`);
+    if (index === -1)
+      throw new ReminderNotFoundError(
+        `${file}: reminder ${JSON.stringify(id)} not found`,
+      );
     const [removed] = rows.splice(index, 1);
     await saveTable(file, rows);
     return structuredClone(removed);
