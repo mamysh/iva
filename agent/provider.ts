@@ -162,8 +162,11 @@ function readOwnVersion(): string {
 export const IVA_USER_AGENT = `iva/${readOwnVersion()}`;
 const PROCESS_SESSION_ID = `iva-${randomUUID()}`;
 
-/** ID диалога для x-opencode-session: sessionId eve как есть, без него — ID процесса. */
-export function opencodeSessionId(sessionId?: string): string {
+/**
+ * ID диалога на проводе: sessionId eve как есть, без него — ID процесса. Им подписан
+ * x-opencode-session у Go и prompt_cache_key у Codex.
+ */
+function wireSessionId(sessionId?: string): string {
   const id = (sessionId ?? "").trim();
   return id.length > 0 ? id : PROCESS_SESSION_ID;
 }
@@ -174,7 +177,7 @@ export function providerRequestHeaders(
 ): Record<string, string> | undefined {
   if (providerName !== "opencode") return undefined;
   return {
-    "x-opencode-session": opencodeSessionId(sessionId),
+    "x-opencode-session": wireSessionId(sessionId),
     "user-agent": IVA_USER_AGENT,
   };
 }
@@ -335,30 +338,44 @@ export const codexFetch: typeof fetch = async (input, init) => {
 // обязательны, и модель забивает необязательные мусором (живой прогон 13.09.2026:
 // luna слала в remind `cron: ":"`, `id: ":? "`, получала «give exactly one of at or cron»
 // и повторяла это 33 раза, пока висело «Работаю»).
-export const codexProviderOptions: LanguageModelMiddleware = {
-  transformParams({ params }) {
-    return Promise.resolve({
-      ...params,
-      tools: params.tools?.map((tool) =>
-        tool.type === "function" ? { ...tool, strict: false } : tool,
-      ),
-      providerOptions: {
-        ...params.providerOptions,
-        openai: {
-          ...params.providerOptions?.openai,
-          store: false,
-          forceReasoning: true,
-          ...(thinkingEffort
-            ? { reasoningEffort: thinkingEffort, reasoningSummary: null }
-            : {}),
+// promptCacheKey (в теле prompt_cache_key) — ID диалога, как у Codex CLI: бэкенд по нему
+// ведёт шаги одного диалога к одному кэшу, и префикс прошлого шага читается из кэша. Без
+// ключа соседние шаги попадали в кэш через раз. Без сессии ключ — ID процесса (wireSessionId).
+export function codexProviderOptions(
+  sessionId?: string,
+): LanguageModelMiddleware {
+  const promptCacheKey = wireSessionId(sessionId);
+  return {
+    transformParams: ({ params }) =>
+      Promise.resolve({
+        ...params,
+        tools: params.tools?.map((tool) =>
+          tool.type === "function" ? { ...tool, strict: false } : tool,
+        ),
+        providerOptions: {
+          ...params.providerOptions,
+          openai: {
+            ...params.providerOptions?.openai,
+            store: false,
+            forceReasoning: true,
+            promptCacheKey,
+            ...(thinkingEffort
+              ? { reasoningEffort: thinkingEffort, reasoningSummary: null }
+              : {}),
+          },
         },
-      },
-    });
-  },
-};
+      }),
+  };
+}
 
-/** Строит Codex-модель (Responses API подписки). Общая для agent.ts и vision.ts. */
-export function makeCodexModel(model: string = providerConfig.textModel) {
+/**
+ * Строит Codex-модель (Responses API подписки). Общая для agent.ts и vision.ts; sessionId —
+ * ключ кэша промпта (см. codexProviderOptions).
+ */
+export function makeCodexModel(
+  model: string = providerConfig.textModel,
+  sessionId?: string,
+) {
   const openai = createOpenAI({
     baseURL: CODEX_BASE_URL,
     apiKey: "chatgpt-subscription",
@@ -366,7 +383,7 @@ export function makeCodexModel(model: string = providerConfig.textModel) {
   });
   return wrapLanguageModel({
     model: openai.responses(model),
-    middleware: codexProviderOptions,
+    middleware: codexProviderOptions(sessionId),
   });
 }
 
@@ -791,7 +808,8 @@ function makeBareTextModel(sessionId?: string) {
   // Claude-подписка — тоже своя модель: рукописная LanguageModelV4 поверх Claude Code CLI
   // (stream-json), потому что API-адреса у неё нет вовсе.
   // Остальные провайдеры — OpenAI-совместимый chat/completions через openai-compatible.
-  if (providerName === "codex") return makeCodexModel();
+  if (providerName === "codex")
+    return makeCodexModel(providerConfig.textModel, sessionId);
   if (providerName === "claude")
     return makeClaudeCliModel(providerConfig.textModel);
   return createOpenAICompatible({
