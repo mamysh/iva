@@ -11,6 +11,7 @@ the Outbox code delivers it and upgrades it to a rich message. Never send to the
 send bypasses the outbound gate. `rich-post`/`iva post` serve one case: posting
 to ANOTHER allowlisted chat. Scheduled turns (nightly memory, morning digest, the turn
 woken by a fired `remind` row) deliver the final text by code.
+A file goes to the current chat only through the `send_file` tool.
 Replies use Telegram's usual notification by default. For a quiet reply, put
 `<!-- iva:silent -->` on the first line of the final answer; the channel removes
 that line and sends the whole reply with a silent notification. Choose this for
