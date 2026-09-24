@@ -398,3 +398,47 @@ test("a failed upload names the reason and keeps the file", (t) => {
       ),
   );
 });
+
+test("turns set aside by a reset are read from the kept copy of the store", (t) => {
+  const { home, run } = install(t);
+  const trash = join(
+    home,
+    "iva",
+    ".eve",
+    ".workflow-data.trash-2026-09-24T09-45-15-000Z",
+    "streams",
+    "chunks",
+    "strm_01BBB_user",
+  );
+  mkdirSync(trash, { recursive: true });
+  const at = new Date(Date.now() - 7_200_000).toISOString();
+  const events = [
+    { type: "turn.started", data: { turnId: "turn_7" } },
+    ...[0, 1].flatMap((i) => [
+      {
+        type: "step.started",
+        data: { turnId: "turn_7", stepIndex: i, modelId: "m" },
+      },
+      {
+        type: "step.completed",
+        data: { turnId: "turn_7", stepIndex: i, finishReason: "other" },
+      },
+    ]),
+  ];
+  events.forEach((event, i) =>
+    writeFileSync(
+      join(trash, `chnk_${String(i).padStart(4, "0")}.bin`),
+      chunk({ ...event, meta: { at } }),
+    ),
+  );
+  run({ IVA_DIAG_NO_SEND: "1" });
+  const pkg = unpack(home);
+  const summary = readFileSync(join(pkg, "summary.txt"), "utf8");
+  assert.match(summary, /wrun_01BBB turn_7/);
+  assert.match(summary, /steps=2 withTool=0 withText=0 silent=2/);
+  assert.match(summary, /wrun_01AAA turn_0/, "the live store is still read");
+  assert.match(
+    readFileSync(join(pkg, "versions.txt"), "utf8"),
+    /stores set aside by reset\/update: 1/,
+  );
+});

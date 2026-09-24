@@ -39,6 +39,13 @@ STORE=""
 for candidate in "$INSTALL_DIR/.eve/.workflow-data" "$ROOT/.eve/.workflow-data"; do
   [ -d "$candidate" ] && { STORE="$candidate"; break; }
 done
+# `iva reset` and an update set the store aside as .workflow-data.trash-<stamp> next to it; the
+# turns before a reset live only there, so every kept copy is read too.
+STORES=()
+if [ -n "$STORE" ]; then
+  STORES=("$STORE")
+  for trash in "$STORE".trash-*; do [ -d "$trash" ] && STORES+=("$trash"); done
+fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT_DIR="$DATA_DIR/diagnose"
@@ -64,6 +71,7 @@ cut_secrets() {
   say "eve: $(grep -m1 '"version"' "$ROOT/node_modules/eve/package.json" 2>/dev/null | tr -d ' ,' || true)"
   say "node: $("$NODE" --version 2>/dev/null || true)"
   say "store: ${STORE:-(not found)}"
+  say "stores set aside by reset/update: $(( ${#STORES[@]} > 0 ? ${#STORES[@]} - 1 : 0 ))"
   say; say "versions on disk:"; ls -1 "$INSTALL_DIR/versions" 2>/dev/null || say "(none)"
 } > "$PKG/versions.txt"
 
@@ -124,7 +132,7 @@ cat > "$WORK/skeleton.mjs" <<'NODE'
 import fs from "node:fs";
 import path from "node:path";
 
-const [store, pkg, days] = process.argv.slice(2);
+const [pkg, days, ...stores] = process.argv.slice(2);
 const since = new Date(Date.now() - Number(days) * 864e5).toISOString();
 const clip = (v, n) => (typeof v === "string" ? v : JSON.stringify(v ?? "")).replace(/\s+/g, " ").slice(0, n);
 const size = (v) => (v == null ? 0 : typeof v === "string" ? v.length : JSON.stringify(v).length);
@@ -151,14 +159,18 @@ function failed(result, status) {
 }
 
 const rows = [];
-const chunks = store ? path.join(store, "streams", "chunks") : "";
-if (chunks && fs.existsSync(chunks)) {
+const seen = new Set(); // a chunk id is unique; the same lane can sit in the store and a set-aside copy
+for (const store of stores) {
+  const chunks = path.join(store, "streams", "chunks");
+  if (!fs.existsSync(chunks)) continue;
   for (const dir of fs.readdirSync(chunks).sort()) {
     const full = path.join(chunks, dir);
     if (!fs.statSync(full).isDirectory() || fs.statSync(full).mtime.toISOString() < since) continue;
     const session = "wrun_" + dir.replace(/^strm_/, "").split("_")[0];
     const lane = dir.split("_").slice(2).join("_");
     for (const file of fs.readdirSync(full).sort()) {
+      if (seen.has(`${dir}/${file}`)) continue;
+      seen.add(`${dir}/${file}`);
       const ev = decode(fs.readFileSync(path.join(full, file)));
       if (!ev || !ev.type) continue;
       const d = ev.data ?? {};
@@ -213,6 +225,7 @@ if (chunks && fs.existsSync(chunks)) {
     }
   }
 }
+rows.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 fs.writeFileSync(path.join(pkg, "turn-skeleton.jsonl"), rows.map((r) => JSON.stringify(r)).join("\n") + (rows.length ? "\n" : ""));
 
 // ---- summary ----
@@ -298,7 +311,7 @@ for (const t of list) {
 if (!turns.size) out.push("(no eve store events in the window: the store was not found or was pruned)");
 fs.writeFileSync(path.join(pkg, "summary.txt"), out.join("\n") + "\n");
 NODE
-"$NODE" "$WORK/skeleton.mjs" "$STORE" "$PKG" "$DAYS" 2> "$PKG/skeleton-errors.txt" || true
+"$NODE" "$WORK/skeleton.mjs" "$PKG" "$DAYS" ${STORES[@]+"${STORES[@]}"} 2> "$PKG/skeleton-errors.txt" || true
 [ -s "$PKG/skeleton-errors.txt" ] || rm -f "$PKG/skeleton-errors.txt"
 
 cat > "$PKG/README.txt" <<'TXT'
