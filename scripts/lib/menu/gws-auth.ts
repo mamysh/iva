@@ -50,14 +50,35 @@ function textValue(value: unknown): string {
 
 // From gws stdout, pull the Google consent URL and the loopback port it registered.
 // Returns { url, port } once gws has printed them, else null.
+// gws 0.22.5 prints redirect_uri URL-encoded (`http%3A%2F%2Flocalhost%3A41803%2F`), older
+// versions raw; searchParams decodes both.
 export function parseAuthChallenge(logText: unknown): AuthChallenge | null {
   const text = textValue(logText);
   const url = text.match(/https:\/\/accounts\.google\.com\/[^\s]+/)?.[0];
-  const port = text.match(
-    /redirect_uri=http:\/\/(?:localhost|127\.0\.0\.1):(\d+)/,
-  )?.[1];
-  if (!url || !port) return null;
-  return { url, port: Number(port) };
+  if (!url) return null;
+  try {
+    const redirect = new URL(url).searchParams.get("redirect_uri");
+    if (!redirect) return null;
+    const port = loopbackPort(redirect);
+    return port === null ? null : { url, port };
+  } catch {
+    return null;
+  }
+}
+
+// Port of an explicit `http://localhost:<port>` or `http://127.0.0.1:<port>` URL, else null.
+function loopbackPort(redirect: string): number | null {
+  const target = new URL(redirect);
+  if (target.protocol !== "http:") return null;
+  if (target.hostname !== "localhost" && target.hostname !== "127.0.0.1") {
+    return null;
+  }
+  // URL drops the scheme's default port, so an explicit :80 reads as "".
+  const explicit =
+    target.port ||
+    (/^http:\/\/[^/?#]*:0*80(?:[/?#]|$)/i.test(redirect) ? "80" : "");
+  const port = Number(explicit);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
 }
 
 // Normalize whatever the user pasted back into the raw callback query string (must carry `code`).
