@@ -283,6 +283,13 @@ function hasH2Section(body: string, heading: string): boolean {
   return h2Sections(body.split("\n"), heading).length > 0;
 }
 
+/** Первая строка вне фенсов, подходящая под pattern: отказ называет её, а не только факт. */
+function outsideHeading(body: string, pattern: RegExp): string | undefined {
+  const lines = body.split("\n");
+  const outside = outsideFences(lines);
+  return lines.find((line, index) => outside[index] && pattern.test(line));
+}
+
 function hasOutsideHeading(body: string, pattern: RegExp): boolean {
   const lines = body.split("\n");
   const outside = outsideFences(lines);
@@ -981,11 +988,15 @@ export function mergeCard(input: MergeInput): MergeResult {
       };
     if (!displacedFactNames(operation, input.historyEntry, oldBody))
       throw new Error(
-        "historyEntry already appears in ## History but this SUPERSEDE still changes the card; " +
-          "send the fact this call displaces",
+        displacedFactRefusal(
+          "historyEntry already appears in ## History but this SUPERSEDE still changes the card; " +
+            "send the fact this call displaces",
+          oldBody,
+          input.date,
+        ),
       );
   }
-  assertDisplacedFactNamed(operation, input.historyEntry, oldBody);
+  assertDisplacedFactNamed(operation, input.historyEntry, oldBody, input.date);
   return {
     content,
     action: cardAction(operation, assembled.appended),
@@ -1001,10 +1012,22 @@ export function mergeCard(input: MergeInput): MergeResult {
 /** ## Related сочиняет write_card из related: тело с этим заголовком значит, что модель
  * ведёт секцию сама, и в карточке появляется вторая. */
 function assertRelatedSectionAbsent(trimmedBody: string): void {
-  if (h2Sections(trimmedBody.split("\n"), "Related").length)
-    throw new Error(
-      "body must not contain ## Related; pass links through related",
-    );
+  const lines = trimmedBody.split("\n");
+  const sections = h2Sections(lines, "Related");
+  if (!sections.length) return;
+  const links = sections.flatMap(({ start, end }) =>
+    [
+      ...lines
+        .slice(start + 1, end)
+        .join("\n")
+        .matchAll(/\[\[([^\]|#]+)/gu),
+    ].map((match) => match[1].trim()),
+  );
+  const related = links.length ? links : ["<card path or slug>"];
+  throw new Error(
+    "body must not contain ## Related; pass links through related and drop the section from body. " +
+      `Example: ${JSON.stringify({ related })}`,
+  );
 }
 
 /** Сочетания полей, которые не значат ничего: replace_body без SUPERSEDE и history_entry
@@ -1046,12 +1069,21 @@ function assertBodyShape(
 ): void {
   if (operation !== "NOOP" && hasUnclosedFence(trimmedBody))
     throw new Error(`${operation} body must close every code fence`);
-  if (
-    (operation === "ADD" || operation === "UPDATE") &&
-    hasOutsideHeading(trimmedBody, /^ {0,3}#{1,2}\s+/)
-  )
-    throw new Error(`${operation} body must be a fact without H1/H2 headings`);
+  if (operation === "ADD" || operation === "UPDATE")
+    assertNoHeading(trimmedBody, operation);
   if (operation === "UPDATE") assertLogEntryShape(trimmedBody, date);
+}
+
+/** Заголовок в теле ADD/UPDATE: отказ называет строку и показывает её обычной строкой. */
+function assertNoHeading(trimmedBody: string, operation: CardOperation): void {
+  const heading = outsideHeading(trimmedBody, /^ {0,3}#{1,2}\s+/);
+  if (heading === undefined) return;
+  const plain = heading.replace(/^ {0,3}#{1,2}\s+/, "").trim();
+  throw new Error(
+    `${operation} body must be a fact without H1/H2 headings; got ${JSON.stringify(heading.trim())}. ` +
+      "write_card writes the title and its own sections: send that line as plain text. " +
+      `Example: ${JSON.stringify({ body: `${plain}: …` })}`,
+  );
 }
 
 /** Проверки выше судят сырое тело, а UPDATE кладёт его в карточку сдвинутым на два пробела
@@ -1315,13 +1347,59 @@ function assertDisplacedFactNamed(
   operation: CardOperation,
   historyEntry: string | undefined,
   oldBody: string,
+  date: string,
 ): void {
   if (operation !== "SUPERSEDE" || !historyEntry?.trim()) return;
   if (!displacedFactNames(operation, historyEntry, oldBody))
     throw new Error(
-      "historyEntry must state the Compiled Truth this SUPERSEDE displaces; " +
-        "send the fact the card holds now",
+      displacedFactRefusal(
+        "historyEntry must state the Compiled Truth this SUPERSEDE displaces; " +
+          "send the fact the card holds now",
+        oldBody,
+        date,
+      ),
     );
+}
+
+/** Сколько истины показать в отказе и сколько взять в строку-образец. */
+const TRUTH_SHOWN_CHARS = 300;
+const TRUTH_ENTRY_CHARS = 160;
+
+/** Начало текста не длиннее limit, по границе слова; одно длинное слово режется. */
+function textStart(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const cut = text.slice(0, limit);
+  const space = cut.lastIndexOf(" ");
+  return space > 0 ? cut.slice(0, space) : cut;
+}
+
+/**
+ * Отказ SUPERSEDE, не назвавшего нынешнюю истину: модель не видит карточку и без самой
+ * истины гадает. Текст несёт истину и строку history_entry, которая проходит сверку
+ * displacedFactNames: начало истины по границе слова - её префикс и после comparableFact.
+ * Карточка без истины вытеснять нечего - новый факт идёт через UPDATE.
+ */
+function displacedFactRefusal(
+  lead: string,
+  oldBody: string,
+  date: string,
+): string {
+  const truth = compiledTruth(oldBody).replace(/\s+/gu, " ").trim();
+  if (!comparableFact(truth))
+    return (
+      `${lead}. The card holds no Compiled Truth above its sections, so there is nothing to displace: ` +
+      'send the new fact with UPDATE and no history_entry. Example: {"operation":"UPDATE"}'
+    );
+  const shown =
+    truth.length > TRUTH_SHOWN_CHARS
+      ? `${textStart(truth, TRUTH_SHOWN_CHARS)} …`
+      : truth;
+  const entry = `${date}: ${textStart(truth, TRUTH_ENTRY_CHARS)}`;
+  return (
+    `${lead}. The card holds now: ${JSON.stringify(shown)}. ` +
+    "Put in history_entry the start of that text, dated when it held, and resend the other fields as before. " +
+    `Example: ${JSON.stringify({ operation: "SUPERSEDE", history_entry: entry })}`
+  );
 }
 
 function cardAction(
