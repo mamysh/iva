@@ -9,6 +9,7 @@ import {
 import { makeClaudeCliModel } from "./lib/claude-cli.ts";
 import {
   chatCompletionsUsageTokens,
+  recordVisionStreamUsage,
   recordVisionUsage,
   sdkUsageTokens,
 } from "./lib/usage-tap.ts";
@@ -114,11 +115,8 @@ async function describeWithSubscription(
   });
   let out = "";
   for await (const chunk of result.textStream) out += chunk;
-  // Текст уже дочитан, значит и расход стрима готов; сбой здесь — сбой зрения, как и выше.
-  recordVisionUsage(
-    providerConfig.visionModel,
-    sdkUsageTokens(await result.usage),
-  );
+  // Текст уже дочитан, значит и расход стрима готов; сбой учёта описание не отнимает.
+  await recordVisionStreamUsage(providerConfig.visionModel, result.usage);
   return out.trim();
 }
 

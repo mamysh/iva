@@ -7,8 +7,15 @@
 //
 // Ключ хода у таких строк — ход, в котором случился вызов, с суффиксом "#compaction" или
 // "#vision". Читатели (scripts/lib/usage.ts) группируют ход по части до "#", поэтому расход
-// входит в итог хода, но не выдаёт себя за размер контекста основной сессии: вход
-// компактации — это весь пересказываемый транскрипт, а не окно следующего шага.
+// компактации входит в итог хода, но не выдаёт себя за размер контекста основной сессии:
+// вход компактации — это весь пересказываемый транскрипт, а не окно следующего шага.
+//
+// Зрение идёт в канале до хода, а компактация planner — вне шага, поэтому у их строк хода
+// нет: sessionId "" и turnId "#vision"/"#compaction". Читатели считают такой расход в итоге
+// окна, но ходом его не считают и последним ходом не показывают.
+//
+// Учёт не участвует в основном пути: сбой записи строки уходит в журнал, а компактация,
+// описание картинки и пробник идут дальше, как будто учёта нет.
 import type { LanguageModelMiddleware, LanguageModelUsage } from "ai";
 import { resolveModelProvider } from "./model-provider.ts";
 import {
@@ -75,10 +82,10 @@ export function providerUsageTokens(
   usage: ProviderUsage | undefined,
 ): UsageTokens | null {
   return readUsageTokens({
-    in: usage?.inputTokens.total,
-    out: usage?.outputTokens.total,
-    cacheRead: usage?.inputTokens.cacheRead,
-    cacheWrite: usage?.inputTokens.cacheWrite,
+    in: usage?.inputTokens?.total,
+    out: usage?.outputTokens?.total,
+    cacheRead: usage?.inputTokens?.cacheRead,
+    cacheWrite: usage?.inputTokens?.cacheWrite,
   });
 }
 
@@ -89,8 +96,8 @@ export function sdkUsageTokens(
   return readUsageTokens({
     in: usage?.inputTokens,
     out: usage?.outputTokens,
-    cacheRead: usage?.inputTokenDetails.cacheReadTokens,
-    cacheWrite: usage?.inputTokenDetails.cacheWriteTokens,
+    cacheRead: usage?.inputTokenDetails?.cacheReadTokens,
+    cacheWrite: usage?.inputTokenDetails?.cacheWriteTokens,
   });
 }
 
@@ -119,13 +126,18 @@ type TapRow = {
 };
 
 /**
- * Дописать строку расхода. Мусорные числа провайдера уходят в журнал, а строка не пишется,
- * как и у шага хода. Сбой диска не глотаем: хук шага на нём падает так же.
+ * Дописать строку расхода; ответ — легла ли строка в лог. Мусорные числа провайдера уходят
+ * в журнал, а строка не пишется, как и у шага хода. Сбой диска тоже уходит в журнал и
+ * дальше не идёт: вызов модели, ради которого пишется строка, уже состоялся, и его
+ * результат важнее счётчика.
  */
-export function recordTapUsage(row: TapRow, tokens: UsageTokens | null): void {
+export function recordTapUsage(
+  row: TapRow,
+  tokens: UsageTokens | null,
+): boolean {
   if (!tokens) {
     console.error(`[usage] расход ${row.source} пропущен: мусор в usage`);
-    return;
+    return false;
   }
   const record = usageRecord(
     {
@@ -138,21 +150,44 @@ export function recordTapUsage(row: TapRow, tokens: UsageTokens | null): void {
     },
     tokens,
   );
-  if (record) appendUsage(record);
+  if (!record) return false;
+  try {
+    appendUsage(record);
+    return true;
+  } catch (error) {
+    console.error(`[usage] строка ${row.source} не записана:`, error);
+    return false;
+  }
 }
 
 /** Расход зрения: vision-модель провайдера или пробник модели чата. */
 export function recordVisionUsage(
   model: string,
   tokens: UsageTokens | null,
-): void {
-  recordTapUsage({ source: "vision", model }, tokens);
+): boolean {
+  return recordTapUsage({ source: "vision", model }, tokens);
+}
+
+/**
+ * Расход зрения из стрима AI SDK. Обещание usage у стрима может отказать и после
+ * дочитанного текста — это сбой учёта, а не зрения: строки нет, описание остаётся.
+ */
+export async function recordVisionStreamUsage(
+  model: string,
+  usage: PromiseLike<LanguageModelUsage>,
+): Promise<boolean> {
+  try {
+    return recordVisionUsage(model, sdkUsageTokens(await usage));
+  } catch (error) {
+    console.error("[usage] расход vision не прочитан:", error);
+    return false;
+  }
 }
 
 /**
  * Звено цепочки makeTextModel: снимает расход компактации eve. Шаги хода идут через
  * doStream и их пишет хук; компактация — единственный generateText eve с этой моделью.
- * Без метки (модель собрана вне шага, как у planner) строка пишется без сессии.
+ * Без метки (модель собрана вне шага, как у planner) строка пишется без сессии и хода.
  */
 export function compactionUsageMiddleware(
   label?: UsageLabel,

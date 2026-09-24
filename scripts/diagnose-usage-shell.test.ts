@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  appendFileSync,
   chmodSync,
   mkdirSync,
   mkdtempSync,
@@ -441,4 +442,32 @@ test("turns set aside by a reset are read from the kept copy of the store", (t) 
     readFileSync(join(pkg, "versions.txt"), "utf8"),
     /stores set aside by reset\/update: 1/,
   );
+});
+
+test("vision rows without a turn count per day but never make a heaviest turn", (t) => {
+  const { home, run } = install(t);
+  const at = new Date(Date.now() - 1_800_000).toISOString();
+  const vision = (input: number) =>
+    JSON.stringify({
+      ts: at,
+      source: "vision",
+      provider: "ollama",
+      model: "gemma4:31b",
+      sessionId: "",
+      turnId: "#vision",
+      step: 0,
+      in: input,
+      out: 40,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: input + 40,
+    });
+  appendFileSync(
+    join(home, "iva", "data", "usage.jsonl"),
+    `${vision(900_000)}\n${vision(800_000)}\n`,
+  );
+  run({ IVA_DIAG_NO_SEND: "1" });
+  const summary = readFileSync(join(unpack(home), "summary.txt"), "utf8");
+  assert.match(summary, /vision\s+gemma4:31b\s+2\s+1\.70M/);
+  assert.doesNotMatch(summary, /#vision/);
 });

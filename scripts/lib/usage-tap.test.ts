@@ -5,7 +5,7 @@
 // КАК ВОСПРОИЗВЕСТИ ПАДЕНИЕ: seed в имени теста; fc.assert(prop, { seed: SEED, path }).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateText, wrapLanguageModel } from "ai";
@@ -15,6 +15,9 @@ import {
   compactionUsageMiddleware,
   providerUsageTokens,
   recordTapUsage,
+  recordVisionStreamUsage,
+  recordVisionUsage,
+  sdkUsageTokens,
   stepUsageLabel,
   type UsageLabel,
 } from "#lib/usage-tap.ts";
@@ -276,4 +279,241 @@ await test(`метка шага из события резолвера не па
     ),
     { seed: SEED, numRuns: 200 },
   );
+});
+
+// --- Строки без хода: читатель не склеивает их в ложный ход ------------------------------
+
+type StepRow = Parameters<typeof appendUsage>[0];
+
+function step(
+  sessionId: string,
+  turnId: string,
+  input: number,
+  output: number,
+): StepRow {
+  return {
+    ts: new Date().toISOString(),
+    source: "channel:telegram",
+    provider: "ollama",
+    model: "m",
+    sessionId,
+    turnId,
+    step: 0,
+    in: input,
+    out: output,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: input + output,
+  };
+}
+
+const TOKENS = (input: number, output: number) => ({
+  in: input,
+  out: output,
+  cacheRead: 0,
+  cacheWrite: 0,
+});
+
+await test("зрение и компактация без метки не становятся последним ходом и не считаются ходами", () =>
+  withDir((dir) => {
+    recordVisionUsage("vm", TOKENS(1000, 50));
+    appendUsage(step("s1", "turn_0", 20_000, 10), dir);
+    recordTapUsage({ source: "compaction", model: "m" }, TOKENS(70_000, 900));
+    appendUsage(step("s1", "turn_1", 30_000, 100), dir);
+    // Зрение идёт до хода с фото: пока шаг не дошёл, его строка в логе последняя.
+    recordVisionUsage("vm", TOKENS(1200, 40));
+    const entries = readEntries(dir);
+    assert.equal(entries.length, 5);
+
+    const last = summarize(entries, { window: "last" }).last;
+    assert.ok(last);
+    assert.equal(last.total, 30_100, JSON.stringify(last));
+    assert.equal(last.in, 30_000);
+    assert.equal(last.steps, 1);
+    assert.equal(last.contextFromSubagent, false);
+    assert.equal(last.source, "channel:telegram");
+
+    const today = summarize(entries, { window: "today" });
+    assert.equal(today.totals.turns, 2, "ходов два, строки без хода — не ход");
+    assert.equal(
+      today.totals.total,
+      1050 + 20_010 + 70_900 + 30_100 + 1240,
+      "расход без хода входит в итог окна",
+    );
+    assert.match(formatUsageReport(today), /· 2 turns/u);
+  }));
+
+await test("строка компактации с меткой, последняя в логе, не подменяет контекст хода", () =>
+  withDir((dir) => {
+    appendUsage(step("s1", "turn_3", 12_000, 100), dir);
+    recordTapUsage(
+      { source: "compaction", model: "m", label: LABEL },
+      TOKENS(90_000, 2_000),
+    );
+    const last = summarize(readEntries(dir), { window: "last" }).last;
+    assert.ok(last);
+    assert.equal(last.in, 12_000);
+    assert.equal(last.contextFromSubagent, false);
+    assert.equal(last.total, 12_100 + 92_000);
+    assert.equal(last.steps, 2);
+  }));
+
+await test("компактация нового хода до его первого шага не выдаёт себя за ход", () =>
+  withDir((dir) => {
+    appendUsage(step("s1", "turn_2", 12_000, 100), dir);
+    recordTapUsage(
+      { source: "compaction", model: "m", label: LABEL },
+      TOKENS(90_000, 2_000),
+    );
+    const last = summarize(readEntries(dir), { window: "last" }).last;
+    assert.ok(last);
+    assert.equal(last.total, 12_100, "последний ход — последний с шагом");
+    assert.equal(last.in, 12_000);
+  }));
+
+const OWNED = fc.record({
+  kind: fc.constant("step" as const),
+  session: fc.constantFrom("s1", "s2"),
+  turn: fc.constantFrom("turn_0", "turn_1", "turn_2"),
+  input: fc.integer({ min: 1, max: 100_000 }),
+  output: fc.integer({ min: 0, max: 5_000 }),
+});
+const LOOSE = fc.record({
+  kind: fc.constantFrom("vision" as const, "compaction" as const),
+  input: fc.integer({ min: 1, max: 100_000 }),
+  output: fc.integer({ min: 0, max: 5_000 }),
+});
+
+await test(`строки без хода не меняют последний ход и число ходов (seed ${SEED})`, () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.oneof(OWNED, LOOSE), { minLength: 1, maxLength: 12 }),
+      (rows) => {
+        withDir((dir) => {
+          for (const row of rows) {
+            if (row.kind === "step")
+              appendUsage(
+                step(row.session, row.turn, row.input, row.output),
+                dir,
+              );
+            else if (row.kind === "vision")
+              recordVisionUsage("vm", TOKENS(row.input, row.output));
+            else
+              recordTapUsage(
+                { source: "compaction", model: "m" },
+                TOKENS(row.input, row.output),
+              );
+          }
+          const all = readEntries(dir);
+          const steps = all.filter(
+            (entry) => entry.source === "channel:telegram",
+          );
+          const withLoose = summarize(all, { window: "last" }).last;
+          const stepsOnly = summarize(steps, { window: "last" }).last;
+          assert.deepEqual(
+            withLoose && { ...withLoose, when: "" },
+            stepsOnly && { ...stepsOnly, when: "" },
+          );
+          const today = summarize(all, { window: "today" }).totals;
+          const todaySteps = summarize(steps, { window: "today" }).totals;
+          assert.equal(today.turns, todaySteps.turns);
+          assert.equal(
+            today.total,
+            rows.reduce((sum, row) => sum + row.input + row.output, 0),
+          );
+        });
+      },
+    ),
+    { seed: SEED, numRuns: 150 },
+  );
+});
+
+// --- Сбой учёта не ломает вызов модели ---------------------------------------------------
+
+await test("сбой записи строки не бросает: компактация и зрение идут дальше", (t) => {
+  const original = console.error;
+  const logged: unknown[] = [];
+  console.error = (...args: unknown[]) => void logged.push(args);
+  t.after(() => {
+    console.error = original;
+  });
+  withDir((dir) => {
+    // Каталог на месте файла лога: appendFileSync упадёт с EISDIR.
+    mkdirSync(join(dir, "usage.jsonl"));
+    assert.equal(
+      recordTapUsage(
+        { source: "compaction", model: "m", label: LABEL },
+        TOKENS(10, 1),
+      ),
+      false,
+    );
+    assert.equal(recordVisionUsage("vm", TOKENS(10, 1)), false);
+  });
+  assert.ok(logged.length >= 2, "сбой назван в журнале");
+});
+
+await test("компактация проходит, даже если лог не пишется", () =>
+  withDir(async (dir) => {
+    mkdirSync(join(dir, "usage.jsonl"));
+    const original = console.error;
+    console.error = () => undefined;
+    try {
+      const model = wrapLanguageModel({
+        model: mockModel(usage(5000, 1000, 300)),
+        middleware: [compactionUsageMiddleware(LABEL)],
+      });
+      const out = await compactMessages(
+        HISTORY,
+        model,
+        CONFIG,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+      assert.ok(out.length > 0);
+    } finally {
+      console.error = original;
+    }
+  }));
+
+await test("расход без вложенных объектов читается как ноль, а не падает", () => {
+  assert.doesNotThrow(() =>
+    providerUsageTokens({} as Parameters<typeof providerUsageTokens>[0]),
+  );
+  assert.doesNotThrow(() =>
+    sdkUsageTokens({ inputTokens: 5 } as Parameters<typeof sdkUsageTokens>[0]),
+  );
+  assert.deepEqual(
+    sdkUsageTokens({ inputTokens: 5 } as Parameters<typeof sdkUsageTokens>[0]),
+    { in: 5, out: 0, cacheRead: 0, cacheWrite: 0 },
+  );
+});
+
+await test("отказ обещания usage у стрима зрения — строки нет, ошибка не наружу", async (t) => {
+  const original = console.error;
+  console.error = () => undefined;
+  t.after(() => {
+    console.error = original;
+  });
+  await withDir(async (dir) => {
+    const written = await recordVisionStreamUsage(
+      "vm",
+      Promise.reject(new Error("stream aborted")),
+    );
+    assert.equal(written, false);
+    assert.deepEqual(readEntries(dir), []);
+    assert.equal(
+      await recordVisionStreamUsage(
+        "vm",
+        Promise.resolve({
+          inputTokens: 700,
+          outputTokens: 20,
+        } as Parameters<typeof sdkUsageTokens>[0] & object),
+      ),
+      true,
+    );
+    assert.equal(readEntries(dir).length, 1);
+  });
 });
