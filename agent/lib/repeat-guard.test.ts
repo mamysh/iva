@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,6 +62,212 @@ const failed = (id: string, input: unknown = { path: "x" }) =>
   });
 const success = (id: string) =>
   pair(id, "read_file", { path: "ok" }, { type: "text", value: "готово" });
+
+function parallelStep(
+  label: string,
+  results: Array<{ ok: boolean; error?: string }>,
+): LanguageModelV4Prompt {
+  return [
+    {
+      role: "assistant",
+      content: results.map((_, i) => ({
+        type: "tool-call",
+        toolCallId: `${label}-${i}`,
+        toolName: "web_fetch",
+        input: { url: `https://example.test/${i}` },
+      })),
+    },
+    {
+      role: "tool",
+      content: results.map((result, i) => ({
+        type: "tool-result",
+        toolCallId: `${label}-${i}`,
+        toolName: "web_fetch",
+        output: result.ok
+          ? { type: "text", value: "page opened" }
+          : { type: "error-text", value: result.error ?? "HTTP 403" },
+      })),
+    },
+  ] as LanguageModelV4Prompt;
+}
+
+void test("R2: eight failed web_fetch calls in one model step count as one", () => {
+  const step = parallelStep(
+    "one",
+    Array.from({ length: 8 }, () => ({ ok: false })),
+  );
+  assert.equal(inspectRepeatGuard([user, ...step]).stop, undefined);
+});
+
+void test("R2: two opened pages among eight 403 responses keep the step successful", () => {
+  const mixed = [
+    { ok: true },
+    ...Array.from({ length: 8 }, () => ({ ok: false })),
+    { ok: true },
+  ];
+  assert.equal(
+    inspectRepeatGuard([user, ...parallelStep("mixed", mixed)]).stop,
+    undefined,
+  );
+  assert.equal(
+    inspectRepeatGuard([
+      user,
+      ...failed("a"),
+      ...failed("b"),
+      ...parallelStep("mixed", mixed),
+      ...failed("c"),
+    ]).stop,
+    undefined,
+  );
+});
+
+void test("R2: three duplicate calls in one model step do not stop the turn", () => {
+  const p = parallelStep(
+    "dup",
+    Array.from({ length: 3 }, () => ({ ok: false })),
+  );
+  const assistant = p[0];
+  if (assistant.role !== "assistant") throw new Error("bad test fixture");
+  for (const part of assistant.content)
+    if (part.type === "tool-call")
+      part.input = { url: "https://example.test/same" };
+  assert.equal(inspectRepeatGuard([user, ...p]).stop, undefined);
+});
+
+void test("R2: three separate identical failed steps stop the turn", () => {
+  const same = (id: string) =>
+    pair(
+      id,
+      "web_fetch",
+      { url: "https://example.test/same" },
+      { type: "error-text", value: "HTTP 403" },
+    );
+  assert.equal(
+    inspectRepeatGuard([user, ...same("a"), ...same("b")]).stop,
+    undefined,
+  );
+  assert.equal(
+    inspectRepeatGuard([user, ...same("a"), ...same("b"), ...same("c")]).stop
+      ?.count,
+    3,
+  );
+});
+
+void test("R2: all failures for a tool within each step must share one signature", () => {
+  const varied = ["v1", "v2", "v3"].flatMap((label) =>
+    parallelStep(label, [{ ok: false }, { ok: false }]),
+  );
+  assert.equal(inspectRepeatGuard([user, ...varied]).stop, undefined);
+  const identical = ["i1", "i2", "i3"].flatMap((label) => {
+    const step = parallelStep(label, [{ ok: false }, { ok: false }]);
+    const assistant = step[0];
+    if (assistant.role !== "assistant") throw new Error("bad test fixture");
+    for (const part of assistant.content)
+      if (part.type === "tool-call")
+        part.input = { url: "https://example.test/same" };
+    return step;
+  });
+  assert.equal(inspectRepeatGuard([user, ...identical]).stop?.count, 3);
+});
+
+void test("R2: success of another tool in a step resets the failed web_fetch streak", () => {
+  const step = parallelStep("mixed-tools", [{ ok: false }]);
+  const assistant = step[0];
+  const result = step[1];
+  if (assistant.role !== "assistant" || result.role !== "tool")
+    throw new Error("bad test fixture");
+  assistant.content.push({
+    type: "tool-call",
+    toolCallId: "read-ok",
+    toolName: "read_file",
+    input: {},
+  });
+  result.content.push({
+    type: "tool-result",
+    toolCallId: "read-ok",
+    toolName: "read_file",
+    output: { type: "text", value: "opened" },
+  });
+  const same = (id: string) =>
+    pair(
+      id,
+      "web_fetch",
+      { url: "https://example.test/same" },
+      { type: "error-text", value: "HTTP 403" },
+    );
+  assert.equal(
+    inspectRepeatGuard([
+      user,
+      ...same("a"),
+      ...same("b"),
+      ...step,
+      ...same("c"),
+    ]).stop,
+    undefined,
+  );
+});
+
+void test("R2: seven separate varied failed steps pass; eight stop with correct plural", () => {
+  const steps = Array.from({ length: 8 }, (_, i) =>
+    pair(
+      `var-${i}`,
+      "web_fetch",
+      { url: `https://example.test/${i}` },
+      { type: "error-text", value: `HTTP ${400 + i}` },
+    ),
+  );
+  assert.equal(
+    inspectRepeatGuard([user, ...steps.slice(0, 7).flat()]).stop,
+    undefined,
+  );
+  const stop = inspectRepeatGuard([user, ...steps.flat()]).stop;
+  assert.equal(stop?.count, 8);
+  assert.match(stop?.message ?? "", /8 раз подряд/u);
+});
+
+void test("R2: HTML response body is omitted from the human error", () => {
+  const step = (id: string) =>
+    pair(
+      id,
+      "web_fetch",
+      {},
+      {
+        type: "error-text",
+        value: "HTTP 403\n<html><body>private page</body></html>",
+      },
+    );
+  const stop = inspectRepeatGuard([
+    user,
+    ...step("a"),
+    ...step("b"),
+    ...step("c"),
+  ]).stop;
+  assert.ok(stop);
+  assert.match(stop.message, /HTTP 403/u);
+  assert.doesNotMatch(stop.message, /<html|private page/u);
+});
+
+void test("R2: English setting produces an English stop message", () => {
+  const script = `import { inspectRepeatGuard } from './agent/lib/repeat-guard.ts';
+    const user = { role: 'user', content: [{ type: 'text', text: 'go' }] };
+    const pair = (id) => [
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: id, toolName: 'web_fetch', input: {} }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: id, toolName: 'web_fetch', output: { type: 'error-text', value: 'HTTP 403' } }] },
+    ];
+    console.log(inspectRepeatGuard([user, ...pair('a'), ...pair('b'), ...pair('c')]).stop.message);`;
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", script],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env, AGENT_LANGUAGE: "en" },
+      encoding: "utf8",
+    },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  assert.match(child.stdout, /web_fetch.*3 times in a row/u);
+  assert.doesNotMatch(child.stdout, /Инструмент|Ход остановлен/u);
+});
 
 void test("two identical failures pass; three stop", () => {
   assert.equal(

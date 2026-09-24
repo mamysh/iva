@@ -6,6 +6,7 @@ import type {
   LanguageModelV4StreamPart,
   LanguageModelV4Usage,
 } from "@ai-sdk/provider";
+import { tr } from "./i18n.ts";
 import { traceRepeatGuard } from "./trace.ts";
 
 type Call = {
@@ -119,8 +120,26 @@ function normalizedError(value: string): string {
     .trim();
 }
 
+function humanErrorHead(error: string): string {
+  const markup = /<[!/a-z][^>]*>/iu.test(error);
+  const firstTag = error.indexOf("<");
+  const firstLine = error.search(/[\r\n]/u);
+  const cut = markup
+    ? Math.min(
+        firstTag < 0 ? error.length : firstTag,
+        firstLine < 0 ? error.length : firstLine,
+      )
+    : error.length;
+  const head = error.slice(0, cut).trim();
+  return (head || tr("HTML response", "Ответ HTML")).slice(0, 160);
+}
+
 function stopMessage(tool: string, count: number, errorHead: string): string {
-  return `Инструмент ${tool} завершился ошибкой ${count} раза подряд: ${errorHead.slice(0, 150)}. Ход остановлен, чтобы не тратить токены. Можно переформулировать просьбу.`;
+  const shortError = errorHead.slice(0, 150);
+  return tr(
+    `Tool ${tool} failed ${count} times in a row: ${shortError}. I stopped this turn to save tokens. You can rephrase your request.`,
+    `Инструмент ${tool} завершился ошибкой ${count} ${count === 3 ? "раза" : "раз"} подряд: ${shortError}. Ход остановлен, чтобы не тратить токены. Можно переформулировать просьбу.`,
+  );
 }
 
 function lastUserIndex(prompt: LanguageModelV4Prompt): number {
@@ -156,7 +175,7 @@ function consumeResult(
             toolCallId: call.toolCallId,
             tool: call.toolName,
             signature: `${call.toolName}\n${canonicalInput(call.input)}\n${normalizedError(error)}`,
-            errorHead: error.slice(0, 160),
+            errorHead: humanErrorHead(error),
             at: call.at,
           },
         }),
@@ -200,17 +219,67 @@ function scanPrompt(prompt: LanguageModelV4Prompt): Scan {
   return scan;
 }
 
-function failureCount(attempts: Attempt[], latest: Failure): number {
+function stepsFromAttempts(attempts: Attempt[]): Attempt[][] {
+  const steps = new Map<number, Attempt[]>();
+  for (const attempt of attempts) {
+    const step = steps.get(attempt.at) ?? [];
+    step.push(attempt);
+    steps.set(attempt.at, step);
+  }
+  return [...steps.entries()].sort(([a], [b]) => a - b).map(([, step]) => step);
+}
+
+function failedForTool(step: Attempt[], tool: string): boolean {
+  return (
+    step.length > 0 &&
+    !step.some((attempt) => !attempt.failure) &&
+    step.some((attempt) => attempt.tool === tool)
+  );
+}
+
+function sameSignatureInStep(
+  step: Attempt[],
+  tool: string,
+  signature: string,
+): boolean {
+  return step
+    .filter((attempt) => attempt.tool === tool)
+    .every((attempt) => attempt.failure?.signature === signature);
+}
+
+function failureCount(steps: Attempt[][], latest: Failure): number {
   let same = 0;
   let sameTool = 0;
-  for (let i = attempts.length - 1; i >= 0; i--) {
-    const failure = attempts[i].failure;
-    if (!failure || failure.tool !== latest.tool) break;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (!failedForTool(steps[i], latest.tool)) break;
     sameTool++;
-    if (failure.signature === latest.signature && same === sameTool - 1) same++;
+    if (
+      same === sameTool - 1 &&
+      sameSignatureInStep(steps[i], latest.tool, latest.signature)
+    )
+      same++;
     if (sameTool >= 8) break;
   }
   return same >= 3 ? same : sameTool >= 8 ? sameTool : 0;
+}
+
+function stopFromAttempts(attempts: Attempt[]): Stop | undefined {
+  const steps = stepsFromAttempts(attempts);
+  const last = steps.at(-1);
+  if (!last || last.some((attempt) => !attempt.failure)) return undefined;
+  for (const attempt of last) {
+    const failure = attempt.failure;
+    if (!failure) continue;
+    const count = failureCount(steps, failure);
+    if (count > 0)
+      return {
+        tool: failure.tool,
+        count,
+        errorHead: failure.errorHead,
+        message: stopMessage(failure.tool, count, failure.errorHead),
+      };
+  }
+  return undefined;
 }
 
 /** Решение только по истории текущего хода. Никакого счётчика между вызовами модели. */
@@ -226,20 +295,8 @@ export function inspectRepeatGuard(prompt: LanguageModelV4Prompt): {
     )
     .map((attempt) => attempt.failure!);
   if (!scan.endsInResult || scan.calls.size > 0) return { rejected };
-  const latest = scan.attempts.at(-1)?.failure;
-  if (!latest) return { rejected };
-  const count = failureCount(scan.attempts, latest);
-  return count > 0
-    ? {
-        rejected,
-        stop: {
-          tool: latest.tool,
-          count,
-          errorHead: latest.errorHead,
-          message: stopMessage(latest.tool, count, latest.errorHead),
-        },
-      }
-    : { rejected };
+  const stop = stopFromAttempts(scan.attempts);
+  return stop ? { rejected, stop } : { rejected };
 }
 
 const zeroUsage: LanguageModelV4Usage = {
