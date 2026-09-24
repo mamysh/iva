@@ -112,6 +112,32 @@ test("status failed остаётся провалом хода", async () => {
   assert.match(wake?.error ?? "", /turn failed/u);
 });
 
+test("ход упёрся в лимит сессии eve: причина остаётся в строке факта для сторожа", async () => {
+  const factsFile = file();
+  await recordFact(factsFile, fact(), NOW);
+  const sent: string[] = [];
+  const status = await runJobWake("memory-daily", NOW - 1000, {
+    factsFile,
+    tr,
+    runTurn: () =>
+      Promise.resolve({
+        status: "failed",
+        message: "the turn hit the eve session token limit",
+      }),
+    send: (text) => {
+      sent.push(text);
+      return Promise.resolve(true);
+    },
+    now: () => NOW + 5,
+    log: () => {},
+  });
+  assert.equal(status, "failed");
+  assert.deepEqual(sent, [], "устаревший текст хода владельцу не уходит");
+  const wake = (await readFacts(factsFile))[0]?.wake;
+  assert.equal(wake?.status, "failed");
+  assert.match(wake?.error ?? "", /turn failed: .*session token limit/u);
+});
+
 test("непустой ответ уходит владельцу, факт говорит answered", async () => {
   const factsFile = file();
   await recordFact(factsFile, fact(), NOW);
@@ -264,11 +290,7 @@ test("успешное расписание не открывает модель
 
 test("успешное расписание сообщает failed, когда запись результата недоступна", async () => {
   const facts = file();
-  await recordFact(
-    facts,
-    fact({ ok: true, error: null, exitCode: 0 }),
-    NOW,
-  );
+  await recordFact(facts, fact({ ok: true, error: null, exitCode: 0 }), NOW);
   let calls = 0;
   const status = await runJobWake("memory-daily", NOW - 1000, {
     factsFile: facts,

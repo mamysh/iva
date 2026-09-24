@@ -138,9 +138,12 @@ function realTurn(
     sessionId,
     before,
     fail,
+    onCancel,
   }: {
     readonly sessionId: string;
     readonly before?: () => void;
+    /** Остановка хода через сессию: её зовёт ход, вставший на лимит сессии eve. */
+    readonly onCancel?: (options: { readonly tasks: boolean }) => void;
     /** Обрыв стрима после этих событий: так eve теряет связь на середине хода. */
     readonly fail?: string;
   },
@@ -162,6 +165,10 @@ function realTurn(
             response,
             session: {
               send: () => Promise.resolve(),
+              cancel: (options) => {
+                onCancel?.(options);
+                return Promise.resolve({ status: "no_active_turn" });
+              },
               reset: () => Promise.resolve(),
             },
           }),
@@ -399,6 +406,40 @@ void test("отмена, а потом обрыв стрима: текст не 
   const [row] = await list();
   assert.equal(row?.delivered, false);
   assert.match(String(row?.error), /cancelled by owner/u);
+});
+
+void test("ход упёрся в лимит сессии eve: владелец узнаёт, что не выполнено, а не получает текст шага", async () => {
+  await firedRow();
+  const { calls, send } = makeSend();
+  const cancels: boolean[] = [];
+  // Ровно это eve шлёт фоновому ходу на лимите сессии: промежуточный текст шага, вопрос
+  // «Approve/Stop», который в фоне некому показать, и парковку сессии.
+  const runTurn = realTurn(
+    [
+      { type: "message.completed", data: { message: "промежуточный текст" } },
+      {
+        type: "input.requested",
+        data: {
+          requests: [
+            { kind: "session-limit", requestId: "s:limit:input:40064924" },
+          ],
+        },
+      },
+      { type: "turn.completed" },
+      { type: "session.waiting" },
+    ],
+    { sessionId: "sess-limit", onCancel: ({ tasks }) => cancels.push(tasks) },
+  );
+
+  assert.equal(await runReminderFire("r1", deps({ send, runTurn })), 0);
+
+  assert.equal(calls.length, 1, "владелец получает одно короткое сообщение");
+  assert.match(calls[0].text, /позвонить в клинику/u);
+  assert.match(calls[0].text, /Not done: .*session token limit/u);
+  assert.doesNotMatch(calls[0].text, /промежуточный текст/u);
+  assert.deepEqual(cancels, [true], "ход погашен вместе с задачами");
+  const [row] = await list();
+  assert.match(String(row?.error), /agent turn failed: .*session token limit/u);
 });
 
 void test("протухшая запись владельца: напоминание забирает чат и называет осиротевший индикатор", async () => {

@@ -32,6 +32,8 @@ type TurnSpy = {
   readonly sent: string[];
   readonly resets: string[];
   readonly cancelCount: () => number;
+  /** Остановки через сессию (session.cancel), в порядке вызова вместе с reset. */
+  readonly sessionCalls: string[];
 };
 
 type WatchCalls = {
@@ -65,10 +67,13 @@ function watchSpy(claim = true): { watch: TurnWatch; calls: WatchCalls } {
 function spyTurn(
   events: (cancelled: Promise<void>) => AsyncGenerator<TurnStreamEvent>,
   sessionId = "sess-1",
+  sessionCancel: () => Promise<unknown> = () =>
+    Promise.resolve({ status: "accepted", sessionId }),
 ): TurnSpy {
   const prompts: string[] = [];
   const sent: string[] = [];
   const resets: string[] = [];
+  const sessionCalls: string[] = [];
   let cancels = 0;
   let releaseCancel = (): void => {};
   const cancelled = new Promise<void>((resolve) => {
@@ -93,8 +98,13 @@ function spyTurn(
               sent.push(message);
               return Promise.resolve();
             },
+            cancel: (options) => {
+              sessionCalls.push(`cancel tasks=${String(options.tasks)}`);
+              return sessionCancel();
+            },
             reset: ({ reason }) => {
               resets.push(reason);
+              sessionCalls.push("reset");
               return Promise.resolve();
             },
           },
@@ -108,6 +118,7 @@ function spyTurn(
     sent,
     resets,
     cancelCount: () => cancels,
+    sessionCalls,
   };
 }
 
@@ -327,4 +338,135 @@ void test("the owner's stop ends the turn as cancelled, not as a failure", async
     ["sess-cancel"],
     "запись снята и после отмены",
   );
+});
+
+// Запрос лимита сессии eve ровно в той форме, в какой его шлёт стрим
+// (eve/dist/src/harness/session-limit-continuation.js): вопрос «Approve/Stop» к человеку.
+const SESSION_LIMIT_REQUESTED: TurnStreamEvent = {
+  type: "input.requested",
+  data: {
+    requests: [
+      {
+        kind: "session-limit",
+        requestId: "sess-limit:limit:input:40064924",
+        display: "confirmation",
+        options: [
+          { id: "continue", label: "Approve" },
+          { id: "stop", label: "Stop" },
+        ],
+      },
+    ],
+    sequence: 1424,
+    stepIndex: 712,
+    turnId: "turn-1",
+  },
+};
+
+void test("a turn parked on the eve session limit fails with the reason, not the stale step text", async () => {
+  const { watch, calls } = watchSpy();
+  const spy = spyTurn(async function* (cancelled) {
+    await delay(0);
+    yield { type: "message.completed", data: { message: "текст шага 6" } };
+    yield SESSION_LIMIT_REQUESTED;
+    // Дальше eve молчит: ход стоит на вопросе, который в фоне некому показать. Ждать
+    // сторожа тишины нельзя — окно ниже на порядок длиннее теста.
+    await Promise.race([cancelled, delay(5_000)]);
+    yield { type: "turn.completed" };
+    yield { type: "session.waiting" };
+  }, "sess-limit");
+
+  const started = Date.now();
+  const turn = await runReminderTurn("долгая работа", OPTIONS, {
+    createClient: spy.createClient,
+    inactivityMs: 60_000,
+    watch,
+    log: () => {},
+  });
+
+  assert.ok(Date.now() - started < 2_000, "ход не ждёт тишины после вопроса");
+  assert.equal(turn.status, "failed");
+  assert.equal(turn.sessionLimit, true);
+  assert.equal(turn.cancelled, false);
+  assert.match(turn.message ?? "", /session token limit/u);
+  assert.doesNotMatch(turn.message ?? "", /текст шага 6/u);
+  assert.deepEqual(
+    spy.sessionCalls,
+    ["cancel tasks=true", "reset"],
+    "ход гасится с задачами, как у сводки, и только потом сессия снимается",
+  );
+  assert.deepEqual(calls.released, ["sess-limit"]);
+});
+
+void test("a failed stop of the parked turn keeps the honest failure and still resets", async () => {
+  const logged: unknown[][] = [];
+  const spy = spyTurn(
+    async function* () {
+      await delay(0);
+      yield SESSION_LIMIT_REQUESTED;
+      yield { type: "turn.completed" };
+      yield { type: "session.waiting" };
+    },
+    "sess-limit-down",
+    () => Promise.reject(new Error("eve is down")),
+  );
+
+  const turn = await runReminderTurn("долгая работа", OPTIONS, {
+    createClient: spy.createClient,
+    inactivityMs: 1_000,
+    log: (...args) => logged.push(args),
+  });
+
+  assert.equal(turn.status, "failed");
+  assert.equal(turn.sessionLimit, true);
+  assert.deepEqual(spy.sessionCalls, ["cancel tasks=true", "reset"]);
+  assert.ok(
+    logged.some((line) =>
+      /session-limit turn cancel failed/u.test(String(line[0])),
+    ),
+    "отказ остановки виден в журнале",
+  );
+});
+
+void test("another input request is not the session limit: the turn ends as before", async () => {
+  const spy = spyTurn(async function* () {
+    await delay(0);
+    yield {
+      type: "input.requested",
+      data: { requests: [{ kind: "approval", requestId: "r-1" }] },
+    };
+    yield { type: "message.completed", data: { message: "готово" } };
+    yield { type: "session.waiting" };
+  }, "sess-ask");
+
+  const turn = await runReminderTurn("долгая работа", OPTIONS, {
+    createClient: spy.createClient,
+    inactivityMs: 1_000,
+  });
+
+  assert.equal(turn.status, "waiting");
+  assert.equal(turn.sessionLimit, undefined);
+  assert.equal(turn.message, "готово");
+  assert.deepEqual(spy.sessionCalls, ["reset"], "чужой вопрос ход не гасит");
+});
+
+void test("the owner's stop before the limit question stays a cancellation", async () => {
+  const spy = spyTurn(async function* () {
+    await delay(0);
+    yield { type: "turn.cancelled" };
+    yield SESSION_LIMIT_REQUESTED;
+    yield { type: "session.waiting" };
+  }, "sess-stop-limit");
+
+  const turn = await runReminderTurn("долгая работа", OPTIONS, {
+    createClient: spy.createClient,
+    inactivityMs: 1_000,
+  });
+
+  assert.equal(
+    turn.cancelled,
+    true,
+    "владелец погасил ход сам — текста не ждут",
+  );
+  assert.notEqual(turn.status, "failed");
+  assert.deepEqual(spy.sessionCalls, ["reset"]);
 });

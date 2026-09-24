@@ -249,17 +249,39 @@ function textOrFallback(reply: string | undefined, fallback: string): Outcome {
     : { text, error: null };
 }
 
+/**
+ * Ход встал на лимит токенов сессии eve: задача не выполнена, и владелец узнаёт об этом
+ * прямо, а не получает промежуточный текст хода под видом результата.
+ */
+function sessionLimitText(
+  text: string,
+  tr: (en: string, ru: string) => string,
+): string {
+  const note = tr(
+    "Not done: the turn hit the eve session token limit.",
+    "Не выполнено: ход упёрся в лимит токенов сессии eve.",
+  );
+  return `${text}\n\n${note}`;
+}
+
 /** status "waiting" — нормальный конец хода у eve (T40), провалом остаётся только "failed". */
 function replyOf(
   turn: {
     readonly status: string;
     readonly message?: string;
     readonly cancelled?: boolean;
+    readonly sessionLimit?: boolean;
   },
   fallback: string,
+  limitText: string,
 ): Outcome {
   if (turn.cancelled === true)
     return { text: fallback, error: CANCELLED_BY_OWNER, cancelled: true };
+  if (turn.sessionLimit === true)
+    return {
+      text: limitText,
+      error: `agent turn failed: ${turn.message ?? "session limit"}`,
+    };
   if (turn.status === "failed")
     return {
       text: fallback,
@@ -290,7 +312,7 @@ async function agentOutcome(
       // Пока ход идёт, чат и тема строки видят его сессию: по ней ⏹ и /stop гасят её.
       watch: chatWatch(row, target, deps),
     });
-    return replyOf(turn, row.text);
+    return replyOf(turn, row.text, sessionLimitText(row.text, tr));
   } catch (error) {
     return { text: row.text, error: `agent turn failed: ${message(error)}` };
   }

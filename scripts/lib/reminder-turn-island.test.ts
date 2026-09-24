@@ -47,6 +47,7 @@ const createClient = () =>
           response,
           session: {
             send: () => Promise.resolve(),
+            cancel: () => Promise.resolve(),
             reset: () => Promise.resolve(),
           },
         }),
