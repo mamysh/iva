@@ -270,6 +270,9 @@ for (const u of usage) {
   const d = perDay.get(dk) ?? { steps: 0, in: 0, out: 0, cacheRead: 0 };
   d.steps++; d.in += u.in ?? 0; d.out += u.out ?? 0; d.cacheRead += u.cacheRead ?? 0;
   perDay.set(dk, d);
+  // Vision and compaction outside a step have no turn (turnId "#vision"): count them per day
+  // above, never glue them into one false "heaviest turn".
+  if (!String(u.turnId ?? "").split("#")[0]) continue;
   const tk = `${u.sessionId} ${u.turnId}`;
   const t = perTurn.get(tk) ?? { first: u.ts, source: u.source, model: u.model, steps: 0, in: 0, out: 0, cacheRead: 0, maxIn: 0 };
   t.steps++; t.in += u.in ?? 0; t.out += u.out ?? 0; t.cacheRead += u.cacheRead ?? 0; t.maxIn = Math.max(t.maxIn, u.in ?? 0);

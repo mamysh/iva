@@ -7,6 +7,12 @@ import {
   makeTextModel,
 } from "./provider.ts";
 import { makeClaudeCliModel } from "./lib/claude-cli.ts";
+import {
+  chatCompletionsUsageTokens,
+  recordVisionStreamUsage,
+  recordVisionUsage,
+  sdkUsageTokens,
+} from "./lib/usage-tap.ts";
 
 const PROMPT =
   "Опиши изображение детально и по делу: что на нём, дословный текст (OCR), важные детали и цифры. " +
@@ -73,6 +79,8 @@ async function describeWithCompatible(
   const json = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
   };
+  // Зрение тратит токены того же провайдера мимо шага хода — пишем их в usage.jsonl.
+  recordVisionUsage(target.visionModel, chatCompletionsUsageTokens(json));
   return (json.choices?.[0]?.message?.content ?? "").trim();
 }
 
@@ -107,6 +115,8 @@ async function describeWithSubscription(
   });
   let out = "";
   for await (const chunk of result.textStream) out += chunk;
+  // Текст уже дочитан, значит и расход стрима готов; сбой учёта описание не отнимает.
+  await recordVisionStreamUsage(providerConfig.visionModel, result.usage);
   return out.trim();
 }
 
@@ -231,6 +241,8 @@ const probe = makeVisionProbe(
         },
       ],
     });
+    // Пробник — тоже вызов модели чата: его токены идут в учёт как зрение.
+    recordVisionUsage(providerConfig.textModel, sdkUsageTokens(result.usage));
     return { text: result.text, finishReason: result.finishReason };
   },
   () => providerConfig.textModel,
