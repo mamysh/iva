@@ -11,10 +11,14 @@ import {
 // fast-glob в node_modules отсутствует, поэтому реализовано через рекурсивный обход fs
 // и собственный матчер glob-паттернов. Корень резолвится так же, как у read_file.
 
+// Потолок ответа: на c1 `**/*` от ~/iva вернул 43584 пути (6.6 млн знаков) в контекст.
+const MAX_PATHS = 1000;
+
 export default defineTool({
   description:
     "Glob-поиск файлов: **, * и ?. По умолчанию ищет от корня vault; cwd — " +
-    "абсолютный или от корня vault. .git/node_modules/dist пропускаются.",
+    "абсолютный или от корня vault. .git/node_modules/dist пропускаются. " +
+    "Не больше 1000 путей.",
   inputSchema: z.object({
     pattern: z
       .string()
@@ -29,6 +33,11 @@ export default defineTool({
     );
     const re = globToRegExp(pattern);
     const matches = all.filter((p) => re.test(p)).sort();
-    return matches;
+    if (matches.length <= MAX_PATHS) return matches;
+    const rest = matches.length - MAX_PATHS;
+    return [
+      ...matches.slice(0, MAX_PATHS),
+      `… ещё ${rest} путей из ${matches.length}: сузь pattern или cwd`,
+    ];
   },
 });
