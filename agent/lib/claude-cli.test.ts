@@ -8,14 +8,18 @@ import assert from "node:assert/strict";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os, { tmpdir } from "node:os";
 import { syncBuiltinESMExports } from "node:module";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { readdirSync } from "node:fs";
@@ -87,7 +91,7 @@ function streamText(chunks) {
 
 function dump(extra) {
   if (dumpPath === undefined) return;
-  writeFileSync(dumpPath, JSON.stringify({ argv, settings, system: readFileSync(arg("--system-prompt-file"), "utf8"), frames, pid: process.pid, ...extra }));
+  writeFileSync(dumpPath, JSON.stringify({ argv, settings, system: readFileSync(arg("--system-prompt-file"), "utf8"), frames, pid: process.pid, cwd: process.cwd(), ...extra }));
 }
 
 async function scenario() {
@@ -1343,6 +1347,113 @@ test("временная папка уходит раньше, чем ход о�
       );
   }
   assert.deepEqual(tempDirs(), before);
+});
+
+// ─── Рабочая папка CLI ──────────────────────────────────────────────────────────────────
+// Путь рабочей папки CLI печатает в блок «# Environment» каждого запроса, а запрос следующего
+// шага должен начинаться с запроса прошлого, иначе кэш промпта пишет хвост истории заново.
+// Поэтому шаги одной сессии eve идут в одной папке, а временная папка шага остаётся только
+// под system.md, tools.json и settings.json.
+
+/** Рабочая папка, в которой CLI отработал шаг сессии sessionId (undefined — шаг без сессии). */
+async function stepCwd(t: TestContext, sessionId?: string): Promise<string> {
+  const fake = fakeCli(t, "text");
+  const model = makeClaudeCliModel(MODEL, { sessionId });
+  assert.equal(
+    textOf(await drain(await model.doStream({ prompt: userPrompt() }))),
+    "Готово",
+  );
+  return fake.read().cwd as string;
+}
+
+/**
+ * Папки сессий теста обязаны лежать в своём TMPDIR файла: общий $TMPDIR/iva-cwd-<uid> держит
+ * рабочие папки живой Ивы того же пользователя, а тесты ниже удаляют родителя целиком.
+ */
+function assertInPrivateTmp(path: string): void {
+  assert.ok(
+    path.startsWith(realpathSync(PRIVATE_TMP) + "/"),
+    `папка сессий теста вне своего TMPDIR: ${path}`,
+  );
+}
+
+/** Меняет переменную окружения на время теста. */
+function withEnv(t: TestContext, key: string, value: string): void {
+  const previous = process.env[key];
+  process.env[key] = value;
+  t.after(() => {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  });
+}
+
+test("шаги одной сессии идут в одной рабочей папке, разных сессий — в разных", async (t) => {
+  const first = await stepCwd(t, "session-a");
+  const second = await stepCwd(t, "session-a");
+  const other = await stepCwd(t, "session-b");
+  assertInPrivateTmp(first);
+
+  assert.equal(second, first, "второй шаг сессии в той же папке");
+  assert.notEqual(other, first, "у другой сессии своя папка");
+  assert.equal(dirname(other), dirname(first), "папки сессий лежат рядом");
+  assert.ok(existsSync(first), "папка сессии переживает шаг");
+  assert.equal(statSync(first).mode & 0o777, 0o700, "папка только для Ивы");
+  assert.equal(statSync(dirname(first)).mode & 0o777, 0o700);
+  assert.ok(!first.includes("session-a"), "в пути нет sessionId как есть");
+  assert.ok(
+    !basename(first).startsWith("iva-claude-"),
+    "это не временная папка шага",
+  );
+});
+
+test("шаг без сессии и выключатель CLAUDE_SESSION_CWD остаются во временной папке шага", async (t) => {
+  const bare = await stepCwd(t);
+  assert.ok(basename(bare).startsWith("iva-claude-"));
+  assert.equal(existsSync(bare), false, "временная папка убрана после шага");
+
+  withEnv(t, "CLAUDE_SESSION_CWD", "off");
+  const first = await stepCwd(t, "session-off");
+  const second = await stepCwd(t, "session-off");
+  assert.ok(basename(first).startsWith("iva-claude-"));
+  assert.notEqual(second, first, "выключатель возвращает папку на шаг");
+  assert.equal(existsSync(first), false);
+});
+
+test("чужая или открытая папка сессий не становится рабочей папкой CLI", async (t) => {
+  const probe = await stepCwd(t, "session-probe");
+  const parent = dirname(probe);
+  assertInPrivateTmp(parent);
+  const elsewhere = mkdtempSync(join(tmpdir(), "iva-elsewhere-"));
+  t.after(() => {
+    rmSync(parent, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  });
+
+  // Симлинк на месте папки сессий: подложить его может любой, кто пишет в общий /tmp.
+  rmSync(parent, { recursive: true, force: true });
+  symlinkSync(elsewhere, parent);
+  const linked = await stepCwd(t, "session-link");
+  assert.ok(
+    basename(linked).startsWith("iva-claude-"),
+    "шаг ушёл во временную",
+  );
+  assert.deepEqual(readdirSync(elsewhere), [], "по симлинку ничего не создано");
+
+  // Папка сессий, открытая другим: шаг тоже уходит во временную папку и не падает.
+  rmSync(parent, { recursive: true, force: true });
+  mkdirSync(parent, { mode: 0o755 });
+  chmodSync(parent, 0o755);
+  const open = await stepCwd(t, "session-open");
+  assert.ok(basename(open).startsWith("iva-claude-"));
+
+  // Файл на месте папки сессии: шаг идёт во временную папку, файл не тронут.
+  rmSync(parent, { recursive: true, force: true });
+  const fresh = await stepCwd(t, "session-file");
+  rmSync(fresh, { recursive: true, force: true });
+  writeFileSync(fresh, "не папка");
+  const onFile = await stepCwd(t, "session-file");
+  assert.ok(basename(onFile).startsWith("iva-claude-"));
+  assert.equal(readFileSync(fresh, "utf8"), "не папка");
 });
 
 // CLI закрыл вывод и вышел чуть позже: шаг дождался выхода, и ожидание выхода больше ничего

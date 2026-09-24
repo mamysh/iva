@@ -2,9 +2,15 @@
 // приходят инъекцией (readImage), поэтому тест идёт без файловой системы и без сети.
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import fc from "fast-check";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -16,6 +22,7 @@ import {
 } from "ai";
 import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
 import type {
+  LanguageModelV4,
   LanguageModelV4FunctionTool,
   LanguageModelV4GenerateResult,
   LanguageModelV4Prompt,
@@ -1497,6 +1504,55 @@ void test("claude: имя инструмента длиннее 54 символ�
   );
   assert.doesNotMatch(failure.message, /tool name/u);
   assert.match(failure.message, /is not found or not executable/u);
+});
+
+/**
+ * Один шаг модели против заглушки CLI, которая молчит и выходит. Шаг обязан упасть ошибкой CLI:
+ * так видно, что CLI запускали, а не что шаг сломался раньше. Рабочая папка к этому моменту
+ * уже записана заглушкой.
+ */
+async function runClaudeStep(
+  model: Pick<LanguageModelV4, "doStream">,
+): Promise<void> {
+  await assert.rejects(async () => {
+    const { stream } = await model.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    });
+    for await (const part of stream) void part;
+  }, ClaudeCliError);
+}
+
+// Боевой путь один: agent.ts отдаёт makeTextModel id сессии eve, и только он делает папку CLI
+// постоянной. Потеряй provider.ts sessionId по дороге — каждый шаг снова пойдёт в новой
+// временной папке, блок «# Environment» поменяется и кэш промпта сломается без единой ошибки.
+void test("claude: makeTextModel с id сессии запускает оба шага CLI в одной папке сессии", async (t) => {
+  const claude = await loadProviderAs("claude");
+  const dir = mkdtempSync(join(tmpdir(), "iva-claude-cwd-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const log = join(dir, "cwd.log");
+  const command = join(dir, "record-cwd.sh");
+  writeFileSync(command, `#!/bin/sh\npwd -P >> '${log}'\n`);
+  chmodSync(command, 0o755);
+  claudeTestEnv(t, command);
+  delete process.env.CLAUDE_SESSION_CWD;
+  // Папки сессий — в своём tmp теста, а не в общем tmp того, кто гоняет тесты.
+  process.env.TMPDIR = dir;
+
+  for (let step = 0; step < 2; step++)
+    await runClaudeStep(
+      claude.makeTextModel({
+        sessionId: "prov-sess",
+        chatModelSeesImages: blindToImages,
+      }),
+    );
+
+  const cwds = readFileSync(log, "utf8").trim().split("\n");
+  assert.equal(cwds.length, 2, "CLI запускался на каждом шаге");
+  assert.equal(cwds[1], cwds[0], "второй шаг сессии в той же папке");
+  assert.ok(
+    !basename(cwds[0]).startsWith("iva-claude-"),
+    `шаг ушёл во временную папку шага: ${cwds[0]}`,
+  );
 });
 
 function sse(chunks: unknown[]): Response {

@@ -34,10 +34,16 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import type {
@@ -900,6 +906,74 @@ function claudeArgv(model: string, dir: string): string[] {
   ];
 }
 
+// ─── Рабочая папка CLI ──────────────────────────────────────────────────────────────────
+// CLI печатает свою рабочую папку в блок «# Environment» запроса, в начало истории. Будь это
+// временная папка шага, запрос каждого шага отличался бы от прошлого уже во втором сообщении,
+// и кэш промпта записывал бы весь хвост истории заново. Поэтому CLI работает в папке, одной на
+// сессию eve, а временная папка шага держит только system.md, tools.json и settings.json.
+// Папка сессии лежит в ОС-tmp, а не в каталоге данных: тот внутри git-checkout установки,
+// и CLI вписал бы в Environment «Is a git repository: true».
+
+/** Выключатель постоянной папки: CLAUDE_SESSION_CWD=0|false|no|off — папка снова на шаг. */
+export function claudeSessionCwdEnabled(
+  env: Readonly<Record<string, string | undefined>>,
+): boolean {
+  const raw = (env.CLAUDE_SESSION_CWD ?? "").trim().toLowerCase();
+  return raw === "" || !OFF_VALUES.has(raw);
+}
+
+/**
+ * Рабочая папка CLI для сессии eve: один путь на sessionId, свой у каждой сессии. Вместо
+ * sessionId в пути его хэш: путь виден модели, а id сессии ей ни к чему. Родитель несёт uid,
+ * чтобы у двух пользователей одной машины были разные папки.
+ */
+export function claudeSessionCwd(
+  sessionId: string,
+  root: string = tmpdir(),
+): string {
+  const hash = createHash("sha256")
+    .update(sessionId, "utf8")
+    .digest("hex")
+    .slice(0, 32);
+  return join(root, `iva-cwd-${String(process.getuid?.() ?? "user")}`, hash);
+}
+
+/**
+ * Папка для шага: папка сессии, если она есть и своя, иначе временная папка шага. Папка сессии
+ * создаётся здесь, в момент первого шага, с правами 0700.
+ */
+function stepCwd(session: ClaudeSession, run: ClaudeRun): string {
+  const sessionId = run.sessionId?.trim() ?? "";
+  if (sessionId === "" || !claudeSessionCwdEnabled(process.env))
+    return session.tempDir;
+  const cwd = claudeSessionCwd(sessionId);
+  return privateDir(dirname(cwd)) && privateDir(cwd) ? cwd : session.tempDir;
+}
+
+/**
+ * Создаёт папку 0700 или принимает уже созданную, но только свою: настоящая папка (не симлинк
+ * и не файл), владелец — этот процесс, для группы и остальных закрыта. Иначе — false: в общем
+ * /tmp её мог подложить кто угодно.
+ */
+function privateDir(path: string): boolean {
+  try {
+    mkdirSync(path, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
+  }
+  try {
+    const stat = lstatSync(path);
+    const uid = process.getuid?.();
+    return (
+      stat.isDirectory() &&
+      (stat.mode & 0o077) === 0 &&
+      (uid === undefined || stat.uid === uid)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Временная папка, реле и процесс в одном месте: отмена и уборка — это один вызов. */
 class ClaudeSession {
   tempDir: string;
@@ -1050,12 +1124,15 @@ type ClaudeSettings = {
    * и блоки ответа, и сверка напечатанного CLI с полученным.
    */
   readonly upstream?: string;
+  /** Сессия eve: её шаги идут в одной рабочей папке CLI (см. claudeSessionCwd). */
+  readonly sessionId?: string;
 };
 
-/** Что шаг берёт из настроек модели: тишина CLI и адрес, куда реле пересылает запрос. */
+/** Что шаг берёт из настроек модели: тишина CLI, адрес для реле и сессия eve. */
 type ClaudeRun = {
   readonly silenceMs: number;
   readonly upstream: string;
+  readonly sessionId?: string;
 };
 
 /** Рукописная LanguageModelV4: шаг модели — это один запуск Claude Code CLI. */
@@ -1066,6 +1143,7 @@ export function makeClaudeCliModel(
   const run: ClaudeRun = {
     silenceMs: settings.silenceTimeoutMs ?? CLAUDE_SILENCE_TIMEOUT_MS,
     upstream: settings.upstream ?? CLAUDE_UPSTREAM,
+    sessionId: settings.sessionId,
   };
   return {
     specificationVersion: "v4",
@@ -1184,7 +1262,7 @@ async function runCall(context: RunContext): Promise<void> {
     );
     assertLive(options.abortSignal);
     const child = await spawnClaude(claudeCommand(env), prepared.argv, {
-      cwd: session.tempDir,
+      cwd: stepCwd(session, run),
       env,
       // stderr никто не читает: оставленная труба заполнилась бы и остановила CLI на записи.
       stdio: ["pipe", "pipe", "ignore"],

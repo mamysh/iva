@@ -8,6 +8,7 @@
 // Seed печатается: без него падение PBT не воспроизвести. Прогонов 200 (IVA_CLAUDE_PBT_RUNS),
 // seed можно задать IVA_CLAUDE_PBT_SEED.
 import assert from "node:assert/strict";
+import { basename, dirname } from "node:path";
 import test from "node:test";
 import fc from "fast-check";
 import type {
@@ -21,6 +22,8 @@ import {
   CLAUDE_TOOL_PREFIX,
   ClaudeCliError,
   claudeHistory,
+  claudeSessionCwd,
+  claudeSessionCwdEnabled,
   readCompletion,
   type ClaudeFrame,
 } from "./claude-cli.ts";
@@ -28,6 +31,56 @@ import {
 const SEED = Number(process.env.IVA_CLAUDE_PBT_SEED ?? 20_261_002);
 const RUNS = Number(process.env.IVA_CLAUDE_PBT_RUNS ?? 200);
 const SETTINGS = { seed: SEED, numRuns: RUNS };
+
+test(`рабочая папка CLI: один путь на сессию, свой у каждой (seed ${SEED})`, () => {
+  const root = "/tmp/iva-root";
+  fc.assert(
+    fc.property(
+      fc.string({ unit: "binary" }),
+      fc.string({ unit: "binary" }),
+      (first, second) => {
+        const path = claudeSessionCwd(first, root);
+        assert.equal(
+          claudeSessionCwd(first, root),
+          path,
+          "путь детерминирован",
+        );
+        assert.match(basename(path), /^[0-9a-f]{32}$/u, "в пути только хэш");
+        assert.equal(
+          dirname(path),
+          dirname(claudeSessionCwd(second, root)),
+          "все сессии в одной папке",
+        );
+        assert.equal(dirname(dirname(path)), root);
+        if (first !== second)
+          assert.notEqual(claudeSessionCwd(second, root), path);
+      },
+    ),
+    SETTINGS,
+  );
+});
+
+test(`выключатель CLAUDE_SESSION_CWD: выключают только слова «нет» (seed ${SEED})`, () => {
+  const off = ["0", "false", "no", "off"];
+  assert.equal(claudeSessionCwdEnabled({}), true, "по умолчанию включено");
+  fc.assert(
+    fc.property(
+      fc.oneof(
+        fc.string(),
+        fc.constantFrom(...off),
+        fc.constantFrom(...off).map((word) => ` ${word.toUpperCase()} `),
+      ),
+      (value) => {
+        const word = value.trim().toLowerCase();
+        assert.equal(
+          claudeSessionCwdEnabled({ CLAUDE_SESSION_CWD: value }),
+          !off.includes(word),
+        );
+      },
+    ),
+    SETTINGS,
+  );
+});
 
 test("перевод промпта в кадры и обратно держится на любых историях", () => {
   console.error(`[claude-cli property] seed ${SEED}, прогонов ${RUNS}`);

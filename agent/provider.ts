@@ -811,7 +811,7 @@ function makeBareTextModel(sessionId?: string) {
   if (providerName === "codex")
     return makeCodexModel(providerConfig.textModel, sessionId);
   if (providerName === "claude")
-    return makeClaudeCliModel(providerConfig.textModel);
+    return makeClaudeCliModel(providerConfig.textModel, { sessionId });
   return createOpenAICompatible({
     name: `iva-${providerName}`,
     baseURL: providerConfig.baseURL,
