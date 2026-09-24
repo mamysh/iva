@@ -1560,6 +1560,68 @@ void test("повтор после отказа схемы тоже уходит
   }
 });
 
+void test("makeTextModel stops repeated failed calls before any provider request", async (t) => {
+  const traceDir = mkdtempSync(join(tmpdir(), "iva-provider-repeat-"));
+  const previousDataDir = process.env.ASSISTANT_DATA_DIR;
+  process.env.ASSISTANT_DATA_DIR = traceDir;
+  t.after(() => {
+    if (previousDataDir === undefined) delete process.env.ASSISTANT_DATA_DIR;
+    else process.env.ASSISTANT_DATA_DIR = previousDataDir;
+    rmSync(traceDir, { recursive: true, force: true });
+  });
+  const go = await loadOpencodeProvider();
+  const bodies = captureRequests(t, [() => sse([OK_CHUNK])]);
+  const model = go.makeTextModel({ chatModelSeesImages: blindToImages });
+  const failure = (id: string): LanguageModelV4Prompt => [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: id,
+          toolName: "read_file",
+          input: { path: "missing" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: id,
+          toolName: "read_file",
+          output: { type: "error-text", value: "ENOENT" },
+        },
+      ],
+    },
+  ];
+  const user: LanguageModelV4Prompt = [
+    { role: "user", content: [{ type: "text", text: "прочитай" }] },
+  ];
+  const stopped = await model.doStream({
+    prompt: [...user, ...failure("a"), ...failure("b"), ...failure("c")],
+  });
+  const parts: LanguageModelV4StreamPart[] = [];
+  for await (const part of stopped.stream) parts.push(part);
+  assert.equal(bodies.length, 0);
+  assert.equal(
+    parts.find((part) => part.type === "finish")?.finishReason.unified,
+    "stop",
+  );
+  assert.ok(
+    parts.some(
+      (part) => part.type === "text-delta" && part.delta.includes("read_file"),
+    ),
+  );
+
+  const passed = await model.doStream({
+    prompt: [...user, ...failure("a"), ...failure("b")],
+  });
+  await passed.stream.pipeTo(new WritableStream());
+  assert.equal(bodies.length, 1);
+});
+
 // --- Соседние user-сообщения уходят одним ------------------------------------------------------
 // Строка времени приходит отдельным user-сообщением перед вводом владельца (#236). Часть
 // chat-шаблонов (vLLM, llama.cpp) отвергает две реплики одной роли подряд, поэтому граница

@@ -2,6 +2,8 @@
 
 Known gaps and deferred decisions, tracked so they don't get lost between releases.
 
+`agent/lib/repeat-guard.ts` temporarily stops repeated failed tool calls at the model boundary; remove it when eve itself stops a turn on a repeated invalid tool call.
+
 ## 1. Approval prompts (eve `tools.approval` + Telegram HITL)
 
 eve ships a native tool-approval flow (human-in-the-loop confirmation before a tool

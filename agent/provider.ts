@@ -30,6 +30,7 @@ import {
 } from "./lib/model-provider.ts";
 import { CANONICAL_REASONING_EFFORTS as EFFORTS } from "./lib/reasoning-levels.ts";
 import { toolNameWireMiddleware } from "./lib/tool-wire-name.ts";
+import { repeatGuardMiddleware } from "./lib/repeat-guard.ts";
 
 type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 type ModelStreamPart =
@@ -776,6 +777,7 @@ export function makeTextModel(options: {
   return wrapLanguageModel({
     model: makeBareTextModel(options.sessionId),
     middleware: [
+      repeatGuardMiddleware,
       attachImagesMiddleware(options.chatModelSeesImages),
       toolSchemaRetryMiddleware,
       modelFirstChunkDeadlineMiddleware,
