@@ -11,6 +11,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -1365,6 +1366,17 @@ async function stepCwd(t: TestContext, sessionId?: string): Promise<string> {
   return fake.read().cwd as string;
 }
 
+/**
+ * Папки сессий теста обязаны лежать в своём TMPDIR файла: общий $TMPDIR/iva-cwd-<uid> держит
+ * рабочие папки живой Ивы того же пользователя, а тесты ниже удаляют родителя целиком.
+ */
+function assertInPrivateTmp(path: string): void {
+  assert.ok(
+    path.startsWith(realpathSync(PRIVATE_TMP) + "/"),
+    `папка сессий теста вне своего TMPDIR: ${path}`,
+  );
+}
+
 /** Меняет переменную окружения на время теста. */
 function withEnv(t: TestContext, key: string, value: string): void {
   const previous = process.env[key];
@@ -1379,6 +1391,7 @@ test("шаги одной сессии идут в одной рабочей п�
   const first = await stepCwd(t, "session-a");
   const second = await stepCwd(t, "session-a");
   const other = await stepCwd(t, "session-b");
+  assertInPrivateTmp(first);
 
   assert.equal(second, first, "второй шаг сессии в той же папке");
   assert.notEqual(other, first, "у другой сессии своя папка");
@@ -1409,6 +1422,7 @@ test("шаг без сессии и выключатель CLAUDE_SESSION_CWD о
 test("чужая или открытая папка сессий не становится рабочей папкой CLI", async (t) => {
   const probe = await stepCwd(t, "session-probe");
   const parent = dirname(probe);
+  assertInPrivateTmp(parent);
   const elsewhere = mkdtempSync(join(tmpdir(), "iva-elsewhere-"));
   t.after(() => {
     rmSync(parent, { recursive: true, force: true });
