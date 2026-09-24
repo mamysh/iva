@@ -893,7 +893,7 @@ await test("Go без сессии: ID процесса, непустой и о�
   const id = first.get("x-opencode-session");
   assert.ok(id && id.length > 0);
   assert.equal(second.get("x-opencode-session"), id);
-  assert.equal(id, go.opencodeSessionId(undefined));
+  assert.equal(id, go.providerRequestHeaders()?.["x-opencode-session"]);
 });
 
 await test("не-Go провайдер заголовков Go не шлёт", async (t) => {
@@ -913,17 +913,24 @@ await test("не-Go провайдер заголовков Go не шлёт", a
 
 await test(`ID сессии уходит как есть, пустой заменяется ID процесса (seed ${SESSION_HEADER_SEED})`, async () => {
   const go = await loadOpencodeProvider();
-  const processId = go.opencodeSessionId(undefined);
+  const processId = go.providerRequestHeaders()?.["x-opencode-session"] ?? "";
   fc.assert(
     fc.property(fc.stringMatching(/^[A-Za-z0-9_:.-]{1,64}$/u), (id) => {
-      assert.equal(go.opencodeSessionId(id), id);
+      // Пробелы по краям — не часть ID: заголовок несёт тот же ID, что и без них.
+      assert.equal(
+        go.providerRequestHeaders(` ${id}\n`)?.["x-opencode-session"],
+        id,
+      );
       assert.equal(go.providerRequestHeaders(id)?.["x-opencode-session"], id);
     }),
     { seed: SESSION_HEADER_SEED, numRuns: 200 },
   );
   fc.assert(
     fc.property(fc.stringMatching(/^[ \t\r\n\u00a0]{0,8}$/u), (blank) => {
-      assert.equal(go.opencodeSessionId(blank), processId);
+      assert.equal(
+        go.providerRequestHeaders(blank)?.["x-opencode-session"],
+        processId,
+      );
     }),
     { seed: SESSION_HEADER_SEED, numRuns: 50 },
   );
@@ -1110,7 +1117,7 @@ void test("property: withoutLookaroundPatterns drops exactly the lookaround patt
 const { codexProviderOptions } = await import("./provider.ts");
 
 void test("codex sends every function tool with strict:false and leaves provider tools alone", async () => {
-  const out = await codexProviderOptions.transformParams?.({
+  const out = await codexProviderOptions().transformParams?.({
     type: "stream",
     model: new MockLanguageModelV4(),
     params: {
@@ -1133,7 +1140,7 @@ void test("codex sends every function tool with strict:false and leaves provider
 });
 
 void test("codex without tools still passes: nothing to mark", async () => {
-  const out = await codexProviderOptions.transformParams?.({
+  const out = await codexProviderOptions().transformParams?.({
     type: "stream",
     model: new MockLanguageModelV4(),
     params: { prompt: [] },
@@ -1155,7 +1162,7 @@ void test("codex treats an id the SDK does not know as a reasoning model", async
   });
   const model = wrapLanguageModel({
     model: openai.responses("gpt-6-sol"),
-    middleware: codexProviderOptions,
+    middleware: codexProviderOptions(),
   });
   await generateText({
     model,
@@ -1397,7 +1404,7 @@ async function codexInput(replay: boolean): Promise<unknown[]> {
   });
   const model = wrapLanguageModel({
     model: openai.responses("gpt-6-sol"),
-    middleware: [reasoningReplayMiddleware(replay), codexProviderOptions],
+    middleware: [reasoningReplayMiddleware(replay), codexProviderOptions()],
   });
   // Заглушка отвечает 500: нужен только собранный запрос.
   await assert.rejects(async () =>
@@ -1617,4 +1624,73 @@ void test("файл между user-текстами остаётся на св�
   );
   assert.equal(content[0].text, "до");
   assert.equal(content[2].text, "после\n\nвопрос");
+});
+
+// --- Codex: ключ кэша промпта — ID диалога ----------------------------------------------------
+// Без prompt_cache_key бэкенд подписки раскладывает шаги одного диалога по разным машинам кэша,
+// и префикс прошлого шага не переиспользуется. Ключ — sessionId eve; без сессии — ID процесса,
+// как у x-opencode-session. Проверка по телу, которое уходит в /responses через makeTextModel:
+// агент строит модель заново на каждом шаге, ключ обязан совпасть между ними.
+const CODEX_CACHE_KEY_SEED = 20260924;
+
+async function codexCacheKeysOf(
+  codex: ProviderModule,
+  sessionIds: readonly (string | undefined)[],
+): Promise<unknown[]> {
+  const keys: unknown[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    if (
+      requestUrl(input).endsWith("/responses") &&
+      typeof init?.body === "string"
+    )
+      keys.push(
+        (JSON.parse(init.body) as Record<string, unknown>).prompt_cache_key,
+      );
+    return Promise.resolve(new Response("{}", { status: 500 }));
+  };
+  try {
+    for (const sessionId of sessionIds)
+      await generateText({
+        model: codex.makeTextModel({
+          sessionId,
+          chatModelSeesImages: blindToImages,
+        }),
+        prompt: "ping",
+        maxRetries: 0,
+      }).catch(() => undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  return keys;
+}
+
+await test(`codex: prompt_cache_key равен sessionId и стабилен между шагами (seed ${CODEX_CACHE_KEY_SEED})`, async (t) => {
+  installCodexAuth(t, Date.now());
+  const codex = await loadProviderAs("codex");
+  assert.equal(codex.providerName, "codex");
+  await fc.assert(
+    fc.asyncProperty(
+      fc.stringMatching(/^[A-Za-z0-9_:.-]{1,64}$/u),
+      async (sessionId) => {
+        // Три шага одной сессии: каждый — новая модель, как в agent.ts на step.started.
+        const keys = await codexCacheKeysOf(codex, [
+          sessionId,
+          sessionId,
+          sessionId,
+        ]);
+        assert.deepEqual(keys, [sessionId, sessionId, sessionId]);
+      },
+    ),
+    { seed: CODEX_CACHE_KEY_SEED, numRuns: 25 },
+  );
+});
+
+await test("codex без сессии: prompt_cache_key — один ID процесса на все вызовы", async (t) => {
+  installCodexAuth(t, Date.now());
+  const codex = await loadProviderAs("codex");
+  const keys = await codexCacheKeysOf(codex, [undefined, "  ", undefined]);
+  assert.equal(keys.length, 3);
+  assert.match(String(keys[0]), /^iva-[0-9a-f-]{36}$/u);
+  assert.deepEqual(keys, [keys[0], keys[0], keys[0]]);
 });
