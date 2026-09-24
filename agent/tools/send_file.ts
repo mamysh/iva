@@ -1,9 +1,11 @@
+import type { Stats } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, relative } from "node:path";
+import { basename, isAbsolute, relative, sep } from "node:path";
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { notificationChat } from "../lib/notification-chat.ts";
+import { redactNotice } from "../lib/outbox.ts";
 import type { ReminderChat } from "../lib/reminder-store.ts";
 import { chatOfTurn } from "../lib/reminder-tool.ts";
 import { vaultDirErrorText } from "../lib/vault-error.ts";
@@ -35,6 +37,14 @@ const OUTSIDE =
   "отправлять можно только файлы из Vault и временного каталога: положи файл в " +
   "vault/attachments/<дата>/ и вызови send_file ещё раз";
 
+// Во временном каталоге лежат копии .env установщика и мастера и system.md Claude CLI:
+// такие имена не уходят, где бы ни лежали.
+const SECRET_PART = /^(?:\.env|iva-env|iva-config-|iva-claude-)/;
+
+function carriesSecret(file: string): boolean {
+  return file.split(sep).some((part) => SECRET_PART.test(part));
+}
+
 function inside(root: string, file: string): boolean {
   const rel = relative(root, file);
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
@@ -50,6 +60,27 @@ async function allowedRoots(): Promise<string[]> {
     roots.push(dir, ...(real === null ? [] : [real]));
   }
   return roots;
+}
+
+// Что не уходит даже из разрешённого каталога: не файл, жёсткая ссылка, сверх предела.
+function refuseFile(
+  info: Stats,
+  path: string,
+  maxBytes: number,
+): SendFileFailure | null {
+  if (info.isDirectory())
+    return fail(`${path} - это каталог, а не файл; укажи файл`);
+  if (!info.isFile()) return fail(`${path} - не обычный файл`);
+  // Жёсткая ссылка - тот же файл под другим именем: .env, связанный в Vault, не уходит.
+  if (info.nlink > 1)
+    return fail(
+      `${path} - жёсткая ссылка на другой файл; скопируй его в vault/attachments/<дата>/`,
+    );
+  if (info.size > maxBytes)
+    return fail(
+      `файл ${info.size} байт больше предела Telegram в 50 МБ; сожми или разбей его`,
+    );
+  return null;
 }
 
 async function readAllowed(
@@ -77,15 +108,10 @@ async function readAllowed(
   }
   // Реальный путь без симлинков лежит под корнем, только если корень сам без них:
   // симлинк из Vault наружу не проходит.
-  if (!roots.some((root) => inside(root, real))) return fail(OUTSIDE);
-  const info = await stat(real);
-  if (info.isDirectory())
-    return fail(`${path} - это каталог, а не файл; укажи файл`);
-  if (!info.isFile()) return fail(`${path} - не обычный файл`);
-  if (info.size > maxBytes)
-    return fail(
-      `файл ${info.size} байт больше предела Telegram в 50 МБ; сожми или разбей его`,
-    );
+  if (!roots.some((root) => inside(root, real)) || carriesSecret(real))
+    return fail(OUTSIDE);
+  const refusal = refuseFile(await stat(real), path, maxBytes);
+  if (refusal !== null) return refusal;
   return { name: basename(real), data: await readFile(real) };
 }
 
@@ -111,7 +137,8 @@ function documentForm(
   const form = new FormData();
   form.append("chat_id", chatId);
   if (threadId) form.append("message_thread_id", threadId);
-  if (caption) form.append("caption", caption);
+  // Подпись - текст модели наружу: тот же гейт, что у Outbox.
+  if (caption) form.append("caption", redactNotice(caption));
   form.append("document", new File([new Uint8Array(file.data)], file.name));
   return form;
 }
@@ -120,11 +147,12 @@ async function postDocument(
   token: string,
   form: FormData,
   file: Readable,
+  signal: AbortSignal | undefined,
 ): Promise<SendFileAnswer> {
   try {
     const response = await fetch(
       `https://api.telegram.org/bot${token}/sendDocument`,
-      { method: "POST", body: form },
+      { method: "POST", body: form, signal },
     );
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok || (body as { ok?: unknown } | null)?.ok !== true)
@@ -151,7 +179,10 @@ function targetChat(chat: ReminderChat | null): ReminderChat | null {
 export async function sendFile(
   { path, caption }: { readonly path: string; readonly caption?: string },
   chat: ReminderChat | null,
-  { maxBytes = MAX_BYTES }: { readonly maxBytes?: number } = {},
+  {
+    maxBytes = MAX_BYTES,
+    signal,
+  }: { readonly maxBytes?: number; readonly signal?: AbortSignal } = {},
 ): Promise<SendFileAnswer> {
   const target = targetChat(chat);
   if (target === null)
@@ -163,7 +194,7 @@ export async function sendFile(
   const file = await readAllowed(path, maxBytes);
   if ("ok" in file) return file;
   const form = documentForm(target.id, target.threadId, caption, file);
-  return postDocument(token, form, file);
+  return postDocument(token, form, file, signal);
 }
 
 export default defineTool({
@@ -184,7 +215,9 @@ export default defineTool({
   }),
   async execute(input, ctx): Promise<SendFileAnswer> {
     try {
-      return await sendFile(input, chatOfTurn(ctx));
+      return await sendFile(input, chatOfTurn(ctx), {
+        signal: ctx.abortSignal,
+      });
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error));
     }

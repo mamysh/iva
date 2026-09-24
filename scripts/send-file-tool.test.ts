@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -215,4 +222,55 @@ void test("сбой сети - ошибка без токена, исключе�
   );
   assert.equal(answer.ok, false);
   assert.doesNotMatch(answer.ok ? "" : answer.error, /123:secret/);
+});
+
+void test("подпись проходит тот же гейт секретов, что Outbox", async (t) => {
+  const calls = stubFetch(t);
+  const secret = "sk-ant-api03-" + "A".repeat(40);
+  const answer = await run(
+    { path: "attachments/2026-09-24/report.pdf", caption: `ключ ${secret}` },
+    turnCtx({ chat_id: "1" }),
+  );
+  assert.equal(answer.ok, true);
+  const caption = calls[0]?.form.get("caption");
+  assert.equal(typeof caption, "string");
+  assert.ok(!(caption as string).includes(secret), caption as string);
+});
+
+void test("жёсткая ссылка на файл снаружи - отказ", async (t) => {
+  const calls = stubFetch(t);
+  const outside = mkdtempSync(join(REPO, ".send-file-hardlink-"));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFileSync(join(outside, "secret.env"), "TOKEN=1");
+  const link = join(vault, "attachments", "hard.txt");
+  linkSync(join(outside, "secret.env"), link);
+  t.after(() => rmSync(link, { force: true }));
+  const answer = await run(
+    { path: "attachments/hard.txt" },
+    turnCtx({ chat_id: "1" }),
+  );
+  assert.equal(answer.ok, false);
+  assert.equal(calls.length, 0);
+});
+
+void test("копии .env и промпт CLI во временном каталоге не уходят", async (t) => {
+  const calls = stubFetch(t);
+  const dirs = ["iva-env.x1", "iva-config-x2", "iva-claude-x3"].map((name) =>
+    mkdtempSync(join(tmpdir(), name)),
+  );
+  t.after(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+  const files = [
+    join(dirs[0], "env"),
+    join(dirs[1], ".env"),
+    join(dirs[2], "system.md"),
+  ];
+  for (const file of files) writeFileSync(file, "x");
+  for (const path of files) {
+    const answer = await run({ path }, turnCtx({ chat_id: "1" }));
+    assert.equal(answer.ok, false, path);
+    assert.match(answer.ok ? "" : answer.error, REFUSAL);
+  }
+  assert.equal(calls.length, 0);
 });
