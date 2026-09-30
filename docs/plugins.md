@@ -126,6 +126,11 @@ prints `old → new`. It refuses to touch a folder you edited in place (the `dig
 overwritten in silence. An entry a Marketplace pinned to a commit has nothing to follow: to
 move it, `remove` and `add` it again.
 
+Run plugin-changing CLI commands from an SSH terminal, outside `iva.service`. They may rebuild
+and restart Iva. If one is launched by Iva's own shell tool, the CLI refuses before changing
+the plugin, so the restart cannot kill its updater. A plugin may offer its own background
+update tool; that tool must run the CLI in a separate service.
+
 When an update changes a plugin's content, its units — services and MCP proxies — are
 restarted onto the new code right there, so a plugin that only carries services never needs
 `iva update` to run its new version.
