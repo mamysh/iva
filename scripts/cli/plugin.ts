@@ -26,6 +26,7 @@
 import { existsSync } from "node:fs";
 import { createLazyTranslate, type Translate } from "../lib/cli-translate.ts";
 import { DEFAULT_MARKETPLACE } from "../lib/marketplace.ts";
+import { inIvaServiceCgroup } from "../lib/service-context.ts";
 import { tryLoadPluginCore, type PluginCore } from "../lib/plugin-core.ts";
 import {
   createPluginCliContext,
@@ -40,6 +41,7 @@ import type { PluginVersionBuild } from "./version-update-command.ts";
 type CliRuntime = ReturnType<typeof createCliRuntime>;
 
 type PluginDependencies = {
+  readonly inIvaService?: () => boolean;
   readonly now?: () => Date;
   readonly log?: (...args: unknown[]) => void;
   /** Where a relative local source is resolved from: the owner's shell, not ROOT. */
@@ -213,6 +215,25 @@ ${C.b}iva plugin${C.x} — ${translate("install and manage plugins", "устан
     await resolveTranslate();
     if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h")
       return help();
+    if (
+      [
+        "add",
+        "update",
+        "remove",
+        "enable",
+        "disable",
+        "trust",
+        "untrust",
+        "sync",
+      ].includes(sub) &&
+      (dependencies.inIvaService ?? inIvaServiceCgroup)()
+    )
+      throw new Error(
+        translate(
+          "Cannot change plugins from inside iva.service: its restart would kill this command. Run it from an SSH terminal or use a plugin's background update tool.",
+          "Нельзя менять плагины из процесса iva.service: при перезапуске команда погибнет. Запустите её в SSH-терминале или используйте фоновое обновление плагина.",
+        ),
+      );
     const core = await tryLoadPluginCore();
     if (!core)
       throw new Error(
