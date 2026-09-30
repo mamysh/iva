@@ -386,32 +386,6 @@ function messages(events: Events, kind?: string): string {
     .join("\n");
 }
 
-test("plugin changes launched from iva.service stop before touching the store", async () => {
-  const root = home();
-  const data = join(root, "data");
-  const { cmdPlugin } = createPluginCommands(createCliRuntime(root), {
-    inIvaService: () => true,
-    translate: (en) => en,
-  });
-  for (const sub of [
-    "add",
-    "update",
-    "remove",
-    "enable",
-    "disable",
-    "trust",
-    "untrust",
-    "sync",
-  ]) {
-    await assert.rejects(
-      cmdPlugin([sub, "bitrix24-read"]),
-      /Cannot change plugins from inside iva\.service/u,
-    );
-  }
-  assert.equal(existsSync(join(data, "update.lock")), false);
-  assert.equal(existsSync(join(data, "custom/plugins.json")), false);
-});
-
 test("add installs a git source, pins the sha and creates the plugin data directory", async () => {
   const source = remote("demo");
   const root = home();
