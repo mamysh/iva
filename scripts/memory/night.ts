@@ -45,6 +45,8 @@ const CORE_TEMPLATE =
   "# CORE\n\n## Пользователь\n\n## Предпочтения\n\n## Активные цели\n";
 const DAY_MS = 86_400_000;
 const jobs: string[] = [];
+// Card этой ночи для Report: новые и дополненные фактом.
+const tally = { created: new Set<string>(), updated: new Set<string>() };
 // Alert — парой en/ru: текст на языке владельца, суть для дросселя — английская строка.
 const alerts: Array<[string, string]> = [];
 let T: notice.Translate = (_english, russian) => russian;
@@ -120,7 +122,8 @@ interface DayCache {
   completedAt?: string;
 }
 
-/** Запись ночи — коммит vault; false — не закоммичено, следующая ночь докоммитит. */
+/** Запись ночи — коммит разрешённых git путей; ignore новых файлов явно виден в
+ * журнале шва и не отменяет обработку. false — отказ git, следующая ночь повторит. */
 const commit = async (message: string, files: string[]) =>
   (await commitVaultWrite(message, files, vault)).ok;
 
@@ -579,25 +582,18 @@ async function applyCards(
   for (const answer of cache.pass!.a!) day.links(answer);
   files.push(...day.write());
   if (!(await commit(`memory day ${cache.date}: Card`, files))) return false;
+  // Новая — любая записанная Card этой ночи (и ради связи), а не только та, где лёг факт.
+  const created = new Set(Object.values(cache.pass!.created));
+  for (const card of created)
+    if (existsSync(cardFile(card))) tally.created.add(card);
+  for (const card of day.touched)
+    if (!created.has(card)) tally.updated.add(card);
   cache.touched = [...new Set([...cache.touched, ...day.touched])];
   cache.pass!.truth = truthCandidates(day.touched, cache.date);
   return true;
 }
 
 // ── Step 2: правда Card (вызов B) ────────────────────────────────────────────────────
-/** Допустимые status по типу Card из schema.json vault. */
-function statuses(): Record<string, { status?: string[] }> {
-  type Schema = { node_types?: Record<string, { status?: string[] }> };
-  try {
-    return (
-      (JSON.parse(readIf(join(vault, "schema.json")) ?? "{}") as Schema)
-        .node_types ?? {}
-    );
-  } catch {
-    return {}; // битая schema.json — B выбирает статус без подсказки, запись от этого не зависит
-  }
-}
-
 /** Card для B: поля frontmatter, правда, хвост Log и факты с truth_pending по день D. */
 function truthInput(card: Card, date: string) {
   const log = cs.sectionRows(card.body, "Log") ?? [];
@@ -632,7 +628,7 @@ async function askTruth(run: TruthRun): Promise<void> {
       .slice(at, at + limits.CARDS_PER_TRUTH_CALL)
       .flatMap((card) => readCard(card) ?? []);
     const cards = batch.map((card) => truthInput(card, date));
-    const data = { date, statuses: statuses(), cards };
+    const data = { date, statuses: cs.cardStatuses(vault), cards };
     const ask = {
       skill: skill("card"),
       input: data,
@@ -655,6 +651,18 @@ async function askTruth(run: TruthRun): Promise<void> {
   }
 }
 
+/** Статус из ответа B. Статус, поставленный днём по слову владельца (status_date), ночь
+ * того же или более раннего дня не меняет: новое слово о нём приходит только следующими днями.
+ * Статус вне schema.json для типа Card не пишется — то же правило, что у write_card днём. */
+function nightStatus(card: Card, answer: TruthCard, date: string): string {
+  if (!answer.status || str(card.fields, "status_date") >= date) return "";
+  // Сверяется точный ответ модели, как у write_card днём; пишется разрешённое схемой значение.
+  const allowed = cs.cardStatuses(vault)[str(card.fields, "type")] ?? [
+    "active",
+  ];
+  return allowed.includes(answer.status) ? answer.status : "";
+}
+
 /** Card по ответу B: правда и description целиком, прежнее дословно в History. */
 function truthApplied(
   card: Card,
@@ -674,7 +682,8 @@ function truthApplied(
   const description = cs.sanitizeField(answer.description ?? "") || before;
   if (before && description !== before) moved.push(before);
   if (description) fields.description = description;
-  if (answer.status) fields.status = cs.sanitizeField(answer.status, 40);
+  const status = nightStatus(card, answer, date);
+  if (status) fields.status = status;
   const history = cs.sectionRows(body, "History");
   if (history === null) return null;
   const rows = moved.map(
@@ -1054,16 +1063,22 @@ async function notify(key: string, english: string, russian: string) {
   });
 }
 
-async function report(done: readonly string[]): Promise<void> {
+async function report(done: readonly string[], failedDays: number) {
   const send = telegram();
-  const lines = done.map((date) => `${date}: ${gistOf(date)}`);
-  const text = ["Ночь памяти", ...lines, ...jobs].join("\n");
+  const text = notice.nightReport(T, {
+    days: done.map((date) => ({ date, gist: gistOf(date) })),
+    created: tally.created.size,
+    updated: [...tally.updated].filter((card) => !tally.created.has(card))
+      .length,
+    failedDays,
+    problems: jobs.length > 0,
+  });
   const delivery = await notice.deliverMemoryReport({
     dataDir,
     settings,
     ranBefore: notice.rollupRanBefore(dataDir, vault),
     report: text,
-    tr: await notice.noticeTranslator(),
+    tr: T,
     send: send ? { report: send, notice: send } : null,
   });
   if (delivery.status === "failed")
@@ -1210,7 +1225,7 @@ async function night(manual: string | undefined): Promise<number> {
   fallbacks.push(...(await periods()));
   cleanupCaches();
   await alertsAtEnd(today, queueLeft, fallbacks);
-  if (done.length) await report(done);
+  if (done.length) await report(done, ready.length - done.length);
   const { calls, inputTokens, unknownUsage, usageLost } = call.ceiling;
   if (usageLost) jobs.push(`usage.jsonl не записан: ${usageLost}`);
   const usage = `${calls} call(s), ${inputTokens} input tokens`;

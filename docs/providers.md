@@ -9,7 +9,7 @@ Iva runs on your server with your keys. Here is every external service it talks 
 | **OpenCode Go** (ex-Zen)          | ~$5/mo                       | ~23 models fetched live at setup — `deepseek-v4-pro` (default), `kimi-k3`, `kimi-k2.7-code`, `glm-5.2`, `minimax-m3`, `qwen3.7-max`, `grok-4.5`… | `qwen3.7-plus`, override with `OPENCODE_VISION_MODEL`              |
 | **Ollama Cloud**                  | ~$20/mo                      | ~19 models fetched live — `deepseek-v4-pro` (default), `kimi-k3`, `glm-5.2`, `minimax-m3`, `gpt-oss:120b`…                                       | `gemma4:31b`, override with `OLLAMA_VISION_MODEL`                  |
 | **OpenRouter**                    | pay-as-you-go                | 300+ models across vendors — pick any slug (`vendor/model`)                                                                                      | `google/gemini-2.5-flash`, override with `OPENROUTER_VISION_MODEL` |
-| **OpenAI (ChatGPT subscription)** | your existing Plus/Pro/Team  | the models your plan exposes (`gpt-6-sol`, `gpt-6-luna`, `gpt-5.x`), fetched live                                                                | same subscription (multimodal), no variable                        |
+| **OpenAI (ChatGPT subscription)** | your existing Plus/Pro/Team  | the models your plan exposes (`gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.x`), fetched live                                                 | same subscription (multimodal), no variable                        |
 | **Claude (Pro/Max subscription)** | your existing Pro/Max plan   | Fable 5.1, Opus 5.5, Sonnet 5.5 (`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`), the ones the plan's picker has                     | same subscription (multimodal), no variable                        |
 | **Custom (OpenAI-compatible)**    | whatever your endpoint costs | whatever your endpoint serves — the wizard reads `GET {base}/models` when there is one, otherwise you type the id                                | the chat model itself, or a slug in `CUSTOM_VISION_MODEL`          |
 
@@ -30,6 +30,21 @@ OpenCode Go only serves clients that identify themselves: every request carries 
 Start with Go: a quarter of the price, ~23 models to switch between (the wizard pulls the live list, so new ones like `kimi-k3` appear on their own). Keys, model pick and context-window settings live in [configuration.md](configuration.md).
 
 Two things about the live lists. Both catalogs churn — Ollama Cloud retired `gemma3:12b` on 2026-07-15 and Go dropped `gemini-3-flash`, so a hand-written model id in `.env` can start failing without you touching anything; if the bot goes quiet after weeks of silence on your side, re-run `iva config` and re-pick from the live list. And on Ollama Cloud the frontier tags (`kimi-k3` among them) bill as **extra usage** on top of the plan: with an empty extra-usage balance the API answers `402`, so top it up at [ollama.com/settings](https://ollama.com/settings) or stay on `deepseek-v4-pro`.
+
+### OpenCode Go protocols (`opencode`)
+
+Go's catalog includes models served over different endpoints. Select the wire explicitly from [Go's endpoint table](https://opencode.ai/docs/go/#endpoints), without changing provider or adding a key:
+
+```bash
+MODEL_PROVIDER=opencode
+OPENCODE_MODEL=muse-spark-1.3-contributor
+OPENCODE_PROTOCOL=responses
+iva restart
+```
+
+`chat-completions` remains the default. Responses models include Muse Spark, Grok 4.6/4.7 and GPT 5.6/6 Luna. `iva config` asks for the protocol and probes Responses with tools before saving; `/model` retains the selected protocol and validates Responses selections over that wire. Session headers, usage and night use the same factory. Thinking levels are unavailable for Go Responses until its reasoning contract is verified.
+
+Vision falls back through its own `OPENCODE_VISION_PROTOCOL` (also `chat-completions` by default); set it to `responses` for a compatible image-capable Responses model. The selected text model is tested for image understanding over its actual wire first. Go `/messages` models are unsupported, including the current documented endpoint for the old `qwen3.7-plus` vision default. Choose a compatible fallback instead; Iva reports a protocol refusal and continues without a fabricated image description. Existing installs retain their previous defaults.
 
 ### OpenAI by ChatGPT subscription (`codex`)
 

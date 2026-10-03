@@ -6,6 +6,7 @@ import { resolveVaultDir } from "@iva/vault-dir";
 import {
   ALIASES_MAX,
   aliasList,
+  cardStatuses,
   disappearedLines,
   extractH1,
   listCardFiles,
@@ -56,6 +57,7 @@ const factInput = z.object({
   tags: z.array(oneLine).max(6).default([]),
   aliases: z.array(oneLine.max(80)).max(ALIASES_MAX).default([]),
   source: oneLine.optional(),
+  status: z.string().optional(),
 });
 const truthInput = z.object({
   operation: z.literal("truth"),
@@ -65,6 +67,7 @@ const truthInput = z.object({
   description: oneLine.max(500).optional(),
   reason: oneLine,
   source: oneLine.optional(),
+  status: z.string().optional(),
 });
 const mergeInput = z.object({
   operation: z.literal("merge"),
@@ -79,8 +82,8 @@ const wireInput = z.object({
   operation: z
     .enum(["fact", "truth", "merge"])
     .describe(
-      "fact: type, title, text (одна строка), по желанию description, tags, aliases, source. " +
-        "truth: type, title, text (новый Compiled Truth), reason, по желанию description (выжимка) и source. " +
+      "fact: type, title, text (одна строка), по желанию description, tags, aliases, source, status. " +
+        "truth: type, title, text (новый Compiled Truth), reason, по желанию description (выжимка), source и status. " +
         "merge: target, duplicate, confirmed_by_owner=true.",
     ),
   type: z.enum(TYPES).optional().describe("fact, truth: тип Card"),
@@ -99,6 +102,12 @@ const wireInput = z.object({
   aliases: z.array(z.string()).optional().describe("fact: другие написания"),
   source: z.string().optional().describe("fact, truth: откуда факт"),
   reason: z.string().optional().describe("truth: почему меняется истина"),
+  status: z
+    .string()
+    .optional()
+    .describe(
+      "fact, truth: новый статус Card только по слову владельца (проект закрыт → done, решение отменено → reverted); допустимые по типу — в schema.json vault",
+    ),
   target: z.string().optional().describe("merge: Card, которая остаётся"),
   duplicate: z.string().optional().describe("merge: дубль, который вливается"),
   confirmed_by_owner: z
@@ -113,6 +122,41 @@ const operationSchemas = z.discriminatedUnion("operation", [
   mergeInput,
 ]);
 
+const callExamples = {
+  fact: {
+    operation: "fact",
+    type: "note",
+    title: "Имя Card",
+    text: "Факт одной строкой",
+  },
+  truth: {
+    operation: "truth",
+    type: "note",
+    title: "Имя существующей Card",
+    text: "Новый Compiled Truth целиком",
+    reason: "Почему меняется правда",
+  },
+  merge: {
+    operation: "merge",
+    target: "Имя Card, которая остаётся",
+    duplicate: "Имя Card-дубля",
+    confirmed_by_owner: true,
+  },
+} satisfies Record<
+  z.infer<typeof wireInput>["operation"],
+  z.input<typeof operationSchemas>
+>;
+
+function callExample(
+  operation: z.infer<typeof wireInput>["operation"],
+): string {
+  return `Пример формы ${operation} (подставь свои данные): ${JSON.stringify(callExamples[operation])}`;
+}
+
+const inputGuidance =
+  "Не передавай незаданные optional-поля; tags и aliases — массивы строк. " +
+  "confirmed_by_owner=true допустим только после явной просьбы владельца о merge; пример не является подтверждением.";
+
 function operationInput(
   raw: z.infer<typeof wireInput>,
 ): z.infer<typeof operationSchemas> | { error: string } {
@@ -121,7 +165,9 @@ function operationInput(
   const issues = parsed.error.issues
     .map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`)
     .join("; ");
-  return { error: `write_card ${raw.operation}: ${issues}` };
+  return {
+    error: `write_card ${raw.operation}: ${issues}\n${callExample(raw.operation)}\n${inputGuidance}`,
+  };
 }
 
 interface CardRecord {
@@ -180,6 +226,32 @@ async function save(vault: string, files: string[], message: string) {
 }
 
 type FactInput = z.infer<typeof factInput>;
+type TruthInput = z.infer<typeof truthInput>;
+
+/** status вне допустимых для типу Card — отказ текстом с подсказкой; null — годится. */
+function statusError(
+  vault: string,
+  card: CardRecord,
+  input: FactInput | TruthInput,
+) {
+  if (input.status === undefined) return null;
+  const type = String(card.parsed.fields?.type ?? input.type);
+  const allowed = cardStatuses(vault)[type] ?? ["active"];
+  if (allowed.includes(input.status)) return null;
+  return {
+    ok: false,
+    error: `status ${JSON.stringify(input.status.slice(0, 80))} не годится для Card типа ${type}. Допустимы: ${allowed.join(", ")}; или не передавай status.`,
+  };
+}
+
+/** Статус по слову владельца и его дата: ночь того же дня его не меняет. */
+function withStatus(
+  fields: FmFields,
+  status: string | undefined,
+  date: string,
+) {
+  return status ? { ...fields, status, status_date: date } : fields;
+}
 
 function newCard(vault: string, input: FactInput, date: string): CardRecord {
   const title = sanitizeField(input.title, 160);
@@ -195,7 +267,8 @@ function newCard(vault: string, input: FactInput, date: string): CardRecord {
     description: sanitizeField(input.description ?? input.text),
     tags: input.tags.map((tag) => sanitizeField(tag, 80)),
     aliases: input.aliases.map((alias) => sanitizeField(alias, 80)),
-    status: "active",
+    status: input.status ?? "active",
+    ...(input.status ? { status_date: date } : {}),
     created: date,
     source: input.source ?? `daily/${date}.md`,
   };
@@ -232,7 +305,11 @@ function existingFact(
   date: string,
   rows: string[],
 ) {
-  const fields: FmFields = { ...(card.parsed.fields ?? {}), updated: date };
+  const fields: FmFields = withStatus(
+    { ...(card.parsed.fields ?? {}), updated: date },
+    input.status,
+    date,
+  );
   const { aliases, dropped } = mergeAliases(
     fields.aliases,
     input.aliases.map((value) => sanitizeField(value, 80)),
@@ -296,6 +373,8 @@ async function writeFact(input: FactInput) {
   const selected = selectFactCard(vault, input, date);
   if (!selected.ok) return selected;
   const { card, existing } = selected;
+  const badStatus = statusError(vault, card, input);
+  if (badStatus) return badStatus;
   const rows = sectionRows(card.parsed.body, "Log");
   if (fenced(card)) return fenced(card);
   if (rows === null)
@@ -318,7 +397,7 @@ async function writeFact(input: FactInput) {
 
 function truthChange(
   card: CardRecord,
-  input: z.infer<typeof truthInput>,
+  input: TruthInput,
   history: string[],
   date: string,
 ) {
@@ -340,11 +419,15 @@ function truthChange(
     ...history,
     ...moved,
   ]);
-  const fields: FmFields = {
-    ...(card.parsed.fields ?? {}),
-    ...(description ? { description } : {}),
-    truth_date: date,
-  };
+  const fields: FmFields = withStatus(
+    {
+      ...(card.parsed.fields ?? {}),
+      ...(description ? { description } : {}),
+      truth_date: date,
+    },
+    input.status,
+    date,
+  );
   delete fields.truth_pending;
   return { body, fields };
 }
@@ -367,6 +450,8 @@ async function writeTruth(input: z.infer<typeof truthInput>) {
     };
   const card = found[0];
   if (fenced(card)) return fenced(card);
+  const badStatus = statusError(vault, card, input);
+  if (badStatus) return badStatus;
   const history = sectionRows(card.parsed.body, "History");
   if (history === null)
     return { ok: false, error: `Card ${card.path}: неоднозначный History` };
@@ -515,9 +600,21 @@ async function mergeCards(input: z.infer<typeof mergeInput>) {
 
 export default defineTool({
   description:
-    "Card памяти: fact дописывает факт (и может создать Card после поиска), truth меняет Compiled Truth с архивом, merge склеивает дубль только по явной просьбе владельца.",
+    "Card памяти: fact дописывает факт (и может создать Card после поиска), truth меняет Compiled Truth с архивом, merge склеивает дубль только по явной просьбе владельца. fact и truth меняют status Card, когда владелец сказал о нём (проект закрыт, решение принято).\n" +
+    [
+      callExample("fact"),
+      callExample("truth"),
+      callExample("merge"),
+      inputGuidance,
+    ].join("\n"),
   inputSchema: wireInput,
   async execute(raw) {
+    if (raw.operation === "merge" && raw.status !== undefined)
+      return {
+        ok: false,
+        error:
+          "write_card merge: status не меняется склейкой; смени его отдельным fact или truth.",
+      };
     const input = operationInput(raw);
     if ("error" in input) return { ok: false, error: input.error };
     try {

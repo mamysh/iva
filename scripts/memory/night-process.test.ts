@@ -1,5 +1,5 @@
 // Настоящий процесс ночи (scripts/memory/night.ts) против двойника модели: локальный
-// OpenAI-совместимый сервер отвечает вызовом инструмента submit и считает запросы. Vault
+// OpenAI-совместимый сервер отвечает потоком текста и считает запросы. Vault
 // под git во временной папке. Утверждаются файлы vault, история git, stderr и код выхода.
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
@@ -71,9 +71,12 @@ class ModelDouble {
   private async handle(request: IncomingMessage, response: ServerResponse) {
     let body = "";
     for await (const chunk of request) body += String(chunk);
-    const messages = (
-      JSON.parse(body) as { messages: Array<{ content: unknown }> }
-    ).messages;
+    const params = JSON.parse(body) as {
+      messages: Array<{ content: unknown }>;
+      stream: boolean;
+    };
+    assert.equal(params.stream, true);
+    const messages = params.messages;
     this.prompts.push(JSON.stringify(messages.at(-1)?.content));
     const held = this.held.get(this.prompts.length);
     if (held) {
@@ -100,23 +103,31 @@ class ModelDouble {
     // Модель отвечает текстом: JSON в markdown-ограде, как делают настоящие модели.
     const content =
       text ?? `Ответ:\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
-    const message = { role: "assistant", content };
-    send(200, {
-      id: "x",
-      object: "chat.completion",
-      created: 1,
-      model: "double",
-      choices: [{ index: 0, message, finish_reason: "stop" }],
-      ...(usage === null
-        ? {}
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    const chunk = (delta: unknown, finish: string | null, usage?: unknown) =>
+      response.write(
+        `data: ${JSON.stringify({
+          id: "x",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "double",
+          choices: [{ index: 0, delta, finish_reason: finish }],
+          ...(usage ? { usage } : {}),
+        })}\n\n`,
+      );
+    chunk({ role: "assistant", content }, null);
+    chunk(
+      {},
+      "stop",
+      usage === null
+        ? undefined
         : {
-            usage: {
-              prompt_tokens: usage,
-              completion_tokens: 10,
-              total_tokens: usage + 10,
-            },
-          }),
-    });
+            prompt_tokens: usage,
+            completion_tokens: 10,
+            total_tokens: usage + 10,
+          },
+    );
+    response.end("data: [DONE]\n\n");
   }
 }
 
@@ -321,6 +332,47 @@ void test("обычный день: A и B, Card, выжимка, отметка
   assert.equal(fx.model.prompts.length, 2);
   assert.equal(git(fx.vault, "rev-parse", "HEAD"), head);
 });
+
+for (const tracked of [false, true]) {
+  void test(`ignore daily и summaries не останавливает ночь; raw ${tracked ? "tracked" : "untracked"} (#257)`, async (t) => {
+    const fx = await fixture(t);
+    const raw = "## 10:00 [text]\nЗапустил проект Аврора\n";
+    const file = join(fx.vault, "daily", `${DATE}.md`);
+    if (tracked) day(fx, raw);
+    writeFileSync(join(fx.vault, ".gitignore"), "daily/\nsummaries/\n");
+    commit(fx.vault, "ignore memory");
+    if (!tracked) writeFileSync(file, raw);
+    fx.model.replies = [A()];
+    const first = await night(fx);
+    assert.equal(first.code, 0, first.stderr);
+    assert.equal(fx.model.prompts.length, 1);
+    assert.match(read(file), /processed: memory-night/u);
+    assert.match(read(summary(fx)), /Аврора/u);
+    assert.match(first.stderr, /вне git-бэкапа по ignore.*summaries\/daily/u);
+    assert.equal(git(fx.vault, "ls-files", `summaries/daily/${DATE}.md`), "");
+    const cache = JSON.parse(
+      read(join(fx.data, "memory/night", `${DATE}.json`)),
+    ) as { completedAt?: string };
+    assert.ok(cache.completedAt);
+    if (tracked)
+      assert.match(
+        git(fx.vault, "show", `HEAD:daily/${DATE}.md`),
+        /processed: memory-night/u,
+      );
+    else {
+      assert.equal(git(fx.vault, "ls-files", `daily/${DATE}.md`), "");
+      assert.match(
+        first.stderr,
+        /вне git-бэкапа по ignore.*daily\/2026-09-26/u,
+      );
+    }
+    const head = git(fx.vault, "rev-parse", "HEAD");
+    const again = await night(fx, null);
+    assert.equal(again.code, 0, again.stderr);
+    assert.equal(fx.model.prompts.length, 1);
+    assert.equal(git(fx.vault, "rev-parse", "HEAD"), head);
+  });
+}
 
 void test("B заменяет правду целиком: сменённая средняя строка уходит в History, порядок цел (ДЕФ-1, ДЕФ-18)", async (t) => {
   const fx = await fixture(t);
@@ -1476,6 +1528,29 @@ void test("отказ общего коммита правок владельц�
   assert.equal(existsSync(summary(fx)), false);
 });
 
+/** Report ночи без чата печатается в журнал после строки «Report: no chat configured». */
+const reportOf = (stderr: string) =>
+  /Report: no chat configured\n([\s\S]*?)(?:\nmemory-night: |$)/u.exec(
+    stderr,
+  )?.[1] ?? null;
+
+function reportsOn(fx: Fixture, language: string) {
+  writeFileSync(
+    join(fx.data, "settings.json"),
+    JSON.stringify({ language, memoryReports: { enabled: true } }),
+  );
+}
+
+const auroraDay = () => [
+  A({
+    new_cards: [newAurora],
+    facts: [
+      { card: "Аврора", text: "Проект запущен", src: "e1", quote: "Запустил" },
+    ],
+  }),
+  B({ card: "cards/projects/аврора", truth: "Проект запуска" }),
+];
+
 void test("Report ночи: дни с выжимкой уходят швом Notice; без чата текст отчёта — в журнал", async (t) => {
   const fx = await fixture(t);
   day(fx, "## 10:00 [text]\nЗапустил проект Аврора\n");
@@ -1488,11 +1563,79 @@ void test("Report ночи: дни с выжимкой уходят швом Not
   assert.equal(result.code, 0, result.stderr);
   assert.match(
     result.stderr,
-    new RegExp(
-      `Report: no chat configured\\n[\\s\\S]*${DATE}: Запущен проект Аврора`,
-      "u",
-    ),
+    /Report: no chat configured\n[\s\S]*Запущен проект Аврора/u,
   );
+});
+
+void test("Report ночи по-русски: 3 строки человеческими словами, без служебных строк и дат ISO", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nЗапустил проект Аврора\n");
+  reportsOn(fx, "ru");
+  fx.model.replies = auroraDay();
+  const result = await night(fx);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(
+    reportOf(result.stderr),
+    [
+      "Ночью я разобрала 1 день памяти.",
+      "Новых карточек: 1, дополнено: 0.",
+      "26 сентября: Запущен проект Аврора",
+    ].join("\n"),
+    result.stderr,
+  );
+});
+
+void test("Report ночи по-английски при language=en", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nЗапустил проект Аврора\n");
+  reportsOn(fx, "en");
+  fx.model.replies = auroraDay();
+  const result = await night(fx);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(
+    reportOf(result.stderr),
+    [
+      "Last night I went through 1 day of memory.",
+      "New Cards: 1, updated: 0.",
+      "September 26: Запущен проект Аврора",
+    ].join("\n"),
+    result.stderr,
+  );
+});
+
+void test("Report ночи с провалом: одна человеческая строка, служебного текста нет", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nПервый день\n", "2026-09-25");
+  day(fx, "## 10:00 [text]\nЗапустил проект Аврора\n");
+  reportsOn(fx, "ru");
+  fx.model.replies = [
+    { text: "Не понял задачу" },
+    { text: "Вот ответ словами" },
+    A(),
+  ];
+  const result = await night(fx, null);
+  assert.equal(result.code, 1, result.stderr);
+  const report = reportOf(result.stderr) ?? "";
+  assert.equal(
+    report,
+    [
+      "Ночью я разобрала 1 день памяти.",
+      "Новых фактов для карточек не было.",
+      "26 сентября: Запущен проект Аврора",
+      "Не всё получилось: 1 день не разобран, попробую следующей ночью.",
+    ].join("\n"),
+    result.stderr,
+  );
+  assert.doesNotMatch(report, /ответ A|не по форме|\d{4}-\d{2}-\d{2}/u);
+});
+
+void test("пустая ночь Report не шлёт", async (t) => {
+  const fx = await fixture(t);
+  reportsOn(fx, "ru");
+  const result = await night(fx, null);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(reportOf(result.stderr), null, result.stderr);
+  assert.equal(fx.model.prompts.length, 0);
 });
 
 void test("занятый дневной замок Card: ночь не пишет Card и ждёт; после освобождения доделывает без второго A (#1)", async (t) => {
@@ -1674,4 +1817,145 @@ globalThis.fetch = async (url, init) => {
   const second = await night(fx, null, { ...env, IVA_TEST_NOW: later });
   assert.equal(second.code, 0, second.stderr);
   assert.equal(transcriptAlerts().length, 1, "без повтора на другом языке");
+});
+
+// Статус, который днём поставил владелец (status_date), ночь этого дня не меняет; статус
+// более раннего дня B менять вправе.
+void test("B не затирает status, поставленный днём владельцем; ранний статус меняет", async (t) => {
+  for (const [statusDate, expected] of [
+    [DATE, "done"],
+    ["2026-09-20", "active"],
+  ] as const) {
+    const fx = await fixture(t);
+    day(fx, "## 10:00 [text]\nАврора снова в работе?\n");
+    const file = card(fx, "cards/projects/аврора", [
+      ...aurora.slice(0, 3),
+      'status: "done"',
+      `status_date: "${statusDate}"`,
+      ...aurora.slice(4),
+    ]);
+    fx.model.replies = [
+      A({
+        facts: [
+          {
+            card: "cards/projects/аврора",
+            text: "Вопрос о работе",
+            src: "e1",
+            quote: "Аврора снова в работе",
+          },
+        ],
+      }),
+      B({ card: "cards/projects/аврора", status: "active" }),
+    ];
+    const result = await night(fx);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(read(file), new RegExp(`status: "${expected}"`, "u"));
+    assert.match(read(file), new RegExp(`status_date: "${statusDate}"`, "u"));
+  }
+});
+
+// Статус от B сверяется со schema.json vault, как статус дня у write_card: статус вне
+// допустимых для типа Card ночь не пишет, статус Card остаётся прежним.
+void test("B не пишет статус вне schema.json: статус Card прежний, допустимый ставится", async (t) => {
+  for (const [answer, expected] of [
+    ["paused", "active"],
+    ["выдумка", "active"],
+    ["Done", "active"],
+    ["done", "done"],
+  ] as const) {
+    const fx = await fixture(t);
+    day(fx, "## 10:00 [text]\nАврора на паузе\n");
+    const file = card(fx, "cards/projects/аврора", aurora);
+    fx.model.replies = [
+      A({
+        facts: [
+          {
+            card: "cards/projects/аврора",
+            text: "Проект на паузе",
+            src: "e1",
+            quote: "Аврора на паузе",
+          },
+        ],
+      }),
+      B({ card: "cards/projects/аврора", status: answer }),
+    ];
+    const result = await night(fx);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(read(file), new RegExp(`status: "${expected}"`, "u"), answer);
+  }
+});
+
+// «Новых карточек» в Report — все Card, созданные за ночь, а не только те, куда лёг факт:
+// Card ради связи тоже новая. Card, которая не записалась (связь отвергнута), не считается.
+void test("Report ночи считает все созданные за ночь Card, включая Card ради связи", async (t) => {
+  const fx = await fixture(t);
+  day(fx, "## 10:00 [text]\nАльфа работает со Сбером\n");
+  reportsOn(fx, "ru");
+  fx.model.replies = [
+    A({
+      gist: "",
+      new_cards: [
+        { name: "Альфа", type: "project" },
+        { name: "Сбер", type: "contact" },
+        { name: "Яндекс", type: "contact" },
+      ],
+      links: [
+        { a: "Альфа", b: "Сбер", src: "e1" },
+        { a: "Яндекс", b: "Никто", src: "e1" },
+      ],
+    }),
+  ];
+  const result = await night(fx);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(
+    ls(join(fx.vault, "cards/contacts")),
+    "сбер.md",
+    "Card ради отвергнутой связи не пишется",
+  );
+  assert.match(
+    reportOf(result.stderr) ?? "",
+    /^Новых карточек: 2, дополнено: 0\.$/mu,
+    result.stderr,
+  );
+});
+
+// Со схемой сверяется точный ответ B, как у write_card днём: " done " в схеме нет и не пишется,
+// допустимый статус длиннее 40 символов пишется точно, без обрезки.
+void test("B: статус сверяется со схемой точной строкой, длинный допустимый пишется целиком", async (t) => {
+  const long = "waiting-for-external-approval-and-vendor-confirmation";
+  for (const [answer, expected] of [
+    [" done ", "active"],
+    [long, long],
+  ] as const) {
+    const fx = await fixture(t);
+    writeFileSync(
+      join(fx.vault, "schema.json"),
+      JSON.stringify({
+        node_types: { project: { status: ["active", "done", long] } },
+      }),
+    );
+    commit(fx.vault, "schema");
+    day(fx, "## 10:00 [text]\nАврора ждёт подтверждения\n");
+    const file = card(fx, "cards/projects/аврора", aurora);
+    fx.model.replies = [
+      A({
+        facts: [
+          {
+            card: "cards/projects/аврора",
+            text: "Проект ждёт подтверждения",
+            src: "e1",
+            quote: "Аврора ждёт подтверждения",
+          },
+        ],
+      }),
+      B({ card: "cards/projects/аврора", status: answer }),
+    ];
+    const result = await night(fx);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(
+      read(file),
+      new RegExp(`^status: "${expected}"$`, "mu"),
+      JSON.stringify(answer),
+    );
+  }
 });
