@@ -5,6 +5,11 @@ import {
   type TelegramMessageBody,
 } from "eve/channels/telegram";
 import { POST } from "eve/channels";
+import {
+  flushSettledTelegramQuestions,
+  postTelegramQuestion,
+  settleTelegramQuestions,
+} from "../lib/telegram-question.ts";
 // Outbox — ЕДИНЫЙ шов наружу (тот же, через который уходят ночные отчёты cron):
 // внутри него outbound-Gate, выбор rich/HTML, нарезка на чанки и plain-фолбэк.
 import {
@@ -247,6 +252,22 @@ const telegram = telegramChannel({
     });
   },
   events: {
+    async "input.requested"(data, channel) {
+      for (const request of data.requests)
+        await postTelegramQuestion(
+          request,
+          channel.state,
+          channel.telegram,
+          TELEGRAM_RICH_REPLIES === "auto",
+        );
+    },
+    async "input.resolved"(data, channel) {
+      await settleTelegramQuestions(
+        data.resolutions,
+        channel.state,
+        channel.telegram,
+      );
+    },
     // Начало хода: сначала публикуем running, затем отправляем медленное статус-сообщение.
     // FIFO-мост не должен успеть принять следующую голову, пока Bot API отвечает.
     async "turn.started"(data, channel, ctx) {
@@ -269,11 +290,13 @@ const telegram = telegramChannel({
         onWorkingStatusError: (error) =>
           console.error("[telegram] статус-сообщение не отправилось:", error),
       });
+      await flushSettledTelegramQuestions(channel.state, channel.telegram);
     },
     // Подсказка «нажмите /new» — до уборки статуса: после неё чат свободен, и строка легла
     // бы под «Работаю…» следующего хода. Только в личном чате: в группе /new не резолвится.
     // Уборка статуса от подсказки не зависит.
     async "turn.completed"(data, channel, ctx) {
+      await flushSettledTelegramQuestions(channel.state, channel.telegram);
       const tg = channel.telegram;
       try {
         // Область хода — чтобы вердикт гейта на этой строке попал в журнал с ключом хода.

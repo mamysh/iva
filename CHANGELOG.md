@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — experimental question previews
+
+- Native Telegram question previews settle after Eve accepts the answer. The
+  selected status is separate from the business result, and delivery recovery does
+  not repeat the action. See [the proposal](docs/native-question-previews.md).
+- Requires the included Eve public-event patch; released Iva 0.4.11 lacks this behavior.
+
 ## [Unreleased]
 
 - 👀 **Ива сама говорит о пропущенном**: раз в час код без модели проверяет непрочитанные личные чаты и упоминания в Telegram (через юзербот) и письма в Gmail без рассылок; если что-то ждёт дольше часа или написал срочный отправитель, модель решает, стоит ли сообщить, и присылает отдельное сообщение на пункт с кнопками «В задачи», «Напомнить позже», «Не сообщать про этого». Про один чат или письмо — один раз, пока там не появилось новое; ночью с 23:00 до 08:00 — только срочные; не больше 5 таких сообщений и 15 проверок моделью в сутки. Включено у всех, выключается тумблером «Сама пишет» в `/menu` → Уведомления; настройки — `iva proactive show|on|off|set`, последний прогон — в `iva doctor`. Watch: an hourly code-only check of unread Telegram chats, mentions and Gmail wakes the model only for something new, with quiet hours, daily caps and a «Writes on her own» toggle; `iva proactive` changes the settings.
