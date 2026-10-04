@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — experimental plugin screens
+
+- Trusted stdio MCP plugins can declare a separate private Telegram screen command.
+  Bridge invokes the handler without a model turn and replaces its owned message.
+  See [the proposed API](docs/plugin-screens.md).
+- The proxy's narrow unary screen route preserves the agent's current MCP session.
+- This API is experimental and unavailable in released Iva 0.4.11.
+
 ## Unreleased — experimental question previews
 
 - Native Telegram question previews settle after Eve accepts the answer. The

@@ -19,7 +19,12 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { MCP_SCHEMA_URL, PLUGIN_SCHEMA_URL } from "#lib/plugin-reader.ts";
-import { pluginDataDir, pluginEnvFile, pluginRoot } from "#lib/plugin-store.ts";
+import {
+  pluginDataDir,
+  pluginEnvFile,
+  pluginRoot,
+  writePluginsState,
+} from "#lib/plugin-store.ts";
 import { startMcpProxy, type RunningProxy } from "./proxy.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -299,4 +304,112 @@ test("the MCP server going away is reported instead of being served as a dead po
   t.after(() => proxy.close());
   // Прокси не решает, что делать: он сообщает, а решает systemd (`Restart=on-failure`).
   assert.match(await proxy.childGone, /^the MCP server echo exited$/u);
+});
+
+test("Bridge unary calls preserve the agent MCP session and correlate parallel replies", async (t) => {
+  const data = world();
+  write(
+    join(pluginRoot(data, "demo"), "plugin.json"),
+    JSON.stringify({
+      $schema: PLUGIN_SCHEMA_URL,
+      name: "demo",
+      extensions: {
+        "sh.iva": {
+          telegramScreen: { command: "demo", server: "echo", tool: "echo" },
+        },
+      },
+    }),
+  );
+  await writePluginsState(data, {
+    marketplaces: [],
+    plugins: [
+      {
+        name: "demo",
+        source: "local",
+        ref: "",
+        sha: "",
+        digest: "",
+        enabled: true,
+        trusted: true,
+        installedAt: "2026-01-01",
+      },
+    ],
+  });
+  const proxy = await startMcpProxy({
+    plugin: "demo",
+    server: "echo",
+    port: 0,
+    token: TOKEN,
+    dataDir: data,
+    log: () => {},
+  });
+  t.after(() => proxy.close());
+  const agent = await connect(proxy);
+  t.after(() => agent.close());
+  const callScreen = () =>
+    fetch(`http://127.0.0.1:${proxy.port}/screen`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ event: { type: "open", eventId: "screen-open" } }),
+    });
+  const [screen, normal] = await Promise.all([
+    callScreen(),
+    agent.client.callTool({ name: "echo", arguments: {} }),
+  ]);
+  assert.equal(screen.status, 200);
+  assert.ok(((await screen.json()) as { content?: unknown }).content);
+  assert.equal(normal.isError, undefined);
+  assert.equal((await agent.client.listTools()).tools.length, 1);
+  await writePluginsState(data, { marketplaces: [], plugins: [] });
+  assert.equal((await callScreen()).status, 403);
+  assert.equal((await agent.client.listTools()).tools.length, 1);
+});
+
+test("a screen can initialize a cold proxy without creating an HTTP MCP session", async (t) => {
+  const data = world();
+  write(
+    join(pluginRoot(data, "demo"), "plugin.json"),
+    JSON.stringify({
+      $schema: PLUGIN_SCHEMA_URL,
+      name: "demo",
+      extensions: {
+        "sh.iva": {
+          telegramScreen: { command: "demo", server: "echo", tool: "echo" },
+        },
+      },
+    }),
+  );
+  await writePluginsState(data, {
+    marketplaces: [],
+    plugins: [
+      {
+        name: "demo",
+        source: "local",
+        ref: "",
+        sha: "",
+        digest: "",
+        enabled: true,
+        trusted: true,
+        installedAt: "2026-01-01",
+      },
+    ],
+  });
+  const proxy = await startMcpProxy({
+    plugin: "demo",
+    server: "echo",
+    port: 0,
+    token: TOKEN,
+    dataDir: data,
+    log: () => {},
+  });
+  t.after(() => proxy.close());
+  const response = await fetch(`http://127.0.0.1:${proxy.port}/screen`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}` },
+    body: JSON.stringify({ event: { type: "open", eventId: "cold-open" } }),
+  });
+  assert.equal(response.status, 200);
+  const agent = await connect(proxy);
+  t.after(() => agent.close());
+  assert.equal((await agent.client.listTools()).tools.length, 1);
 });

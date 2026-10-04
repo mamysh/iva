@@ -31,13 +31,27 @@ import {
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   isInitializeRequest,
+  LATEST_PROTOCOL_VERSION,
   type JSONRPCMessage,
 } from "@modelcontextprotocol/sdk/types.js";
 import { readPluginEnv } from "#lib/plugin-config.ts";
-import { expandPluginPlaceholders, readPlugin } from "#lib/plugin-reader.ts";
-import { pluginDataDir, pluginRoot } from "#lib/plugin-store.ts";
+import {
+  expandPluginPlaceholders,
+  readPlugin,
+  pluginTreeDigest,
+} from "#lib/plugin-reader.ts";
+import {
+  pluginDataDir,
+  pluginRoot,
+  readPluginsState,
+} from "#lib/plugin-store.ts";
 
-/** Единственный путь MCP; всё остальное, кроме `/health`, — 404. */
+import {
+  readScreenDeclaration,
+  screenEventSchema,
+} from "#lib/plugin-screen-declaration.ts";
+
+/** MCP session path; /screen is a separate declared-tool bridge, /health is read-only. */
 const MCP_PATH = "/mcp";
 const HEALTH_PATH = "/health";
 /** Только loopback: прокси не публичный сервис и слушать больше негде. */
@@ -129,16 +143,17 @@ function jsonRpcError(
 /** Тело POST — один раз и с потолком: агент шлёт JSON, а не поток без конца. */
 async function readJsonBody(
   request: IncomingMessage,
+  maximum = MAX_BODY_BYTES,
 ): Promise<{ readonly value: unknown; readonly problem: string | null }> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const buffer = chunk as Buffer;
     size += buffer.length;
-    if (size > MAX_BODY_BYTES)
+    if (size > maximum)
       return {
         value: null,
-        problem: `the request body is larger than ${MAX_BODY_BYTES} bytes`,
+        problem: `the request body is larger than ${maximum} bytes`,
       };
     chunks.push(buffer);
   }
@@ -229,6 +244,119 @@ export async function startMcpProxy(spec: ProxySpec): Promise<RunningProxy> {
    * be reused across requests`), поэтому режим здесь только сессионный.
    */
   let session: StreamableHTTPServerTransport | null = null;
+  // Unary Bridge calls never initialize a second HTTP MCP session.
+  const screenSpec = readScreenDeclaration(report.manifest.extensions);
+  const startedDigest = screenSpec?.success
+    ? await pluginTreeDigest(root)
+    : null;
+  const prefix = `iva-screen-rpc:${randomUUID()}:`;
+  const waiting = new Map<
+    string,
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+  let initialized = false;
+  let initialization: Promise<unknown> | null = null;
+  const agentInitializations = new Map<string | number, () => void>();
+
+  function requestChild(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    const id = `${prefix}${randomUUID()}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        waiting.delete(id);
+        reject(new Error("screen handler timeout"));
+      }, 8000);
+      waiting.set(id, { resolve, reject, timer });
+      void child.send({ jsonrpc: "2.0", id, method, params }).catch((error) => {
+        clearTimeout(timer);
+        waiting.delete(id);
+        reject(
+          error instanceof Error ? error : new Error("screen handler failed"),
+        );
+      });
+    });
+  }
+
+  async function initializeForScreen(): Promise<void> {
+    if (initialization) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          initialization,
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("proxy initialization timeout")),
+              8000,
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+    if (initialized) return;
+    const pending = requestChild("initialize", {
+      protocolVersion: LATEST_PROTOCOL_VERSION,
+      capabilities: {},
+      clientInfo: { name: "iva-screen", version: "1.0.0" },
+    });
+    initialization = pending;
+    try {
+      await pending;
+      await child.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      initialized = true;
+    } finally {
+      if (initialization === pending) initialization = null;
+    }
+  }
+
+  async function screenRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    if (
+      request.method !== "POST" ||
+      !screenSpec?.success ||
+      screenSpec.data.server !== spec.server
+    ) {
+      response.writeHead(404).end();
+      return;
+    }
+    const entry = (await readPluginsState(spec.dataDir)).plugins.find(
+      (item) => item.name === spec.plugin,
+    );
+    if (
+      !entry?.enabled ||
+      !entry.trusted ||
+      (await pluginTreeDigest(root)) !== startedDigest
+    ) {
+      response.writeHead(403).end();
+      return;
+    }
+    const body = await readJsonBody(request, 4096);
+    const event =
+      body.value && typeof body.value === "object" && !Array.isArray(body.value)
+        ? screenEventSchema.safeParse(Reflect.get(body.value, "event"))
+        : null;
+    if (body.problem || !event?.success) {
+      response.writeHead(400).end();
+      return;
+    }
+    await initializeForScreen();
+    const result = await requestChild("tools/call", {
+      name: screenSpec.data.tool,
+      arguments: { event: event.data },
+    });
+    response
+      .writeHead(200, { "content-type": "application/json" })
+      .end(JSON.stringify(result));
+  }
 
   async function openSession(): Promise<StreamableHTTPServerTransport> {
     const previous = session;
@@ -236,6 +364,16 @@ export async function startMcpProxy(spec: ProxySpec): Promise<RunningProxy> {
       sessionIdGenerator: () => randomUUID(),
     });
     http.onmessage = (message: JSONRPCMessage) => {
+      if (
+        isInitializeRequest(message) &&
+        "id" in message &&
+        message.id !== undefined
+      ) {
+        initialized = false;
+        initialization = new Promise<void>((resolve) =>
+          agentInitializations.set(message.id!, resolve),
+        );
+      }
       void child
         .send(message)
         .catch(complain("the MCP server took no message"));
@@ -249,6 +387,29 @@ export async function startMcpProxy(spec: ProxySpec): Promise<RunningProxy> {
   }
 
   child.onmessage = (message: JSONRPCMessage) => {
+    if ("id" in message && ("result" in message || "error" in message)) {
+      if (typeof message.id === "string" && message.id.startsWith(prefix)) {
+        const pending = waiting.get(message.id);
+        if (pending) {
+          clearTimeout(pending.timer);
+          waiting.delete(message.id);
+          if ("error" in message)
+            pending.reject(new Error("screen handler failed"));
+          else pending.resolve(message.result);
+        }
+        return;
+      }
+      const ready =
+        message.id === undefined
+          ? undefined
+          : agentInitializations.get(message.id);
+      if (ready) {
+        initialized = "result" in message;
+        agentInitializations.delete(message.id!);
+        initialization = null;
+        ready();
+      }
+    }
     void session?.send(message).catch(complain("the agent took no reply"));
   };
   child.onerror = (error) => log(`stdio transport: ${error.message}`);
@@ -265,7 +426,7 @@ export async function startMcpProxy(spec: ProxySpec): Promise<RunningProxy> {
         response.end(JSON.stringify({ ok: true }));
         return;
       }
-      if (path !== MCP_PATH) {
+      if (path !== MCP_PATH && path !== "/screen") {
         response.writeHead(404).end();
         return;
       }
@@ -283,6 +444,10 @@ export async function startMcpProxy(spec: ProxySpec): Promise<RunningProxy> {
       // необработанное исключение сервера, и агент получает пустой 500 без причины.
       void (async () => {
         try {
+          if (path === "/screen") {
+            await screenRequest(request, response);
+            return;
+          }
           if (request.method !== "POST") {
             // GET — поток уведомлений сервера, DELETE — конец сессии: и то и другое
             // принадлежит открытой сессии, а не открывает её.
@@ -338,6 +503,11 @@ export async function startMcpProxy(spec: ProxySpec): Promise<RunningProxy> {
     childGone,
     close: async () => {
       child.onclose = undefined;
+      for (const pending of waiting.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error("proxy closed"));
+      }
+      waiting.clear();
       const closed = new Promise<void>((settle) =>
         server.close(() => settle()),
       );

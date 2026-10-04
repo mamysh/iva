@@ -369,3 +369,10 @@ Your own plugin is a risk you can see. Someone else's is not — read the code b
 install it, or pin it to a sha you have read.
 
 The rest of the security picture is in [security.md](security.md).
+
+## Experimental Telegram screens
+
+The proposed Bridge-owned screen API lets a trusted stdio MCP plugin handle private
+Telegram menu navigation without a model turn and replace the current message.
+It is not included in released Iva 0.4.11. See [plugin-screens.md](plugin-screens.md)
+for the declaration, handler protocol, delivery recovery and fallback requirements.

@@ -76,6 +76,10 @@ import {
   handleWizardCallback,
   resetMessageCopy,
 } from "./wizards.ts";
+import type { ScreenCall } from "#lib/telegram-screen-message.ts";
+import { createPluginScreens } from "../lib/plugin-screen.ts";
+import { pluginScreenEndpoints } from "../lib/plugin-screen-mcp.ts";
+import { menuStyle } from "../lib/telegram-buttons.ts";
 import { createMenu } from "../lib/menu/index.ts";
 import { admitTelegramUpdate } from "./inbox.ts";
 import { isPrivateTelegramChat } from "#lib/telegram-private-chat.ts";
@@ -238,6 +242,19 @@ export const OUT_OF_BAND_COMMANDS = [
   "/model",
   "/think",
 ] as const;
+
+const pluginScreens = createPluginScreens({
+  dataDir: DATA_DIR,
+  call: async (method, body) =>
+    (await tg(method, body)) as Awaited<ReturnType<ScreenCall>>,
+  endpoints: async () =>
+    (await pluginScreenEndpoints(DATA_DIR)).filter(
+      (endpoint) =>
+        !OUT_OF_BAND_COMMANDS.some((command) => command === endpoint.command),
+    ),
+  allowed: (userId) => isAllowlisted(String(userId)),
+  rich: () => menuStyle() === "rich",
+});
 
 // Подтверждение нажатия: гасит спиннер кнопки и показывает всплывающую подсказку.
 // Ошибки глотаем — сама отмена уже отправлена, а протухший callback_query_id Telegram
@@ -623,6 +640,7 @@ type CallbackKind =
   | "update"
   | "wizard"
   | "menu"
+  | "pluginScreen"
   | "plugin"
   | "passthrough"
   | "tap";
@@ -636,6 +654,7 @@ const CALLBACK_KINDS: ReadonlyArray<
   ["update", (data) => parseUpdateCallbackData(data) !== null],
   ["wizard", isWizardCallbackData],
   ["menu", (data) => data.startsWith("iva_menu:")],
+  ["pluginScreen", (data) => data.startsWith("iva_screen:")],
   ["plugin", (data) => parseProposalCallback(data) !== null],
   ["passthrough", isUnclaimedCallbackData],
 ];
@@ -647,6 +666,7 @@ const BRIDGE_CALLBACK_KINDS = new Set<CallbackKind>([
   "update",
   "wizard",
   "menu",
+  "pluginScreen",
 ]);
 
 const CALLBACK_HANDLERS: Record<
@@ -671,6 +691,40 @@ const CALLBACK_HANDLERS: Record<
       "menu callback error:",
       true,
     ),
+  pluginScreen: async ({ callback }) => {
+    let notice = tr(
+      "Screen unavailable. Open it again.",
+      "Экран недоступен. Открой его заново.",
+    );
+    try {
+      notice = await pluginScreens.tap({
+        data: callback.data,
+        chatId: callback.message?.chat?.id,
+        messageId: callback.message?.message_id,
+        userId: Number(callback.from?.id ?? 0),
+        privateChat: isPrivateTelegramChat(callback.message?.chat),
+      });
+      if (notice === "Screen busy")
+        notice = tr(
+          "Screen busy. Try again.",
+          "Экран занят. Попробуй ещё раз.",
+        );
+      else if (notice === "Screen expired")
+        notice = tr(
+          "Screen expired. Open it again.",
+          "Экран устарел. Открой его заново.",
+        );
+      else if (notice === "Screen unavailable")
+        notice = tr(
+          "Screen unavailable. Open it again.",
+          "Экран недоступен. Открой его заново.",
+        );
+    } catch {
+      log("plugin screen failed");
+    }
+    await answerCallback(callback.id, notice || undefined);
+    return true;
+  },
   plugin: handlePluginTap,
   // Колбэк eve или незнакомый iva_*: не наш, решает путь сообщения.
   passthrough: () => Promise.resolve(UNCLAIMED),
@@ -1210,7 +1264,31 @@ async function handleCommand(
   io: ControlIo,
 ): Promise<boolean> {
   const cmd = commandName(text);
-  if (cmd === null) return false;
+  if (cmd === null) {
+    const pluginCommand = /^\/[a-z][a-z0-9_]{0,31}(?:@\w+)?$/iu.test(
+      text.trim(),
+    )
+      ? text.trim().replace(/@\w+$/u, "").toLowerCase()
+      : null;
+    if (!pluginCommand || !isTrustedSender(msg.from) || !msg.chat) return false;
+    try {
+      return await pluginScreens.open(
+        pluginCommand,
+        Number(msg.chat.id),
+        Number(msg.from!.id),
+        isPrivateTelegramChat(msg.chat),
+      );
+    } catch {
+      await reply(
+        msg.chat.id,
+        tr(
+          "Could not open plugin screen.",
+          "Не удалось открыть экран плагина.",
+        ),
+      );
+      return true;
+    }
+  }
   const command = trustedCommand({ update, msg, text, cmd, io });
   if (command === null) return false; // untrusted — let eve drop it
   return runCommand(command);
