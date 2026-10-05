@@ -59,7 +59,7 @@ For `codex` there is no API key in `.env`: run `iva login` (device code, headles
 
 For `claude` there is no API key either: install the CLI on the server as the service user (`npm install -g --prefix ~/.local @anthropic-ai/claude-code`, no root) and sign it in once (`claude auth login`). Iva never sees a key — it calls that CLI, and `iva doctor` reports the plan from `claude auth status`. Keep `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_FOUNDRY_API_KEY`, `ANTHROPIC_BASE_URL` and any `CLAUDE_CODE_USE_*` out of `.env`: each of them sends the CLI somewhere other than your subscription, so Iva refuses to use this provider and says which variable is in the way rather than quietly ignoring it. Full flow: [providers.md](./providers.md#claude-by-promax-subscription-claude).
 
-**Don't inflate the context window.** Compaction triggers at 70% of this number. Set it above the model's real window and the compactor fires too late — the request overflows before history gets trimmed. When you switch models, enter the new model's actual window, not a rounder bigger one.
+**Don't inflate the context window.** Iva compacts the conversation between turns once a turn's input reaches 60% of this number (or 275,000 tokens, whichever is smaller), and inside a turn a quarter above that as a safety net. Set it above the model's real window and the compactor fires too late — the request overflows before the conversation gets trimmed. When you switch models, enter the new model's actual window, not a rounder bigger one.
 
 ## Telegram
 
@@ -69,7 +69,7 @@ For `claude` there is no API key either: install the CLI on the server as the se
 | `TELEGRAM_BOT_USERNAME`         | —         | Your bot's username. The wizard verifies the token via `getMe` and detects this itself.                                                                                                                                                                                                                                                                                                                |
 | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | —         | Shared secret between the long-poll bridge and the local webhook. Any long random string.                                                                                                                                                                                                                                                                                                              |
 | `TELEGRAM_ALLOWED_USER_IDS`     | _(empty)_ | Comma-separated numeric user IDs allowed to talk to Iva.                                                                                                                                                                                                                                                                                                                                               |
-| `TELEGRAM_DIGEST_CHAT_ID`       | —         | Chat that receives the morning digest, nightly memory reports and one-time stable update offers. Usually your own chat ID.                                                                                                                                                                                                                                                                             |
+| `TELEGRAM_DIGEST_CHAT_ID`       | —         | Chat for nightly memory reports and one-time stable update offers. Usually your own chat ID. Watch, the Brief and a job failure with the Fix button go to your private chat (the first ID of `TELEGRAM_ALLOWED_USER_IDS`) instead: they carry mail and chats, and a button is accepted only there.                                                                                                     |
 | `SUPPORT_CHAT_URL`              | _(empty)_ | Invite link to the Telegram support chat the `report-problem` skill offers when a turn fails; empty means Iva says the address is not configured.                                                                                                                                                                                                                                                      |
 | `TELEGRAM_RICH_REPLIES`         | `auto`    | `auto` sends a reply as a Telegram rich message when it contains a table, task list, `<details>`, block formula, footnote, media block or a `<tg-*>` tag; `never` keeps every current-chat reply on the ordinary HTML/plain path except replies with buttons, which exist only as rich messages. Also switchable in `/menu` → Rich replies. Any other value stops startup. `iva post` is not affected. |
 
@@ -108,12 +108,13 @@ The nightly Brain pass builds the hybrid index; to build it now, run `node --env
 
 ## Notices
 
-What Iva says on her own lives in `data/settings.json`, not in `.env` — the **🔔 Notices** screen in `/menu` writes these keys, and the report switch is read at the end of each nightly run, the digest switch when its schedule fires — so a tap applies without a restart.
+What Iva says on her own lives in `data/settings.json`, not in `.env` — the **🔔 Notices** screen in `/menu` writes these keys, and the report switch is read at the end of each nightly run, the `proactive` key on every half-hourly Watch and Brief tick — so a tap applies without a restart.
 
-| Key                      | Default | Notes                                                                                                           |
-| ------------------------ | ------- | --------------------------------------------------------------------------------------------------------------- |
-| `memoryReports.enabled`  | `false` | The nightly memory report (daily 04:00 and weekly Mon 04:15) in Telegram. Off means the vault is still written. |
-| `digestSchedule.enabled` | `false` | The morning digest at 08:00. `/digest` works by hand either way.                                                |
+| Key                     | Default              | Notes                                                                                                                    |
+| ----------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `memoryReports.enabled` | `false`              | The nightly memory report (daily 04:00 and weekly Mon 04:15) in Telegram. Off means the vault is still written.          |
+| `proactive.enabled`     | `true`               | Watch and the Brief (**Writes on her own**). Off stops both; failures are still reported. `iva proactive` sets the rest. |
+| `proactive.briefTimes`  | `["08:30", "14:00"]` | The Brief, `HH:00` or `HH:30`, at most two; empty — no Brief. `/digest` gives the Brief by hand any time.                |
 
 Alerts — problems (memory not backed up, a failed nightly pass) and new versions — always arrive: they cannot be switched off, but each one says what to do and repeats at most once a week per problem — [ADR-0007](./adr/0007-notices-are-opt-in.md).
 

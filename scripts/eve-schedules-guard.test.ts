@@ -39,6 +39,11 @@ test("agent/schedules/ contains exactly the 4 expected eve schedules", () => {
   );
   assert.deepEqual(
     [...files].sort(),
-    ["digest.ts", "jobs-watchdog.ts", "memory-night.ts", "reminders.ts"].sort(),
+    [
+      "jobs-watchdog.ts",
+      "memory-night.ts",
+      "proactive.ts",
+      "reminders.ts",
+    ].sort(),
   );
 });

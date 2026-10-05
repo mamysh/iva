@@ -1,6 +1,6 @@
-// Политика Notice — всё, что Iva говорит сама, без хода пользователя (CONTEXT.md). Видов
-// ровно два, и у каждого своё правило (ADR-0007):
-//   • Report — плановая сводка (отчёты памяти, утренний дайджест). По умолчанию выключен,
+// Политика Notice — всё, что Iva говорит сама, без хода пользователя (CONTEXT.md). Здесь
+// правила двух видов (ADR-0007); Watch и Brief живут в scripts/proactive/ (ADR-0020):
+//   • Report — плановая сводка (ночные отчёты памяти). По умолчанию выключен,
 //     включается тумблером в /menu → 🔔 Уведомления.
 //   • Alert (алерт) — проблема, с которой владельцу надо что-то сделать: brain, предложение
 //     обновиться.
@@ -16,8 +16,8 @@
 //
 // Модуль обязан РАБОТАТЬ на установке без authored tree: ночной brain и проверка обновлений —
 // юниты, которые работают на половине установки, и дроссель алертов нужен там больше всего.
-// Поэтому из `agent/` берётся ровно одно — резолвер языка, динамическим импортом и fail-open;
-// всё остальное здесь на node:fs. Сторожит это «островной» прогон в notice-policy.test.ts
+// Поэтому из `agent/` берутся ровно две вещи — резолвер языка и замок состояния дросселя
+// (#lib/fs-atomic.ts), обе динамическим импортом и fail-open; всё остальное здесь на node:fs. Сторожит это «островной» прогон в notice-policy.test.ts
 // (модуль копируется в каталог без алиаса `#lib`), а не authored-tree-guard: тот следит за
 // обратным направлением — чтобы agent/ не тянул scripts/.
 import {
@@ -32,6 +32,7 @@ import {
   writeSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
 export type Translate = (english: string, russian: string) => string;
@@ -65,7 +66,7 @@ export async function noticeTranslator(
 }
 
 // ── Report: отчёты памяти ────────────────────────────────────────────────────────────────
-// Ключ settings — по образцу digestSchedule: объект, а не голый флаг, чтобы соседние
+// Ключ settings — объект, а не голый флаг, чтобы соседние
 // настройки отчётов не пришлось заводить новым ключом верхнего уровня.
 export function memoryReportsEnabled(settings: unknown): boolean {
   if (typeof settings !== "object" || settings === null) return false;
@@ -75,8 +76,8 @@ export function memoryReportsEnabled(settings: unknown): boolean {
 }
 
 /**
- * «На каком языке писать» — одна формулировка на оба плановых хода (ночная свёртка и
- * утренний дайджест). Общая функция, а не копия строки: разъехаться им нельзя, иначе
+ * «На каком языке писать» — одна формулировка на все плановые ходы (ночная свёртка,
+ * Watch и Brief). Общая функция, а не копия строки: разъехаться им нельзя, иначе
  * половина плановых сообщений снова уедет на язык инструкции.
  */
 export function writtenInLanguage(tr: Translate): string {
@@ -422,7 +423,7 @@ export async function deliverMemoryReport({
 export const ALERT_REPEAT_MS = 7 * 24 * 60 * 60 * 1000;
 
 type AlertRecord = { essence: string; lastSentAt: number };
-type AlertState = Record<string, AlertRecord>;
+export type AlertState = Record<string, AlertRecord>;
 
 function alertStatePath(dataDir: string): string {
   return join(dataDir, "alert-state.json");
@@ -458,9 +459,9 @@ function readAlertState(dataDir: string): AlertState {
 
 // Запись состояния — своя, из node:fs, а НЕ через #lib/fs-atomic.ts. Дроссель нужен ровно
 // той установке, у которой authored tree сломан: там алерт `authored-tree` уходит каждую
-// ночь, и импорт из agent/ упал бы вместе с ним — недельный дроссель умер бы там, где он
-// нужнее всего. Механизм тот же (tmp + rename), три строки, зависимостей ноль.
-function writeAlertState(dataDir: string, state: AlertState): void {
+// ночь, и статический импорт из agent/ упал бы вместе с ним — недельный дроссель умер бы там,
+// где он нужнее всего. Механизм тот же (tmp + rename), три строки, зависимостей ноль.
+function writeAlertState(dataDir: string, state: AlertState): boolean {
   const path = alertStatePath(dataDir);
   // Уникален на вызов, а не на миллисекунду. Живого бага здесь нет: записи синхронные, и
   // одному процессу поделить имя не с кем. Это дешёвая страховка на случай второго писателя
@@ -474,6 +475,7 @@ function writeAlertState(dataDir: string, state: AlertState): void {
       mode: 0o600,
     });
     renameSync(temp, path);
+    return true;
   } catch (error) {
     // Не записалось — алерт повторится завтра, а это безопасная сторона.
     console.error("[notice-policy] could not record the alert state:", error);
@@ -482,7 +484,88 @@ function writeAlertState(dataDir: string, state: AlertState): void {
     } catch {
       /* tmp уже забрал rename или его не удалось создать вовсе */
     }
+    return false;
   }
+}
+
+// Писателей несколько (тик проактивности, мост, ночь, апдейтер), поэтому чтение-правка-запись
+// идёт под замком — существующим из #lib/fs-atomic.ts. Загрузка ленивая, синхронная (require
+// ESM без top-level await: модуль грузят и через require, scripts/check-update.mjs) и fail-open:
+// без authored tree (островной прогон в тестах) замка нет и запись идёт как раньше — одна
+// потерянная отметка там дешевле умершего дросселя.
+type AlertLock = Pick<
+  typeof import("#lib/fs-atomic.ts"),
+  "acquireFileLockSync" | "releaseFileLock"
+>;
+let alertLockLib: AlertLock | null | undefined;
+function alertLock(): AlertLock | null {
+  if (alertLockLib === undefined)
+    try {
+      alertLockLib = createRequire(import.meta.url)(
+        "#lib/fs-atomic.ts",
+      ) as AlertLock;
+    } catch {
+      alertLockLib = null;
+    }
+  return alertLockLib;
+}
+/** Сколько ждать чужую запись состояния: сама запись — миллисекунды. */
+const ALERT_LOCK_WAIT_MS = 1_000;
+
+/**
+ * Одна правка состояния дросселя под замком: прочитать, поменять, записать. `change` отвечает,
+ * есть ли что писать. Замок не взят или запись не прошла — false. `afterRead` — шов теста
+ * (второй писатель между чтением и записью).
+ */
+export function updateAlertState(
+  dataDir: string,
+  change: (state: AlertState) => boolean,
+  afterRead?: () => void,
+): boolean {
+  const lock = lockAlertState(dataDir);
+  if (lock === "refused") return false;
+  try {
+    const state = readAlertState(dataDir);
+    afterRead?.();
+    return change(state) ? writeAlertState(dataDir, state) : true;
+  } finally {
+    if (lock !== null) alertLock()?.releaseFileLock(lock);
+  }
+}
+
+/** Замок состояния дросселя; null — без замка (нет authored tree), refused — не взят. */
+function lockAlertState(
+  dataDir: string,
+):
+  NonNullable<ReturnType<AlertLock["acquireFileLockSync"]>> | null | "refused" {
+  const lib = alertLock();
+  if (lib === null) return null;
+  try {
+    const lock = lib.acquireFileLockSync(join(dataDir, "alert-state.lock"), {
+      timeoutMs: ALERT_LOCK_WAIT_MS,
+    });
+    if (lock !== null) return lock;
+    console.error("[notice-policy] the alert state is busy, not recorded");
+  } catch (error) {
+    console.error("[notice-policy] could not lock the alert state:", error);
+  }
+  return "refused";
+}
+
+/**
+ * Отметка дросселя: алерт с этим существом сказан сейчас. Одна запись на alertOnce и на сбой,
+ * доставленный Watch (scripts/proactive/tick.ts); false — не записалась.
+ */
+export function recordAlert(
+  dataDir: string,
+  key: string,
+  essence: string,
+  now: number = Date.now(),
+): boolean {
+  return updateAlertState(dataDir, (state) => {
+    state[key] = { essence, lastSentAt: now };
+    return true;
+  });
 }
 
 /**
@@ -518,16 +601,17 @@ export async function alertOnce(
   if (!alertDue(dataDir, key, essence, Date.now(), repeatMs))
     return "throttled";
   if (!(await send())) return "failed";
-  const state = readAlertState(dataDir);
-  state[key] = { essence, lastSentAt: Date.now() };
-  writeAlertState(dataDir, state);
+  recordAlert(dataDir, key, essence);
   return "sent";
 }
 
 /** Проблема ушла: забыть её, чтобы завтрашний рецидив заговорил сразу, а не через неделю. */
 export function alertResolved(dataDir: string, key: string): void {
-  const state = readAlertState(dataDir);
-  if (!(key in state)) return; // нечего забывать — и незачем трогать файл
-  delete state[key];
-  writeAlertState(dataDir, state);
+  // Без записи нечего забывать — и незачем ни брать замок, ни трогать файл.
+  if (!(key in readAlertState(dataDir))) return;
+  updateAlertState(dataDir, (state) => {
+    if (!(key in state)) return false;
+    delete state[key];
+    return true;
+  });
 }

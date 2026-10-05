@@ -9,11 +9,15 @@ import {
   usageRecord,
   type ParentLike,
 } from "../lib/usage.js";
-import { rearmContextFill, recordStepContext } from "../lib/context-fill.js";
+import {
+  beginIdleCompaction,
+  completeIdleCompaction,
+  recordStepInput,
+} from "../lib/idle-compaction.js";
 
 // Учёт фактического расхода токенов. ОДИН хук ловит весь расход одного eve-агента без
 // двойного счёта: основной Telegram Channel и фоновые джобы через eve/client —
-// daily-digest, memory rollup (kind="http"). Шаги субагента (planner) приходят завёрнутыми
+// ход Watch и Brief, memory rollup (kind="http"). Шаги субагента (planner) приходят завёрнутыми
 // в "subagent.event" → слушаем оба события. Пишем по строке на шаг в data/usage.jsonl;
 // читают мост (/usage) и CLI (`iva usage`).
 //
@@ -83,17 +87,22 @@ export default defineHook({
     "step.completed": (event, ctx) => {
       // Ребёнок встроенного `agent` пишет свои шаги сам (channel.kind = subagent) под своей
       // сессией; связь с ходом родителя eve отдаёт в ctx.session.parent.
+      // Вход шага для свёртки между ходами — до записи расхода: сбой файла расхода не
+      // отменяет решение о свёртке. Счёт ведётся только у сессии, открытой Telegram-каналом;
+      // ребёнок встроенного agent идёт под своей сессией.
+      recordStepInput(ctx.session.id, stepInputTokens(event.data.usage));
       record(event.data, {
         sessionId: ctx.session.id,
         source: ctx.channel.kind ?? "unknown",
         parent: ctx.session.parent,
       });
-      // Размер контекста для подсказки «нажмите /new»: хранилище обновляет только сессию,
-      // открытую Telegram-каналом; ребёнок встроенного agent идёт под своей сессией.
-      recordStepContext(ctx.session.id, stepInputTokens(event.data.usage));
     },
-    // eve сжал историю сессии: подсказка может прозвучать снова с первого уровня.
-    "compaction.completed": (_event, ctx) => rearmContextFill(ctx.session.id),
+    // eve начал свёртку: между ходами чат на это время должен быть занят.
+    "compaction.requested": (_event, ctx) =>
+      beginIdleCompaction(ctx.session.id),
+    // eve довёл свёртку до конца (канал Telegram этого события не получает).
+    "compaction.completed": (_event, ctx) =>
+      completeIdleCompaction(ctx.session.id),
     // Шаги инлайн-субагента (planner) — иначе его токены потерялись бы.
     //
     // turnId субагента брать НЕЛЬЗЯ: eve нумерует ходы как turn_<sequence> внутри каждой

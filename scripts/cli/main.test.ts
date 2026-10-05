@@ -180,6 +180,8 @@ void test("main composition exposes the exact legacy command key set without exe
     "remind",
     "jobs",
     "post",
+    "proactive",
+    "signal",
     "start",
     "stop",
     "logs",
