@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   telegramChannel,
   type TelegramChannelState,
@@ -5,11 +6,17 @@ import {
   type TelegramMessageBody,
 } from "eve/channels/telegram";
 import { POST } from "eve/channels";
+import {
+  flushSettledTelegramQuestions,
+  postTelegramQuestion,
+  settleTelegramQuestions,
+} from "../lib/telegram-question.ts";
 // Outbox — ЕДИНЫЙ шов наружу (тот же, через который уходят ночные отчёты cron):
 // внутри него outbound-Gate, выбор rich/HTML, нарезка на чанки и plain-фолбэк.
 import {
   noticeSender,
   sendThroughOutbox,
+  type NoticeSend,
   type OutboxAck,
   type OutboxTransport,
 } from "../lib/outbox.js";
@@ -22,7 +29,11 @@ import {
 // Inbound-пайплайн — единственный вход внутрь: allowlist, решение о диспатче,
 // запись в Vault, медиа со зрением и транскрипцией, inbound-Gate и контекст хода.
 // Канал приносит ему эффекты и сам про разбор входящего ничего не знает.
-import { runTelegramInbound } from "../lib/telegram-inbound.js";
+import {
+  runTelegramInbound,
+  type TelegramInboundMessage,
+} from "../lib/telegram-inbound.js";
+import { mediaFromRaw } from "../lib/telegram-parts.js";
 import { traceOutbox } from "../lib/trace.js";
 import { chatModelSeesImages, describeImage } from "../vision.js";
 import { transcribe } from "../transcribe.js";
@@ -36,6 +47,7 @@ import {
   TELEGRAM_STOP_CALLBACK,
 } from "../lib/telegram-status-message.js";
 import { notifyTelegramFailure } from "../lib/telegram-failure-notice.js";
+import { rememberTurnQuestion, turnQuestion } from "../lib/turn-question.js";
 // Состояние «идёт ли ход» — per-chat файлы data/run-status.d с мостом telegram-poll.mjs:
 // мост по ним буферизует входящие, канал хранит sessionId/turnId для отмены.
 import {
@@ -75,6 +87,8 @@ import {
 import {
   abandonTelegramEarlyStatus,
   chatTakeOverPatch,
+  detachQueuedSignTime,
+  dropQueuedStatus,
   emitTelegramTurnLatency,
   markTelegramFirstOutput,
   markTelegramTurnAlive,
@@ -162,9 +176,12 @@ export function outboxTransport(
         res.status,
         JSON.stringify(res.body).slice(0, 300),
       );
+      // Причина Telegram (BUTTON_DATA_INVALID и т. п.) идёт в Trace вместе с кодом.
+      const reason = (res.body as { description?: unknown } | null)
+        ?.description;
       return {
         ok: false,
-        error: `sendRichMessage ${res.status}`,
+        error: `sendRichMessage ${res.status}${typeof reason === "string" ? `: ${reason}` : ""}`,
         retryPlain: false,
       };
     } catch (err) {
@@ -187,6 +204,59 @@ export function outboxTransport(
                 retryPlain: false,
               };
   return transport;
+}
+
+// Вопрос хода для сообщения об обрыве (turn-question.ts): текст принятого сообщения чата и
+// метка вложения. Голос и фото без подписи стирают прежний вопрос.
+export async function rememberAccepted<T>(
+  chatKey: string,
+  message: TelegramInboundMessage,
+  turn: Promise<T | null>,
+): Promise<T | null> {
+  const accepted = await turn;
+  if (accepted !== null)
+    rememberTurnQuestion(chatKey, {
+      text: message.text || message.caption,
+      media:
+        message.attachments.length > 0 || mediaFromRaw(message.raw) !== null,
+    });
+  return accepted;
+}
+
+// Что сообщение об обрыве знает о вопросе. Чат не личный или тип неизвестен — цитаты нет:
+// её увидели бы все участники.
+function chatQuestion(channel: {
+  telegram: Pick<TelegramHandle, "chatId" | "messageThreadId">;
+  state: Pick<TelegramChannelState, "chatType">;
+}): { question?: string; media?: boolean; group: boolean } {
+  const tg = channel.telegram;
+  const group = channel.state.chatType !== "private";
+  const asked = tg.chatId
+    ? turnQuestion(chatKeyOf(tg.chatId, tg.messageThreadId))
+    : undefined;
+  return asked === undefined
+    ? { group }
+    : { question: asked.text, media: asked.media, group };
+}
+
+// Сообщение о сбое хода. Простой текст уходит одним sendMessage, как раньше; текст с кнопкой
+// «Повторить» (обрыв посреди ответа) — швом Outbox, потому что кнопка живёт только в
+// rich-сообщении (ADR-0015). Гейт стоит на обоих путях: noticeSender и сам шов.
+function failureSender(
+  tg: Pick<
+    TelegramHandle,
+    "chatId" | "messageThreadId" | "request" | "post" | "sendMessage"
+  >,
+): NoticeSend {
+  return noticeSender(async (text) => {
+    if (!hasRichButtons(text)) return tg.sendMessage(text);
+    const sent = await sendThroughOutbox(
+      text,
+      outboxTransport(tg, TELEGRAM_RICH_REPLIES),
+    );
+    if (!sent.ok) throw new Error(sent.error);
+    return sent;
+  });
 }
 
 // Пульс живого хода в run-status: без него жнец моста снимал молчаливый длинный ход
@@ -293,6 +363,34 @@ const telegram = telegramChannel({
     });
   },
   events: {
+    async "input.requested"(data, channel) {
+      for (const request of data.requests)
+        await postTelegramQuestion(request, channel.state, channel.telegram, {
+          rich: TELEGRAM_RICH_REPLIES === "auto",
+          continuation: channel.continuation,
+        });
+    },
+    // Следующий ход продолжит ответ на вопрос, а не сообщение со знаком очереди: время
+    // прихода того сообщения ему не принадлежит (agent/lib/telegram-turn-start.ts).
+    async "input.resolved"(data, channel) {
+      try {
+        detachQueuedSignTime({
+          chatKey: chatKeyOf(
+            channel.telegram.chatId,
+            channel.telegram.messageThreadId,
+          ),
+          getStatusImpl: getChatStatus,
+          setStatusIfImpl: setChatStatusIf,
+        });
+      } catch (error) {
+        console.error("[telegram] знак очереди не отвязан от ответа:", error);
+      }
+      await settleTelegramQuestions(
+        data.resolutions,
+        channel.state,
+        channel.telegram,
+      );
+    },
     // Начало хода: сначала публикуем running, затем отправляем медленное статус-сообщение.
     // FIFO-мост не должен успеть принять следующую голову, пока Bot API отвечает.
     async "turn.started"(data, channel, ctx) {
@@ -315,13 +413,18 @@ const telegram = telegramChannel({
         onWorkingStatusError: (error) =>
           console.error("[telegram] статус-сообщение не отправилось:", error),
       });
+      await flushSettledTelegramQuestions(channel.state, channel.telegram);
     },
     // Решение о свёртке от уборки статуса не зависит: её сбой не отменяет пересказ.
     async "turn.completed"(_data, channel, ctx) {
       try {
-        await finishTelegramStatus(channel, ctx.session.id, "completed");
+        await flushSettledTelegramQuestions(channel.state, channel.telegram);
       } finally {
-        closeIdleCompactionTurn(ctx.session.id, providerConfig.contextWindow);
+        try {
+          await finishTelegramStatus(channel, ctx.session.id, "completed");
+        } finally {
+          closeIdleCompactionTurn(ctx.session.id, providerConfig.contextWindow);
+        }
       }
     },
     // Отмена во время пересказа между ходами (/stop) — не отмена хода: чат просто свободен,
@@ -374,6 +477,9 @@ const telegram = telegramChannel({
           releaseImpl: () => releaseCompactionClaim(chatKey, sessionId),
         });
       }
+      // The existing compaction lifecycle claims the chat first. Preview delivery
+      // cannot reopen it or replay the accepted answer while compaction is queued.
+      await flushSettledTelegramQuestions(channel.state, channel.telegram);
     },
     "message.appended"(_data, channel, ctx) {
       markTelegramFirstOutput({
@@ -455,16 +561,30 @@ const telegram = telegramChannel({
       await notifyTelegramFailure(
         ctx.session.id,
         data.turnId,
-        data,
-        noticeSender((text) => channel.telegram.sendMessage(text)),
+        { ...data, ...chatQuestion(channel) },
+        failureSender(channel.telegram),
       );
     },
     // У terminal-сбоя eve следом за turn.failed шлёт session.failed без ctx.
     // Повторно прибираем run-status по sessionId из payload и не дублируем уведомление.
+    // Сессия умерла: её буфер входа не начнёт хода, и её знак очереди снимается здесь.
+    // Знак, вставший за ходом другой сессии, ждёт своего хода.
     async "session.failed"(data, channel) {
-      if (channel.telegram.chatId) {
+      const tg = channel.telegram;
+      if (tg.chatId) {
         try {
           await finishTelegramStatus(channel, data.sessionId, "failed");
+          await dropQueuedStatus({
+            chatKey: chatKeyOf(tg.chatId, tg.messageThreadId),
+            sessionId: data.sessionId,
+            getStatusImpl: getChatStatus,
+            setStatusIfImpl: setChatStatusIf,
+            removeWorkingStatusImpl: (messageId) =>
+              tg.request("deleteMessage", {
+                chat_id: tg.chatId,
+                message_id: messageId,
+              }),
+          });
         } catch {
           /* best-effort: отсутствие chat-state не должно ломать уведомление */
         }
@@ -472,8 +592,8 @@ const telegram = telegramChannel({
       await notifyTelegramFailure(
         data.sessionId,
         null,
-        data,
-        noticeSender((text) => channel.telegram.sendMessage(text)),
+        { ...data, ...chatQuestion(channel) },
+        failureSender(channel.telegram),
       );
     },
   },
@@ -481,59 +601,65 @@ const telegram = telegramChannel({
   onMessage: wrapTelegramQueueOnMessage((ctx, message) => {
     const tg = ctx.telegram;
     const chatKey = chatKeyOf(message.chat.id, message.messageThreadId);
-    let earlyIngressId: string | null = null;
-    return runTelegramInbound(message, {
-      botUsername: tg.botUsername,
-      request: (method, body) => tg.request(method, body),
-      sendMessage: noticeSender((text) => tg.sendMessage(text)),
-      startTyping: () => tg.startTyping(),
-      describeImage,
-      chatModelSeesImages,
-      transcribe,
-      onAccepted: async () => {
-        earlyIngressId = await publishTelegramEarlyStatus({
-          chatKey,
-          staleMs: RUN_STALE_MS,
-          getStatusImpl: getChatStatus,
-          setStatusIfImpl: setChatStatusIf,
-          sendWorkingStatusImpl: (options) => sendWorkingStatus(tg, options),
-          removeWorkingStatusImpl: (messageId) =>
-            tg.request("deleteMessage", {
-              chat_id: tg.chatId,
-              message_id: messageId,
-            }),
-          onWorkingStatusError: (error) =>
-            console.error(
-              "[telegram] раннее статус-сообщение не отправилось:",
-              error,
-            ),
-        });
-      },
-      onAbandoned: async () => {
-        if (earlyIngressId === null) return;
-        await abandonTelegramEarlyStatus({
-          chatKey,
-          ingressId: earlyIngressId,
-          getStatusImpl: getChatStatus,
-          setStatusIfImpl: setChatStatusIf,
-          removeWorkingStatusImpl: (messageId) =>
-            tg.request("deleteMessage", {
-              chat_id: tg.chatId,
-              message_id: messageId,
-            }),
-          onWorkingStatusError: (error) =>
-            console.error(
-              "[telegram] раннее статус-сообщение не удалилось:",
-              error,
-            ),
-        });
-      },
-      consumeCancelledMark: () => {
-        if (!getChatStatus(chatKey)?.wasCancelled) return false;
-        setChatStatus(chatKey, { wasCancelled: null });
-        return true;
-      },
-    });
+    // Ключ сообщения: под ним стоит его ранний статус или знак очереди за живым ходом,
+    // и по нему же снимается то или другое, если pipeline сообщение бросит.
+    const ingressId = randomUUID();
+    return rememberAccepted(
+      chatKey,
+      message,
+      runTelegramInbound(message, {
+        botUsername: tg.botUsername,
+        request: (method, body) => tg.request(method, body),
+        sendMessage: noticeSender((text) => tg.sendMessage(text)),
+        startTyping: () => tg.startTyping(),
+        describeImage,
+        chatModelSeesImages,
+        transcribe,
+        onAccepted: async () => {
+          await publishTelegramEarlyStatus({
+            chatKey,
+            ingressId,
+            staleMs: RUN_STALE_MS,
+            getStatusImpl: getChatStatus,
+            setStatusIfImpl: setChatStatusIf,
+            sendWorkingStatusImpl: (options) => sendWorkingStatus(tg, options),
+            removeWorkingStatusImpl: (messageId) =>
+              tg.request("deleteMessage", {
+                chat_id: tg.chatId,
+                message_id: messageId,
+              }),
+            onWorkingStatusError: (error) =>
+              console.error(
+                "[telegram] раннее статус-сообщение не отправилось:",
+                error,
+              ),
+          });
+        },
+        onAbandoned: async () => {
+          await abandonTelegramEarlyStatus({
+            chatKey,
+            ingressId,
+            getStatusImpl: getChatStatus,
+            setStatusIfImpl: setChatStatusIf,
+            removeWorkingStatusImpl: (messageId) =>
+              tg.request("deleteMessage", {
+                chat_id: tg.chatId,
+                message_id: messageId,
+              }),
+            onWorkingStatusError: (error) =>
+              console.error(
+                "[telegram] раннее статус-сообщение не удалилось:",
+                error,
+              ),
+          });
+        },
+        consumeCancelledMark: () => {
+          if (!getChatStatus(chatKey)?.wasCancelled) return false;
+          setChatStatus(chatKey, { wasCancelled: null });
+          return true;
+        },
+      }),
+    );
   }),
 });
 

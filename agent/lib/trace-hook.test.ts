@@ -19,6 +19,7 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import fc from "fast-check";
 
 const root = mkdtempSync(join(tmpdir(), "iva-trace-hook-"));
@@ -29,7 +30,13 @@ const DATA = process.env.ASSISTANT_DATA_DIR;
 // Хук импортирует "../lib/trace.js" (в проде специфкатор переписывает eve build) —
 // голому node это переписывает тот же резолвер, что и другим тестам authored-дерева.
 await import("../../scripts/lib/ts-esm-hooks.ts");
-const { traceDay, traceFilePath } = await import("./trace.ts");
+const {
+  traceDay,
+  traceFilePath,
+  TRACE_CONTENT_LIMIT,
+  TRACE_LINE_LIMIT,
+  TRACE_TRUNCATION_MARKER,
+} = await import("./trace.ts");
 const { getChatStatus, hasTelegramPendingInputRequests, setChatStatus } =
   await import("./run-status.ts");
 const traceHookModule = await import("../hooks/trace.ts");
@@ -289,10 +296,40 @@ void test("сбой хода пишется кодом в data и текстом
   });
 });
 
-void test("captureContent=false оставляет от события имена и размеры", (t) => {
+// Error id в чат больше не идёт: найти сбой владельцу и разработчику помогает журнал, поэтому
+// id и число запросов к модели лежат в data и без тумблера содержимого.
+void test("Error id, попытки и обрыв посреди ответа лежат в data даже без содержимого", (t) => {
   const settings = join(DATA, "settings.json");
   writeFileSync(settings, JSON.stringify({ captureContent: false }));
   t.after(() => rmSync(settings, { force: true }));
+  feed({
+    type: "turn.failed",
+    data: {
+      sequence: 10,
+      turnId: "turn_3",
+      code: "MODEL_CALL_FAILED",
+      message: "api.anthropic.com did not finish the response",
+      details: { errorId: "e-1", attempts: 3, answerStarted: true },
+    },
+  });
+  const failed = journal().at(-1);
+  const data = failed?.data as Record<string, unknown> | undefined;
+  assert.equal(data?.errorId, "e-1");
+  assert.equal(data?.attempts, 3);
+  assert.equal(data?.answerStarted, true);
+  assert.equal(failed?.content, undefined);
+});
+
+void test("captureContent=false оставляет от события имена, класс сбоя и размеры", (t) => {
+  const settings = join(DATA, "settings.json");
+  writeFileSync(settings, JSON.stringify({ captureContent: false }));
+  t.after(() => rmSync(settings, { force: true }));
+  const output = {
+    stdout: "",
+    stderr: "секрет в выводе\n",
+    exitCode: 2,
+    cwd: "/srv",
+  };
 
   feed({
     type: "action.result",
@@ -305,7 +342,7 @@ void test("captureContent=false оставляет от события имен�
         callId: "call_2",
         kind: "tool-result",
         toolName: "bash",
-        output: "секрет в выводе",
+        output,
       },
     },
   });
@@ -317,8 +354,338 @@ void test("captureContent=false оставляет от события имен�
     status: "completed",
     callId: "call_2",
     toolName: "bash",
+    exitCode: 2,
+    failure: "exit 2",
+    outChars: JSON.stringify(output).length,
+    resultChars: JSON.stringify({
+      exitCode: 2,
+      stderr: output.stderr,
+      stdout: "",
+      cwd: "/srv",
+    }).length,
   });
   assert.equal(JSON.stringify(event).includes("секрет"), false);
+});
+
+// --- Результат инструмента: строка JSON и класс сбоя (docs/trace.md, `failure`) ---
+
+type ResultEvent = { type: string; data: Record<string, unknown> };
+// Формы событий — из настоящего eve: статус и error ставит его createActionResultEvent.
+const eveRoot = dirname(
+  createRequire(import.meta.url).resolve("eve/package.json"),
+);
+const { createActionResultEvent } = (await import(
+  pathToFileURL(join(eveRoot, "dist/src/protocol/message.js")).href
+)) as {
+  createActionResultEvent: (input: {
+    result: Record<string, unknown>;
+    sequence: number;
+    stepIndex: number;
+    turnId: string;
+    rejected?: boolean;
+  }) => ResultEvent;
+};
+
+function written(
+  output: unknown,
+  extra: { isError?: boolean; rejected?: boolean } = {},
+): Record<string, unknown> {
+  feed(
+    createActionResultEvent({
+      result: {
+        callId: "call_r",
+        toolName: "bash",
+        output,
+        ...(extra.isError ? { isError: true } : {}),
+      },
+      sequence: 1,
+      stepIndex: 0,
+      turnId: "turn_3",
+      rejected: extra.rejected,
+    }),
+  );
+  return journal().at(-1)?.data as Record<string, unknown>;
+}
+
+const bash = (fields: Record<string, unknown>) => ({
+  stdout: "",
+  stderr: "",
+  exitCode: 0,
+  cwd: "/srv",
+  ...fields,
+});
+
+void test("класс сбоя вызова — по таблице хука, первое сработавшее условие", () => {
+  const cases: [string, unknown, Parameters<typeof written>[1], unknown][] = [
+    ["ответ помечен isError", "boom", { isError: true }, "isError"],
+    [
+      "isError в самом ответе (MCP)",
+      { content: [{ type: "text", text: "x" }], isError: true },
+      {},
+      "isError",
+    ],
+    [
+      "ответ назвал code и message",
+      { code: "E_X", message: "bad" },
+      {},
+      "status:failed",
+    ],
+    ["ok:false", { ok: false, reason: "no" }, {}, "ok:false"],
+    ["error объектом", { error: { message: "m" } }, {}, "error"],
+    ["error из пробелов — не сбой", { error: "  " }, {}, undefined],
+    ["таймаут", bash({ timedOut: true, exitCode: 124 }), {}, "timeout"],
+    [
+      "код выхода со stderr",
+      bash({ exitCode: 2, stderr: "ls: No such file\n" }),
+      {},
+      "exit 2",
+    ],
+    [
+      "grep с кодом 1 и пустым stderr",
+      bash({ exitCode: 1, stderr: " \n" }),
+      {},
+      undefined,
+    ],
+    [
+      "Стоп владельца",
+      bash({ exitCode: 1, stderr: "killed", cancelled: true }),
+      {},
+      undefined,
+    ],
+    ["отказ на подтверждении", { ok: false }, { rejected: true }, undefined],
+    ["обычный ответ", "3 карточки", {}, undefined],
+  ];
+  for (const [label, output, extra, failure] of cases)
+    assert.equal(written(output, extra).failure, failure, label);
+  assert.equal(
+    written("boom", { isError: true }).errorCode,
+    "ACTION_RESULT_FAILED",
+  );
+  assert.equal(written({ code: "E_X", message: "bad" }).errorCode, "E_X");
+  assert.equal(written({ ok: false }, { rejected: true }).status, "rejected");
+});
+
+void test("ответ пишется строкой JSON: без …[deep], с ключами сбоя в начале", () => {
+  const deep = {
+    ok: true,
+    hits: [{ card: { meta: { tags: { a: { b: "глубоко" } } } } }],
+  };
+  const memory = written(deep);
+  assert.equal(memory.result, JSON.stringify(deep));
+  assert.equal(memory.outChars, JSON.stringify(deep).length);
+
+  const long = { data: "x".repeat(10_000), error: "late" };
+  const answer = written(long);
+  assert.ok(String(answer.result).startsWith('{"error":"late","data":"xxx'));
+  assert.ok(String(answer.result).endsWith(TRACE_TRUNCATION_MARKER));
+  assert.equal(answer.outChars, JSON.stringify(long).length);
+});
+
+void test("у bash хранится конец вывода, код и stderr — в начале", () => {
+  const stdout = `${Array.from({ length: 8000 }, (_, at) => String(at + 1)).join("\n")}\n`;
+  assert.ok(stdout.length > 38_000);
+  const output = bash({ stdout, stderr: "warn\n", truncated: true });
+  const data = written(output);
+  const result = String(data.result);
+  assert.ok(result.length <= TRACE_CONTENT_LIMIT);
+  assert.ok(
+    result.startsWith(
+      '{"exitCode":0,"truncated":true,"stderr":"warn\\n","stdout":',
+    ),
+  );
+  const parsed = JSON.parse(result) as Record<string, string>;
+  assert.ok(parsed.stdout.startsWith(TRACE_TRUNCATION_MARKER));
+  assert.ok(parsed.stdout.endsWith("\n7999\n8000\n"));
+  assert.ok(
+    stdout.endsWith(parsed.stdout.slice(TRACE_TRUNCATION_MARKER.length)),
+  );
+  assert.equal(parsed.cwd, "/srv");
+  assert.equal(data.outChars, JSON.stringify(output).length);
+  assert.equal(data.exitCode, 0);
+});
+
+void test("error, равный ответу, второй копией не пишется", () => {
+  assert.equal("error" in written("boom", { isError: true }), false);
+  assert.equal("error" in written({ x: 1 }, { isError: true }), false);
+  const own = written({ code: "E_X", message: "своя причина", x: 1 });
+  assert.equal(own.error, "своя причина");
+});
+
+void test("у ответа load_skill и субагента в data остаётся, чей это вызов", () => {
+  const event = (result: Record<string, unknown>) => {
+    feed(
+      createActionResultEvent({
+        result,
+        sequence: 1,
+        stepIndex: 0,
+        turnId: "turn_3",
+      }),
+    );
+    return journal().at(-1)?.data as Record<string, unknown>;
+  };
+  const skill = event({
+    callId: "c9",
+    kind: "load-skill-result",
+    name: "insgiht",
+    isError: true,
+    output: "Skill not found",
+  });
+  assert.equal(skill.name, "insgiht");
+  assert.equal(skill.failure, "isError");
+  const child = event({
+    callId: "c10",
+    kind: "subagent-result",
+    origin: "dispatch",
+    subagentName: "researcher",
+    isError: true,
+    output: "no such agent",
+  });
+  assert.equal(child.subagentName, "researcher");
+  assert.equal(child.failure, "isError");
+});
+
+void test("строковый ответ с JSON-ошибкой внутри помечается, как его видит сторож повторов", () => {
+  assert.equal(
+    written(JSON.stringify({ ok: false, error: "quota" })).failure,
+    "ok:false",
+  );
+  assert.equal(
+    written(` ${JSON.stringify({ error: "denied" })}\n`).failure,
+    "error",
+  );
+  assert.equal(written('{"ok":true}').failure, undefined);
+  assert.equal(written("{не JSON").failure, undefined);
+});
+
+void test("stderr, который влезает в поле, пишется целиком; огромный cwd не метит пустой stdout", () => {
+  const trace = `Traceback (most recent call last):\n${'  File "x.py", line 1\n'.repeat(140)}ValueError: boom\n`;
+  assert.ok(trace.length > 3000);
+  const whole = JSON.parse(
+    String(written(bash({ exitCode: 1, stderr: trace })).result),
+  ) as Record<string, string>;
+  assert.equal(whole.stderr, trace);
+
+  // Поле дорежет писатель с конца, поэтому строка уже не JSON: смотрим на её начало.
+  const wide = String(
+    written(bash({ exitCode: 1, stderr: "e\n", cwd: "d".repeat(5000) })).result,
+  );
+  assert.ok(
+    wide.startsWith('{"exitCode":1,"stderr":"e\\n","stdout":"","cwd":"ddd'),
+    wide.slice(0, 80),
+  );
+});
+
+void test("эмодзи в хвосте bash стоят столько, сколько занимают в JSON", () => {
+  const stdout = "😀\u0000\n".repeat(12_000);
+  const result = String(written(bash({ exitCode: 0, stdout })).result);
+  assert.ok(result.length <= TRACE_CONTENT_LIMIT);
+  assert.ok(
+    result.length > TRACE_CONTENT_LIMIT - 20,
+    `хвост занял ${result.length} из ${TRACE_CONTENT_LIMIT}`,
+  );
+});
+
+void test("ответ, который не сериализуется, идёт прежним путём и ход не падает", () => {
+  const cycle: Record<string, unknown> = { name: "cycle" };
+  cycle.self = cycle;
+  const looped = written(cycle);
+  assert.equal(looped.toolName, "bash");
+  assert.equal(typeof looped.result, "object");
+  assert.equal("outChars" in looped, false);
+
+  const poisoned = written({
+    toJSON() {
+      throw new Error("toJSON");
+    },
+  });
+  assert.equal(poisoned.toolName, "bash");
+});
+
+const FAILURE_CLASS =
+  /^(isError|status:failed|ok:false|error|timeout|exit -?\d+)$/u;
+const HOOK_PBT_SEED = 2_610_060_412;
+void test(`любой ответ: хук не бросает, класс сбоя из списка (fast-check seed ${HOOK_PBT_SEED})`, () => {
+  const output = fc.oneof(
+    fc.anything({ maxDepth: 4 }),
+    fc.record({
+      stdout: fc.string(),
+      stderr: fc.string(),
+      exitCode: fc.integer({ min: -2, max: 255 }),
+      cwd: fc.string(),
+      cancelled: fc.boolean(),
+      timedOut: fc.boolean(),
+    }),
+  );
+  fc.assert(
+    fc.property(
+      output,
+      fc.constantFrom("completed", "failed", "rejected"),
+      (value, status) => {
+        feed({
+          type: "action.result",
+          data: {
+            sequence: 1,
+            stepIndex: 0,
+            turnId: "turn_3",
+            status,
+            result: { callId: "c", toolName: "t", output: value },
+          },
+        });
+        const raw = readFileSync(traceFilePath(traceDay(), DATA), "utf8")
+          .trimEnd()
+          .split("\n")
+          .at(-1);
+        assert.ok(Buffer.byteLength(raw ?? "", "utf8") <= TRACE_LINE_LIMIT);
+        const data = (
+          JSON.parse(raw ?? "") as { data: Record<string, unknown> }
+        ).data;
+        assert.equal(data.toolName, "t");
+        if (data.failure !== undefined) {
+          assert.equal(typeof data.failure, "string");
+          assert.match(data.failure as string, FAILURE_CLASS);
+        }
+      },
+    ),
+    { seed: HOOK_PBT_SEED, numRuns: 200 },
+  );
+});
+
+const TAIL_PBT_SEED = 2_610_060_413;
+void test(`хвост bash: поле не длиннее размера, код цел, stdout — суффикс (fast-check seed ${TAIL_PBT_SEED})`, () => {
+  const stream = fc.oneof(
+    fc.string({ unit: "grapheme", maxLength: 3000 }),
+    fc.string({ unit: "binary", maxLength: 2000 }),
+    fc
+      .tuple(
+        fc.integer({ min: 1, max: 12_000 }),
+        fc.constantFrom("я", "\n", "\u0000", "🙂", "\ud800"),
+      )
+      .map(([size, unit]) => unit.repeat(size)),
+  );
+  fc.assert(
+    fc.property(
+      stream,
+      stream,
+      fc.integer({ min: -1, max: 255 }),
+      (stdout, stderr, exitCode) => {
+        const result = String(
+          written(bash({ stdout, stderr, exitCode })).result,
+        );
+        assert.ok(result.length <= TRACE_CONTENT_LIMIT);
+        const parsed = JSON.parse(result) as Record<string, unknown>;
+        assert.equal(parsed.exitCode, exitCode);
+        const kept = String(parsed.stdout);
+        assert.ok(
+          stdout.endsWith(
+            kept.startsWith(TRACE_TRUNCATION_MARKER) && kept !== stdout
+              ? kept.slice(TRACE_TRUNCATION_MARKER.length)
+              : kept,
+          ),
+        );
+      },
+    ),
+    { seed: TAIL_PBT_SEED, numRuns: 100 },
+  );
 });
 
 void test("хук не роняет ход ни на каком событии", (t) => {

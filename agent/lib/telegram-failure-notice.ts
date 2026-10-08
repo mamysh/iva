@@ -3,14 +3,24 @@
 // один раз. Заявка на уведомление берётся по сессии и ходу и живёт TTL; не ушедшее
 // сообщение освобождает заявку, чтобы следующее событие всё-таки объяснило сбой.
 //
-// Это служебная реплика канала, а не текст модели: мимо Outbox, но не мимо гейта —
-// текст провайдера и errorId здесь runtime-контент. Отправку модуль поэтому просит
-// брендованную (NoticeSend): гейт стоит на вызове Bot API, а не тут (правило в outbox.ts).
+// Это служебная реплика канала, а не текст модели, но не мимо гейта: срок сброса лимита и
+// путь до поля схемы взяты из ответа провайдера. Отправку модуль поэтому просит брендованную
+// (NoticeSend): гейт стоит на вызове Bot API, а не тут (правило в outbox.ts). Реплика с
+// кнопкой «Повторить» канал везёт швом Outbox: кнопка живёт только в rich-сообщении.
 import { humanizeProviderError } from "./error-humanizer.ts";
 import { tr } from "./i18n.ts";
 import type { NoticeSend } from "./outbox.ts";
 
-export type TelegramFailureData = { message: string; details?: unknown };
+export type TelegramFailureData = {
+  message: string;
+  details?: unknown;
+  /** Последнее принятое сообщение владельца (turn-question.ts): цитата при обрыве. */
+  question?: string | undefined;
+  /** В том сообщении было вложение: просим прислать его ещё раз вместо кнопки. */
+  media?: boolean | undefined;
+  /** Групповой чат: цитата не показывается. */
+  group?: boolean | undefined;
+};
 
 type FailureNotice = { turnId: string | null; notifiedAt: number };
 
@@ -49,27 +59,21 @@ function releaseFailureNotification(sessionId: string, claim: number): void {
   }
 }
 
-function extractFailureErrorId(details: unknown): string | undefined {
-  if (
-    typeof details !== "object" ||
-    details === null ||
-    Array.isArray(details)
-  ) {
-    return undefined;
-  }
-  const errorId = (details as Record<string, unknown>).errorId;
-  return typeof errorId === "string" && errorId.length > 0
-    ? errorId
-    : undefined;
-}
-
-export function telegramFailureMessage(data: TelegramFailureData): string {
-  const text = humanizeProviderError(data);
-  const errorId = extractFailureErrorId(data.details);
-  return [
-    tr(text.en, text.ru),
-    ...(errorId ? ["", `Error id: ${errorId}`] : []),
-  ].join("\n");
+// Error id в чат не идёт: владельцу он ничего не говорит. Он остаётся в журнале сервиса
+// (eve пишет его в строке сбоя) и в Trace (agent/hooks/trace.ts выносит его из details).
+export function telegramFailureMessage(
+  data: TelegramFailureData,
+  provider: string | undefined = process.env.MODEL_PROVIDER,
+): string {
+  const text = humanizeProviderError({
+    message: data.message,
+    details: data.details,
+    question: data.question,
+    media: data.media,
+    group: data.group,
+    provider,
+  });
+  return tr(text.en, text.ru);
 }
 
 // Отправляет объяснение сбоя ровно один раз на ход: turn.failed и следующий за ним

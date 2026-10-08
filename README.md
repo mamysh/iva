@@ -59,7 +59,7 @@ The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed.
 - **Web search** — four pluggable providers: Tavily, Exa, Parallel or Brave.
 - **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs and Tasks from chat via the `gws` CLI; installed for you, with a guided key setup right in the conversation.
 - **Skills & MCP** — drop one file to add a procedure or connect an MCP server; keys stay in `.env`.
-- **Personal Telegram — userbot (beta)** — read and send from your _own_ account, not just the bot; connect by chat (QR, no terminal). Rough and buggy — opt-in, **at your own risk**. A server-side anti-ban guardrail (FloodWait compliance + randomized pacing + circuit-breaker) is enforced, not just advised. [Details](docs/userbot.md).
+- **Personal Telegram — userbot** — read and send from your _own_ account, not just the bot; connect by chat (QR, no terminal). Opt-in, **at your own risk**. A server-side anti-ban guardrail (FloodWait compliance + randomized pacing + circuit-breaker) is enforced, not just advised. [Details](docs/userbot.md).
 - **Safe to forward** — forwarded text, captions and voice transcripts pass an injection screen before the model reads them. A flagged message or transcript reaches the model tagged as data rather than as an instruction; for media captions the screen runs but the tag does not travel with it yet.
 - **Token accounting** — every model step is logged; `/usage` reports it for free.
 
@@ -85,7 +85,7 @@ Full architecture and search internals: [docs/memory.md](docs/memory.md).
 
 <img src="assets/iva-userbot.webp" alt="Your secretary inside Telegram: the userbot reads group chats from your own account, collects summaries and replies as you, guarded by a server-enforced anti-ban guardrail" width="100%">
 
-The bot is half of Telegram. The other half is your personal account: connect the userbot (beta, opt-in) and Iva works from it like a secretary — reads the group chats you never keep up with, folds them into summaries, catches the messages that actually need you, and replies as you.
+The bot is half of Telegram. The other half is your personal account: connect the userbot (opt-in) and Iva works from it like a secretary — reads the group chats you never keep up with, folds them into summaries, catches the messages that actually need you, and replies as you.
 
 - **All of Telegram** — groups, channels, unreads, search and the full history of your personal account.
 - **Onboarding in chat** — tell the bot to connect your Telegram, scan a QR. No terminal.
@@ -93,7 +93,7 @@ The bot is half of Telegram. The other half is your personal account: connect th
 - **Read-only mode** — one `.env` switch and Iva can read and search but physically cannot send.
 
 > [!WARNING]
-> Automating a personal account is against Telegram's ToS and can get the account limited or banned. The userbot is opt-in, beta, and used at your own risk — reading is far safer than sending. Details: [docs/userbot.md](docs/userbot.md).
+> Automating a personal account is against Telegram's ToS and can get the account limited or banned. The userbot is opt-in and used at your own risk — reading is far safer than sending. Details: [docs/userbot.md](docs/userbot.md).
 
 ## Security & privacy
 
@@ -171,7 +171,26 @@ Default model is deepseek-v4-pro, 131k context. On Go it runs about $14–15/mo 
 ## What's New
 
 <details>
-<summary><b>v0.4.12 · 05.10.2026 — expand the latest releases</b></summary>
+<summary><b>v0.4.14 · 08.10.2026 — expand the latest releases</b></summary>
+
+### 08.10.2026
+
+#### v0.4.14
+
+- 🔁 **Long conversations on the ChatGPT subscription work again**: Iva could not shorten a long conversation on the ChatGPT subscription, so it kept growing until it hit the model's limit and the last question went unanswered. Now Iva sums up the earlier part of the conversation in time, and you can keep talking without starting over.
+- 🧠 **Haiku 5.5 on the Claude model screen**: `/model` → Claude and setup now offer a fourth button, Haiku 5.5, the fastest model of the subscription. It handles long conversations and lets you choose how hard it thinks. If Claude Code on your server does not know it yet, the same button shows Haiku 4.5 until you update Claude Code.
+
+#### v0.4.13
+
+- 💡 **Iva brings one insight a day**: at the time you set she looks at what you keep doing by hand, builds and tries a plugin draft and sends it with «Install» and «Not now» buttons. She installs it only after your tap; «Not now» drops only that draft. Off by default: turn it on in `/menu` → Notices → Insight or with `iva proactive set insightTimes 11:30`. The run stays within its time limit, and `iva usage by-source` shows what the Brief, missed-message notices and insights cost.
+- 🔁 **A broken connection to the model no longer ends the answer**: if the connection breaks mid-answer, Iva asks the model again, up to three times, and nothing arrives twice. If that fails too, you get a message quoting your question with a «Try again» button. Failure messages are now plain: what happened and what to do, without the error text or the Error id.
+- ✅ **Buttons are clearer**: a tapped button turns green with ✅ at once, and a second tap does not send a second message. A button remembers the text of its message, so «Compose a reply» knows to whom and about what. One overly long button no longer removes the others, and question buttons disappear once your answer is accepted.
+- 👀 **«Got it» instead of «Mute this one»**: a missed-message notice now has «To tasks», «Remind later», «Got it» and «Open chat». «Got it» removes the notice at once, and the same chat or letter comes back when something new arrives there; to stop notices about someone, say so in the chat. «Open chat» takes you to the chat or the letter in one tap.
+- 🗣 **Iva writes more plainly**: first what happened and what to do, without technical details, tables or code. «All fine» is one sentence, details on request.
+- ⏳ **A message waiting its turn shows the loader at once**: while Iva answers one message, the next one gets «Working…» right away, so she no longer looks stuck.
+- 🔎 **Failures are easier to look into**: `iva trace show` opens exactly one turn, the turn journal keeps tool errors for 30 days, and Insight reviews the day's failures and offers a plugin fix or a ready issue for the developer, which you send yourself. `iva diagnose` no longer restarts anything, and `diagnose-usage.sh` no longer takes the turn journal.
+- 🧩 **A broken skill no longer turns off your tools**: your own skills are not part of the version build, and if your code does not build, Iva tells you in Telegram.
+- 📡 **The userbot is no longer beta**: working from your personal Telegram account is a regular part of Iva. The account-ban warning stays.
 
 ### 05.10.2026
 
@@ -199,16 +218,6 @@ Default model is deepseek-v4-pro, 131k context. On Go it runs about $14–15/mo 
 - 🔀 **OpenCode Go models over Responses**: `OPENCODE_PROTOCOL=responses` in `.env` switches the Go text wire, with the same key and model settings. chat/completions stays the default.
 - 📝 **The nightly Report reads like a note**: 2–5 plain lines in the owner's language, built by code from the night's results. The Report is still off by default.
 - 🃏 **A Card status on the owner's word**: "the project is closed" sets the Card status at once through `write_card`, and the night of that day keeps it.
-
-### 29.09.2026
-
-#### v0.4.10
-
-- 🚑 **A tool name from Claude no longer fails the turn**: an Iva tool runs only under its exact or `mcp__iva__` name, with no guessing by case, dash or another prefix. Any other name, Claude's own `Bash` and `Read` included, returns a tool error listing the available tools, and the model goes on in the same turn.
-- 🔌 **Unparsable tool arguments on Claude no longer fail the turn**: arguments that are not JSON reach eve as sent, the model gets an input error and corrects the call in the same turn. A stream cut before the end of the message still fails.
-- ♻️ **A restart mid-reply no longer blocks the next messages**: on the next start Iva moves the interrupted workflow state to quarantine, Bridge closes the broken turn with one line and drains the saved queue, and `/new` answers without `iva reset`. A second start in a row leaves the workflow state alone, and a failed recovery is one journal line that does not keep Iva down.
-- 🔎 **File search no longer hangs the turn**: one `grep` or `glob` call stops after 20 seconds, 20 000 files or when the turn is stopped, and returns what it found with a hint to narrow the path. `node_modules`, `.git` and `*.trash-*` quarantines are skipped.
-- 🧠 **Sonnet 5.5 takes the place of Sonnet 5 on Claude**: the model screen and setup offer Fable 5.1, Opus 5.5 and Sonnet 5.5 and write `claude-sonnet-5-5` to `.env`. A Claude Code that does not know Sonnet 5.5 yet keeps Sonnet 5 on the same button, and `claude-sonnet-5` in `.env` still works. The OpenRouter list offers `anthropic/claude-sonnet-5.5`.
 
 </details>
 

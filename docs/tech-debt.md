@@ -131,9 +131,10 @@ session-retirement story, rather than leaving the override in place indefinitely
 
 `/menu` → **🔔 Notices** (`scripts/lib/menu/notices.ts`) switches the nightly memory reports
 (`memoryReports.enabled`) and **Writes on her own** — Watch and the Brief, which replaced the
-morning digest (`proactive.enabled`, ADR-0020) — so neither needs a raw `settings.json` edit.
-Both keys are read at fire time, so a tap applies on the next tick with no restart. The rules
-the screen enforces: ADR-0007 and ADR-0020.
+morning Report (`proactive.enabled`, ADR-0020) — so neither needs a raw `settings.json` edit,
+and **Insight** (`proactive.insightTimes`): a switch and three times.
+All three keys are read at fire time, so a tap applies on the next tick with no restart. The rules
+the screen enforces: ADR-0007, ADR-0020 and ADR-0022.
 
 ## 8. TypeScript-only Node source
 
@@ -265,3 +266,9 @@ creates a fresh session per turn and reads its stream from index 0, so the drain
 the prompt nonce and the foreign-result check are removed.
 
 The `ai` pin is gone: Iva used to override `ai` to 7.0.39 against eve 0.51.1's peer `ai ^7.0.82`, so eve's bundled `@ai-sdk/code-mode` (it imports `experimental_toolCaller`) did not link and any Workflow/code-mode tool would crash server start. `package.json` now asks for `ai ^7.0.82` with no override. ADR-0013 rejected the workflow-tool route for Reminders (variant C) partly on that pin; the pin no longer stands in its way, the rest of the ADR's reasoning does.
+
+## 17. Insight follow-ups for the next wave
+
+- **A code-free draft changed after the Insight message installs only from the owner's terminal**: `iva plugin propose` refuses a draft without `mcp.json` and `sh.iva/` (`scripts/cli/plugin-cli-proposal.ts`); allowing it there, checked against `expectDigest12`, gives that draft a button.
+- **A transitional update builds the Version twice**: the old CLI names the Version from a fingerprint with skills (`scripts/lib/version-update.ts`), the new `warnUnbuiltCustom` (`scripts/cli/services.ts`) compares a fingerprint without them, so installs with skills in `data/custom` get one extra rebuild and a false "run: iva update" on `iva restart`, once.
+- **A healthy `iva diagnose` prints 3–4 `! would …` lines**: `ensureBearer` and `ctx.repair()` in `scripts/cli/doctor.ts` print in read mode unconditionally; the fix needs the "repair needed" predicates of `scripts/cli/systemd.ts` and `scripts/lib/version-store.ts` exposed through `api()`.

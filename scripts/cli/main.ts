@@ -104,19 +104,19 @@ ${C.b}Commands:${C.x}
   ${C.c}iva login${C.x} [--browser]  sign in to an OpenAI subscription (ChatGPT) for MODEL_PROVIDER=codex
   ${C.c}iva rollback${C.x}       go back to the previous version (symlink flip + restart)
   ${C.c}iva doctor${C.x}         diagnose and safely auto-repair the install
-  ${C.c}iva diagnose${C.x}       collect one package of evidence for a bug report (no secrets)
+  ${C.c}iva diagnose${C.x} [--turn <session>/<turn>]  collect one package of evidence for a bug report (no secrets)
   ${C.c}iva plugin${C.x} <cmd>     plugins: add|list|update|enable|disable|remove|sync|marketplace
   ${C.c}iva status${C.x}         status of services and nightly timers
   ${C.c}iva restart${C.x}        restart the agent and Telegram bridge
   ${C.c}iva reset${C.x}          full reset: clear stuck workflows and restart
   ${C.c}iva start${C.x} / ${C.c}stop${C.x}    start / stop
   ${C.c}iva usage${C.x} [win]      token usage (last|today|week|month|by-model|by-source|tail)
-  ${C.c}iva trace${C.x} <cmd>      the turn journal: tail|show [turn]|open
+  ${C.c}iva trace${C.x} <cmd>      the turn journal: tail|show [<session>/<turn>|last]|open
   ${C.c}iva notify${C.x} <text>    send one Telegram message verbatim
   ${C.c}iva jobs ack${C.x} <name>  close an open schedule failure
   ${C.c}iva jobs skip memory-night${C.x} <date>  close a night-memory day without processing it
   ${C.c}iva remind${C.x} <text>    let the agent judge one Reminder, then send it to Telegram
-  ${C.c}iva proactive${C.x} show|on|off|set <key> <value>  Watch and Brief settings
+  ${C.c}iva proactive${C.x} show|on|off|set <key> <value>  Watch, Brief and Insight settings
   ${C.c}iva signal${C.x} <source> <text>  pass a plugin's Signal to Iva (a one-off Reminder now)
   ${C.c}iva post${C.x} --md-file <p>  rich Telegram post to the digest chat or an allowlisted --chat
   ${C.c}iva userbot${C.x} [creds|setup|status|diagnose --json|off]  personal-account userbot proxy

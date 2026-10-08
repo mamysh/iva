@@ -38,6 +38,8 @@ import {
 } from "../lib/telegram-queue.ts";
 import type { TelegramFlowState } from "../lib/tg-flow.ts";
 import { getChatStatus, RUN_STALE_MS } from "#lib/run-status.ts";
+import { isBreakNotice, isRetryTap } from "#lib/error-humanizer.ts";
+import { turnQuestion } from "#lib/turn-question.ts";
 import { readEnvFresh } from "../lib/env-file.ts";
 import {
   formatUsageReport,
@@ -79,11 +81,15 @@ import {
 import { createMenu } from "../lib/menu/index.ts";
 import { admitTelegramUpdate } from "./inbox.ts";
 import { isPrivateTelegramChat } from "#lib/telegram-private-chat.ts";
+import { readTelegramMessageText } from "#lib/telegram-rich-message.ts";
 import { scheduleBridgeTask } from "./background.ts";
 import { parseProposalCallback } from "../lib/plugin-proposal.ts";
+import { isGotItData, watchButtons } from "../lib/notice-policy.ts";
+import { markTappedButton } from "../lib/telegram-buttons.ts";
 import {
   handlePluginProposalTap,
   type PluginTap,
+  type PluginTapOutcome,
 } from "./plugin-proposal-tap.ts";
 
 type ControlCallbackQuery = TelegramCallbackQuery & { data: string };
@@ -120,6 +126,10 @@ type ControlTransport = (
 type StatusImpl = (chatKey: string) => Record<string, unknown> | null;
 type CancelImpl = (input: StopCancelRequest) => Promise<StopCancelResult>;
 type PerformResetImpl = typeof performScopedReset;
+// Правка нажатой кнопки: блоки rich-сообщения или ряды кнопок classic-сообщения.
+type TapEdit =
+  | { rich: { blocks: unknown[]; is_rtl?: boolean } }
+  | { inline_keyboard: unknown[] };
 // Точки ввода-вывода handleControl, которые подменяются в тестах: ответ в чат,
 // подтверждение нажатия и вызов cancel-роута. Всё остальное остаётся дефолтным.
 export type ControlDeps = {
@@ -139,7 +149,15 @@ export type ControlDeps = {
   resetRetryPendingImpl?: (chatKey: string) => boolean;
   resetIntentPendingImpl?: (chatKey: string) => boolean;
   // «Установить» на предложении плагина: забрать копию и запустить установщик.
-  pluginTapImpl?: (tap: PluginTap) => Promise<void>;
+  pluginTapImpl?: (tap: PluginTap) => Promise<PluginTapOutcome>;
+  // «Я в курсе» под пунктом Watch: удалить сообщение с кнопкой; true — удалено.
+  deleteImpl?: (chatId: number, messageId: number) => Promise<boolean>;
+  // Правка нажатой кнопки в сообщении: true — кнопка помечена (или уже была).
+  editTapImpl?: (
+    chatId: number,
+    messageId: number,
+    edit: TapEdit,
+  ) => Promise<boolean>;
 };
 
 const controlTg = tg as unknown as ControlTransport;
@@ -294,7 +312,7 @@ export function applyTelegramButtonTap(
       message_id: message.message_id,
       chat: { ...chat },
       from: { ...from, is_bot: false },
-      text: callback.data,
+      text: tapTurnText(callback.data, message, chatKey(update)),
       ...(message.date === undefined ? {} : { date: message.date }),
       ...(message.message_thread_id === undefined
         ? {}
@@ -305,6 +323,57 @@ export function applyTelegramButtonTap(
   update.message = tap.message;
   delete update.callback_query;
   return true;
+}
+
+// Тап по кнопке модели несёт ходу и текст сообщения, под которым она стояла: одно `data`
+// («Составить ответ») теряет, кому и о чём, и модель ищет это заново. Текст сообщения —
+// данные, не команда: он уходит ходу тем же входящим текстом и проходит inbound-Gate.
+export const TAP_CONTEXT_LIMIT = 1500;
+
+// Текст берётся тем же чтением, что и у входящего rich-сообщения: text или caption, иначе
+// блоки rich_message (абзацы, списки, таблицы). Блок кнопок текста не несёт и не читается.
+/** Текст сообщения с кнопкой, не длиннее TAP_CONTEXT_LIMIT; пусто — текста нет. */
+export function tapContextText(message: TelegramMessage | undefined): string {
+  if (message === undefined) return "";
+  return clipTapContext(readTelegramMessageText(message).text.trim());
+}
+
+function clipTapContext(text: string): string {
+  const chars = Array.from(text);
+  if (chars.length <= TAP_CONTEXT_LIMIT) return text;
+  const mark = tr(" […cut]", " […обрезано]");
+  const kept = TAP_CONTEXT_LIMIT - Array.from(mark).length;
+  return `${chars.slice(0, kept).join("").trimEnd()}${mark}`;
+}
+
+/** Текст хода по тапу: `data`, а следом в скобках текст сообщения с кнопкой, если он есть. */
+function tapTurnText(
+  data: string,
+  message: TelegramMessage | undefined,
+  key: string | null,
+): string {
+  const context = tapContextText(message);
+  if (context === "") return data;
+  const label = tr("button under Iva's message", "кнопка под сообщением Ивы");
+  return `${data}\n\n(${label}: «${context}»)${fullQuestion(data, context, key)}`;
+}
+
+/**
+ * «Повторить» под сообщением об обрыве посреди ответа: в сообщении вопрос стоит цитатой до
+ * 120 знаков, а модели нужен целиком — eve могла не сохранить его в сессии, если оборвался
+ * первый запрос хода. Полный текст канал положил в запись чата run-status
+ * (agent/lib/turn-question.ts). Своя кнопка модели с той же подписью его не получает.
+ */
+function fullQuestion(
+  data: string,
+  context: string,
+  key: string | null,
+): string {
+  if (key === null || !isRetryTap(data) || !isBreakNotice(context)) return "";
+  const question = turnQuestion(key)?.text ?? "";
+  if (question === "") return "";
+  const label = tr("the question in full", "вопрос целиком");
+  return `\n\n(${label}: «${question}»)`;
 }
 
 const PRIVATE_ONLY_COMMANDS = new Set(["/menu", "/model", "/think"]);
@@ -551,6 +620,8 @@ const DEFAULT_CONTROL_IO: Omit<ControlIo, "cancelImpl"> = {
   watchTimeoutMs: RUN_STALE_MS,
   scheduleImpl: scheduleBridgeTask,
   pluginTapImpl: (tap) => handlePluginProposalTap(tap),
+  deleteImpl: deleteGotItMessage,
+  editTapImpl: editTappedMessage,
 };
 
 // Переданный undefined значит «по умолчанию» — как у деструктуризации с дефолтами.
@@ -624,6 +695,7 @@ type CallbackKind =
   | "wizard"
   | "menu"
   | "plugin"
+  | "gotIt"
   | "passthrough"
   | "tap";
 
@@ -637,6 +709,7 @@ const CALLBACK_KINDS: ReadonlyArray<
   ["wizard", isWizardCallbackData],
   ["menu", (data) => data.startsWith("iva_menu:")],
   ["plugin", (data) => parseProposalCallback(data) !== null],
+  ["gotIt", (data) => isGotItData(data, tr)],
   ["passthrough", isUnclaimedCallbackData],
 ];
 
@@ -672,6 +745,7 @@ const CALLBACK_HANDLERS: Record<
       true,
     ),
   plugin: handlePluginTap,
+  gotIt: handleGotItTap,
   // Колбэк eve или незнакомый iva_*: не наш, решает путь сообщения.
   passthrough: () => Promise.resolve(UNCLAIMED),
   tap: handleButtonTap,
@@ -724,27 +798,110 @@ function dispatchCallback(context: CallbackContext): Claim {
 // «Установить» на предложении плагина (ADR-0009). Ставит только Allowlist в личном чате;
 // чужой тап и тап из группы гаснут молча, строкой в журнале. Тап никогда не становится
 // ходом модели: установку ведёт Bridge, вне хода.
-async function handlePluginTap({ callback, io }: CallbackContext) {
-  const digest12 = parseProposalCallback(callback.data) as string;
-  const chat = callbackChat(callback);
+async function handlePluginTap(context: CallbackContext) {
+  const { callback, io } = context;
+  if (
+    isTrustedSender(callback.from) &&
+    isPrivateTelegramChat(callbackChat(callback))
+  )
+    return handleOwnerPluginTap(context);
   await io.ackImpl(callback.id).catch(() => {});
-  if (!isTrustedSender(callback.from) || !isPrivateTelegramChat(chat)) {
-    log(
-      "plugin proposal tap ignored: not the owner in a private chat",
-      senderId(callback.from),
-    );
+  log(
+    "plugin proposal tap ignored: not the owner in a private chat",
+    senderId(callback.from),
+  );
+  return true;
+}
+
+// Кнопка помечается только после запуска установщика: при not-started копия возвращена
+// и тап можно повторить (ADR-0009), при stale помечать нечего.
+async function handleOwnerPluginTap({ update, callback, io }: CallbackContext) {
+  if (isRepeatTap(tapKey(callback), update.update_id)) {
+    await io.ackImpl(callback.id, alreadyChosenText()).catch(() => {});
     return true;
   }
-  return settleLogged(
-    io.pluginTapImpl({ digest12, chatId: chat?.id as number }).then(() => true),
+  const snapshot = tapTree(callback.message);
+  await io.ackImpl(callback.id).catch(() => {});
+  const outcome = await settleLogged(
+    io.pluginTapImpl({
+      digest12: parseProposalCallback(callback.data) as string,
+      chatId: callbackChat(callback)?.id as number,
+    }),
     "plugin proposal tap error:",
-    true,
+    "not-started",
   );
+  if (outcome === "started")
+    settleTap(io, update, callback, tapEdit(snapshot, callback).edit);
+  return true;
 }
 
 async function declineGroupCallback({ callback, io }: CallbackContext) {
   await io.ackImpl(callback.id, privateChatOnlyText()).catch(() => {});
   return true;
+}
+
+// «Я в курсе» под пунктом Watch (ADR-0020): владелец знает, пункт погашен, сообщение уходит из
+// чата. Ход модели не нужен — тап никогда не становится сообщением и в очередь не идёт. Второй тап по
+// уже удалённому сообщению и отказ удаления (старше 48 часов, нет прав) — подсказка, и только.
+// Пункт снова придёт, только когда в чате или письме появится новое: это решает `seen` тика.
+async function handleGotItTap({ update, callback, io }: CallbackContext) {
+  const target = ownerPrivateMessage(callback);
+  if (target === null) {
+    const trusted = isTrustedSender(callback.from);
+    await io
+      .ackImpl(callback.id, tapGroupHint(trusted, callbackChat(callback)))
+      .catch(() => {});
+    log(
+      "got-it tap ignored: not the owner in a private chat",
+      senderId(callback.from),
+    );
+    return true;
+  }
+  const key = tapKey(callback) as string;
+  if (isRepeatTap(key, update.update_id)) {
+    await io.ackImpl(callback.id, alreadyRemovedText()).catch(() => {});
+    return true;
+  }
+  const deleted = await io
+    .deleteImpl(target.chatId, target.messageId)
+    .catch(() => false);
+  if (deleted) rememberTap(key, update.update_id);
+  const hint = deleted
+    ? tappedText(watchButtons(tr)[2].label)
+    : notRemovedText();
+  await io.ackImpl(callback.id, hint).catch(() => {});
+  return true;
+}
+
+/** Сообщение с кнопкой, нажатой владельцем в личном чате; иначе null. */
+function ownerPrivateMessage(
+  callback: ControlCallbackQuery,
+): { chatId: number; messageId: number } | null {
+  const chat = callbackChat(callback);
+  const messageId = callback.message?.message_id;
+  if (!isTrustedSender(callback.from) || !isPrivateTelegramChat(chat))
+    return null;
+  if (chat?.id === undefined || messageId === undefined) return null;
+  return { chatId: chat.id, messageId };
+}
+
+const alreadyRemovedText = () => tr("Already removed", "Уже убрано");
+const notRemovedText = () =>
+  tr("Couldn't delete the message", "Не смогла удалить сообщение");
+
+// Удаление сообщения Watch: true — Telegram подтвердил. Отказ и сбой сети — false.
+async function deleteGotItMessage(
+  chatId: number,
+  messageId: number,
+): Promise<boolean> {
+  const result = await controlTg("deleteMessage", {
+    chat_id: chatId,
+    message_id: messageId,
+  }).catch((e: unknown) => {
+    log("got-it delete failed:", errorMessage(e));
+    return { ok: false };
+  });
+  return result?.ok === true;
 }
 
 // ⏹ Стоп у статус-сообщения. Тап никогда не уходит в eve: колбэк наш, а отмену
@@ -1026,15 +1183,168 @@ function tapGroupHint(
 // пустой ack без подсказок, контрол ему знать нечего. В группе тап сообщением не
 // станет: там текст принимается лишь как упоминание, команда или reply боту, а
 // нажатие кнопки — ни то, ни другое, поэтому говорим про личку прямо.
-async function handleButtonTap({ update, callback, io }: CallbackContext) {
+async function handleButtonTap(context: CallbackContext) {
+  const { callback, io } = context;
   const trusted = isTrustedSender(callback.from);
   const groupHint = tapGroupHint(trusted, callbackChat(callback));
+  if (trusted && groupHint === undefined) return handleOwnerTap(context);
   await io.ackImpl(callback.id, groupHint).catch(() => {});
   // Чужой тап дальше снимет admission по allowlist — со строкой в журнале.
-  if (!trusted) return false;
+  return trusted;
+}
+
+// Тап владельца в личке. Повтор той же кнопки другим апдейтом поглощается подсказкой
+// «Уже выбрано»; тот же апдейт после write-failed проходит как свежий (specs/ButtonTap.tla).
+// Дерево снимается до applyTelegramButtonTap: он удаляет callback_query из апдейта.
+async function handleOwnerTap({ update, callback, io }: CallbackContext) {
+  if (isRepeatTap(tapKey(callback), update.update_id)) {
+    await io.ackImpl(callback.id, alreadyChosenText()).catch(() => {});
+    return true;
+  }
+  const snapshot = tapTree(callback.message);
   // Неполный конверт (нет чата, отправителя или номера сообщения) сообщением
   // стать не может: гасим тап здесь, дальше ему делать нечего.
-  return groupHint !== undefined || !applyTelegramButtonTap(update, callback);
+  if (!applyTelegramButtonTap(update, callback)) {
+    await io.ackImpl(callback.id).catch(() => {});
+    return true;
+  }
+  const { edit, label } = tapEdit(snapshot, callback);
+  await io
+    .ackImpl(callback.id, tappedText(label || callback.data))
+    .catch(() => {});
+  settleTap(io, update, callback, edit);
+  return false;
+}
+
+// ── Отклик кнопки: подсказка, память «уже нажато», правка сообщения ──
+// Память живёт в процессе Bridge, без файла: после рестарта она пуста (ADR-0015).
+const TAP_MEMORY_LIMIT = 256;
+const tappedButtons = new Map<string, number>();
+
+const alreadyChosenText = () => tr("Already chosen", "Уже выбрано");
+
+// answerCallbackQuery принимает до 200 знаков.
+const tappedText = (label: string) =>
+  Array.from(`✅ ${label}`).slice(0, 200).join("");
+
+/** chat:message:data; без чата или номера сообщения ключа нет. */
+function tapKey(callback: ControlCallbackQuery): string | null {
+  const chatId = callbackChat(callback)?.id;
+  const messageId = callback.message?.message_id;
+  if (chatId === undefined || messageId === undefined) return null;
+  return `${chatId}:${messageId}:${callback.data}`;
+}
+
+/** Повтор: эта кнопка уже стала сообщением ДРУГОГО апдейта. */
+function isRepeatTap(key: string | null, updateId: number): boolean {
+  const seen = key === null ? undefined : tappedButtons.get(key);
+  return seen !== undefined && seen !== updateId;
+}
+
+function rememberTap(key: string, updateId: number): void {
+  tappedButtons.delete(key);
+  tappedButtons.set(key, updateId);
+  for (const oldest of tappedButtons.keys()) {
+    if (tappedButtons.size <= TAP_MEMORY_LIMIT) break;
+    tappedButtons.delete(oldest);
+  }
+}
+
+type TapTree = { tree: unknown; rich: boolean; isRtl?: unknown };
+
+/** Кнопки полученного сообщения: блоки rich или ряды кнопок classic. */
+function tapTree(message: TelegramMessage | undefined): TapTree | null {
+  const rich = message?.rich_message as
+    { blocks?: unknown; is_rtl?: unknown } | undefined;
+  if (rich?.blocks !== undefined)
+    return { tree: rich.blocks, rich: true, isRtl: rich.is_rtl };
+  const markup = message?.reply_markup as
+    { inline_keyboard?: unknown } | undefined;
+  if (markup?.inline_keyboard === undefined) return null;
+  return { tree: markup.inline_keyboard, rich: false };
+}
+
+/** data кнопок этого сообщения, которые уже стали сообщением (память процесса). */
+function tappedOf(callback: ControlCallbackQuery): string[] {
+  const key = tapKey(callback);
+  if (key === null) return [];
+  const prefix = key.slice(0, key.length - callback.data.length);
+  return [...tappedButtons.keys()]
+    .filter((seen) => seen.startsWith(prefix))
+    .map((seen) => seen.slice(prefix.length));
+}
+
+// Снимок апдейта может быть старше правки, которая ещё в полёте: прежние нажатия этого
+// сообщения отмечаются заново, чтобы правка, легшая последней, их не стёрла.
+function tapEdit(
+  snapshot: TapTree | null,
+  callback: ControlCallbackQuery,
+): { edit: TapEdit | null; label: string | null } {
+  const marked = snapshot && markTappedButton(snapshot.tree, callback.data);
+  if (!snapshot || !marked) return { edit: null, label: null };
+  const tree = tappedOf(callback).reduce(
+    (current, data) => markTappedButton(current, data)?.tree ?? current,
+    marked.tree,
+  );
+  if (!snapshot.rich)
+    return { edit: { inline_keyboard: tree }, label: marked.label };
+  const rtl =
+    typeof snapshot.isRtl === "boolean" ? { is_rtl: snapshot.isRtl } : {};
+  return { edit: { rich: { blocks: tree, ...rtl } }, label: marked.label };
+}
+
+const tapMethod = (edit: TapEdit) =>
+  "rich" in edit ? "editMessageText" : "editMessageReplyMarkup";
+
+// Ключ в память всегда: тап уже стал сообщением, второй тап — второе сообщение. Правка
+// уходит фоном, её исход ключа не снимает.
+function settleTap(
+  io: ControlIo,
+  update: TelegramUpdate,
+  callback: ControlCallbackQuery,
+  edit: TapEdit | null,
+): void {
+  const key = tapKey(callback);
+  if (key === null) return;
+  rememberTap(key, update.update_id);
+  if (edit === null) return;
+  const chatId = callbackChat(callback)?.id as number;
+  const messageId = callback.message?.message_id as number;
+  io.scheduleImpl(`tap:${key}`, async () => {
+    const marked = await io.editTapImpl(chatId, messageId, edit);
+    log(
+      marked ? "tap marked" : "tap mark failed",
+      `${chatId}:${messageId}`,
+      tapMethod(edit),
+    );
+  });
+}
+
+async function editTappedMessage(
+  chatId: number,
+  messageId: number,
+  edit: TapEdit,
+): Promise<boolean> {
+  const method = tapMethod(edit);
+  const body =
+    "rich" in edit
+      ? { rich_message: edit.rich }
+      : { reply_markup: { inline_keyboard: edit.inline_keyboard } };
+  const response = (await controlTg(method, {
+    chat_id: chatId,
+    message_id: messageId,
+    ...body,
+  }).catch((error: unknown) => ({
+    ok: false,
+    description: errorMessage(error),
+  }))) as { ok?: unknown; description?: unknown };
+  const description =
+    typeof response.description === "string" ? response.description : "";
+  // «message is not modified» — кнопка уже помечена: это успех, не сбой.
+  if (response.ok === true || /message is not modified/i.test(description))
+    return true;
+  log("tap edit failed:", method, description);
+  return false;
 }
 
 // ── Сообщения ──

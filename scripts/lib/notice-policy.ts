@@ -85,6 +85,31 @@ export function writtenInLanguage(tr: Translate): string {
 }
 
 /**
+ * Кнопки пункта Watch (ADR-0020) на языке владельца: подпись и слово, с которого начинается
+ * `data` — `<слово>: <имя>`. Промпт Watch даёт их модели, а Bridge по тем же словам узнаёт
+ * «Я в курсе» и гасит пункт сам, без хода модели: слова одни, разъехаться им нельзя.
+ */
+export function watchButtons(tr: Translate) {
+  return [
+    { label: tr("To tasks", "В задачи"), word: tr("To tasks", "В задачи") },
+    {
+      label: tr("Remind later", "Напомнить позже"),
+      word: tr("Later", "Позже"),
+    },
+    { label: tr("Got it", "Я в курсе"), word: tr("Got it", "Я в курсе") },
+  ] as const;
+}
+
+/**
+ * `data` кнопки «Я в курсе»: ровно `<слово>: <имя>` на языке владельца и непустое имя. Другой
+ * язык, другой регистр или пробел не тот — обычная кнопка модели.
+ */
+export function isGotItData(data: string, tr: Translate): boolean {
+  const prefix = `${watchButtons(tr)[2].word}: `;
+  return data.startsWith(prefix) && data.slice(prefix.length).trim() !== "";
+}
+
+/**
  * Хвост ночного промпта — та его часть, что описывает ДОСТАВКУ отчёта: язык, форму и
  * запрет доставить себя самому. Язык называется явно: без этого модель пишет отчёт на
  * языке инструкции, и пользователь получает половину сообщения по-английски.
@@ -179,6 +204,33 @@ export function memoryReportsOffNotice(tr: Translate): string {
  * апдейтер (снимает отметку, когда плагины снова собрались), и сама отправка.
  */
 export const PLUGIN_ALERT_KEY = "plugin-build";
+
+/** Ключ дросселя для «версия на заводской сборке»: суть — отпечаток файлов data/custom. */
+export const CUSTOM_ALERT_KEY = "custom-build";
+
+/**
+ * Версия ушла на заводскую сборку: файлы владельца в data/custom с ней не собрались или
+ * версия с ними не поднялась (ADR-0007: что сломалось, чем грозит, что сделать).
+ * `firstLine` — первая строка ошибки; `null` — версию с этими файлами придержали, потому
+ * что в прошлый раз она не поднялась.
+ */
+export function customStockAlert(
+  tr: Translate,
+  firstLine: string | null,
+): string {
+  // Точка в конце строки ошибки не удваивает точку текста.
+  const why = (
+    firstLine ??
+    tr(
+      "last time the version carrying them did not come up",
+      "в прошлый раз версия с ними не поднялась",
+    )
+  ).replace(/\.$/u, "");
+  return tr(
+    `Iva is running the stock build: your files in data/custom do not build with this version — ${why}. The files are untouched; fix them and the next \`iva update\` puts them back.`,
+    `Ива работает на заводской сборке: ваши файлы в data/custom не собрались с этой версией — ${why}. Файлы на месте; поправьте их, и следующее \`iva update\` поставит их снова.`,
+  );
+}
 
 /**
  * Плагин с кодом не встал в версию, и Ива выключила его (ADR-0009). ОДИН текст на оба

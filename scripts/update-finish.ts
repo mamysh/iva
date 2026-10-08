@@ -12,11 +12,15 @@ import {
 import { dirname, join } from "node:path";
 import { CATALOG, catalogProvider } from "./lib/model-catalog.ts";
 import { notificationChat } from "./lib/notification-chat.ts";
+import { redactNotice } from "./lib/notice.ts";
 import {
   alertOnce,
+  CUSTOM_ALERT_KEY,
+  customStockAlert,
   noticeTranslator,
   PLUGIN_ALERT_KEY,
   pluginsSwitchedOffAlert,
+  type Translate,
 } from "./lib/notice-policy.ts";
 import {
   isEntrypoint,
@@ -43,8 +47,10 @@ import {
 } from "./lib/legacy-memory-units.ts";
 import {
   commandRunner,
+  customOverlay,
   finishVersionUpdate,
   pluginsOffNotice,
+  stockFailureLine,
   type UpdateOutcome,
 } from "./lib/version-update.ts";
 import type { PluginFailure } from "./lib/plugin-build.ts";
@@ -684,8 +690,8 @@ export function tombstoned(
  * this Alert stands beside (scripts/check-update.ts): the marked-up sender lives in the
  * authored tree, and this process runs in a version directory that may not have a
  * `node_modules` yet - a dependency reached on any path through it is a crash with no
- * update (scripts/lib/version-update.test.ts pins that). The text is this file's own
- * copy with plugin names in it, so there is nothing here for the outbound Gate to redact.
+ * update (scripts/lib/version-update.test.ts pins that). The text reaches it through the
+ * outbound Gate (alertOwnerOnce): the stock-build Alert carries a line of build output.
  */
 function sendToChat(
   token: string,
@@ -703,7 +709,7 @@ function sendToChat(
       );
       return response.ok;
     } catch (error) {
-      console.error("[plugins] could not send the alert:", error);
+      console.error("[alert] could not send the alert:", error);
       return false;
     }
   };
@@ -727,23 +733,85 @@ export async function alertOwnerAboutPlugins(
   send?: (text: string) => Promise<boolean>,
 ): Promise<void> {
   notify(pluginsOffNotice(failures));
+  const names = failures.map((failure) => failure.name);
+  await alertOwnerOnce(
+    layout,
+    {
+      key: PLUGIN_ALERT_KEY,
+      // The essence is which content failed: a plugin the owner has since changed is a
+      // different problem and speaks at once instead of waiting out the week.
+      essence: failures
+        .map((failure) => `${failure.name}@${failure.digest}`)
+        .join(" "),
+      text: (tr) => pluginsSwitchedOffAlert(tr, names),
+      about: names.join(", "),
+    },
+    notify,
+    send,
+  );
+}
+
+/**
+ * The version runs the stock build: the owner's files in data/custom did not build or
+ * did not come up with it. The update output keeps the whole line; the chat gets the
+ * first line of the error, at most once a week for the same files (ADR-0007). Changed
+ * files are a different problem and speak at once.
+ */
+export async function alertOwnerAboutCustom(
+  layout: ReturnType<typeof layoutFor>,
+  notice: string,
+  notify: Say,
+  send?: (text: string) => Promise<boolean>,
+): Promise<void> {
+  notify(notice);
+  await alertOwnerOnce(
+    layout,
+    {
+      key: CUSTOM_ALERT_KEY,
+      essence: customEssence(layout.data),
+      text: (tr) => customStockAlert(tr, stockFailureLine(notice)),
+      about: "the stock build",
+    },
+    notify,
+    send,
+  );
+}
+
+/** What the owner's files contain; an Alert must not fail the update it reports on. */
+function customEssence(dataDir: string): string {
+  try {
+    return customOverlay(join(dataDir, "custom")).digest ?? "none";
+  } catch {
+    return "unreadable";
+  }
+}
+
+/** One Alert through the installation's chat, throttled by its key and essence. */
+async function alertOwnerOnce(
+  layout: ReturnType<typeof layoutFor>,
+  alert: {
+    readonly key: string;
+    readonly essence: string;
+    readonly text: (tr: Translate) => string;
+    /** What the update output names when the chat could not be told. */
+    readonly about: string;
+  },
+  notify: Say,
+  send?: (text: string) => Promise<boolean>,
+): Promise<void> {
   const token = String(layout.values.TELEGRAM_BOT_TOKEN ?? "").trim();
   const chat = notificationChat(layout.values);
   const deliver = send ?? (token && chat ? sendToChat(token, chat) : null);
   if (!deliver) return; // Nowhere to say it; the output above is all there is.
-  const tr = await noticeTranslator(layout.values);
-  const names = failures.map((failure) => failure.name);
-  const text = pluginsSwitchedOffAlert(tr, names);
-  const outcome = await alertOnce(
-    layout.data,
-    PLUGIN_ALERT_KEY,
-    // The essence is which content failed: a plugin the owner has since changed is a
-    // different problem and speaks at once instead of waiting out the week.
-    failures.map((failure) => `${failure.name}@${failure.digest}`).join(" "),
-    () => deliver(text),
+  // Через outbound-Gate: строка ошибки сборки — вывод файлов владельца, данные рантайма.
+  const text = await redactNotice(
+    alert.text(await noticeTranslator(layout.values)),
+  );
+  const outcome = await alertOnce(layout.data, alert.key, alert.essence, () =>
+    deliver(text),
   );
   if (outcome === "failed")
-    notify(`could not tell you in Telegram about ${names.join(", ")}`);
+    notify(`could not tell you in Telegram about ${alert.about}`);
 }
 
 /**
@@ -837,6 +905,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       requirePlugins,
       alertPlugins: (failures) =>
         alertOwnerAboutPlugins(layout, failures, notify),
+      alertCustom: (text) => alertOwnerAboutCustom(layout, text, notify),
       quiesce: async () => {
         const { createCliRuntime } = await import("./cli/runtime.ts");
         // Before the first conversion there is no current symlink: the checkout

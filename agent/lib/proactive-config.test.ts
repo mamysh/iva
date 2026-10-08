@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
-// Настройки Watch и Brief: разбор ключа `proactive` из settings.json и вход
+// Настройки Watch, Brief и Insight: разбор ключа `proactive` из settings.json и вход
 // `iva proactive set`. Мусор не валит разбор и не просачивается в значения; нет ключа —
 // установка работает как включённая. Сид печатается в имени теста, повтор — FC_SEED.
 import assert from "node:assert/strict";
@@ -37,6 +37,25 @@ test("no proactive key, no field or not an object: the defaults, Watch on", () =
   }
   assert.equal(PROACTIVE_DEFAULTS.enabled, true);
   assert.deepEqual(PROACTIVE_DEFAULTS.briefTimes, ["08:30", "14:00"]);
+  // Insight выключен по умолчанию (ADR-0022: согласие, а не терпение).
+  assert.deepEqual(PROACTIVE_DEFAULTS.insightTimes, []);
+});
+
+test("the first beta's key sparkTimes is ignored: no journal line, insightTimes stays default", () => {
+  for (const old of [["11:30"], "x", null]) {
+    const logs: string[] = [];
+    assert.deepEqual(
+      parseProactive({ proactive: { sparkTimes: old } }, (l) => logs.push(l)),
+      PROACTIVE_DEFAULTS,
+    );
+    assert.deepEqual(logs, []);
+  }
+  assert.deepEqual(
+    parseProactive({
+      proactive: { sparkTimes: ["11:30"], insightTimes: ["12:00"] },
+    }),
+    { ...PROACTIVE_DEFAULTS, insightTimes: ["12:00"] },
+  );
 });
 
 test("a bad field falls back alone and is named in the journal", () => {
@@ -80,11 +99,12 @@ test(`any garbage in proactive gives a config of the right shape, valid fields k
         for (const key of PROACTIVE_KEYS) {
           const value = parsed[key];
           if (key === "enabled") assert.equal(typeof value, "boolean");
-          else if (key === "briefTimes")
+          else if (key === "briefTimes" || key === "insightTimes")
             assert.ok(
-              (value as string[]).every((t) =>
-                /^(?:[01]\d|2[0-3]):(?:00|30)$/u.test(t),
-              ),
+              (key === "briefTimes" || (value as string[]).length <= 1) &&
+                (value as string[]).every((t) =>
+                  /^(?:[01]\d|2[0-3]):(?:00|30)$/u.test(t),
+                ),
             );
           else if (key === "urgentSenders")
             assert.ok(
@@ -141,12 +161,22 @@ test("iva proactive set values: numbers, on/off, HH:00|HH:30 lists, sender lists
     value: ["Жена", "@boss", "boss@x.io"],
   });
   assert.deepEqual(proactiveValue("urgentSenders", ""), { value: [] });
+  assert.deepEqual(proactiveValue("insightTimes", "11:30"), {
+    value: ["11:30"],
+  });
+  assert.deepEqual(proactiveValue("insightTimes", "23:00"), {
+    value: ["23:00"],
+  });
+  assert.deepEqual(proactiveValue("insightTimes", ""), { value: [] });
   for (const [key, text] of [
     ["watchCapPerDay", "-1"],
     ["watchCapPerDay", "1.5"],
     ["quietFromHour", "24"],
     ["briefTimes", "09:15"],
     ["briefTimes", "09:00,09:00"],
+    ["insightTimes", "11:15"],
+    ["insightTimes", "11:30,12:00"],
+    ["insightTimes", "11:30,11:30"],
     ["enabled", "maybe"],
     ["enabled", "constructor"],
     ["colour", "red"],
@@ -224,4 +254,45 @@ test("an urgent sender matches the username without @, the trimmed name or the a
   assert.ok(!isUrgentSender(config, { name: "Wifey" }));
   assert.ok(!isUrgentSender(config, {}));
   assert.ok(!isUrgentSender(PROACTIVE_DEFAULTS, { name: "Wife" }));
+});
+
+test(`Ceiling of the day: integers 0…100 000 000 are taken, anything else is refused by set and defaults when read (seed ${SEED})`, () => {
+  assert.equal(PROACTIVE_DEFAULTS.ceilingTokensPerDay, 0, "off by default");
+  fc.assert(
+    fc.property(fc.integer({ min: 0, max: 100_000_000 }), (n) => {
+      assert.deepEqual(proactiveValue("ceilingTokensPerDay", String(n)), {
+        value: n,
+      });
+      assert.equal(
+        parseProactive({ proactive: { ceilingTokensPerDay: n } })
+          .ceilingTokensPerDay,
+        n,
+      );
+    }),
+    { seed: SEED, numRuns: 300 },
+  );
+  const bad = fc.oneof(
+    fc.integer({ min: -1_000_000, max: -1 }).map(String),
+    fc.integer({ min: 100_000_001, max: 2 ** 40 }).map(String),
+    fc.double({ noInteger: true, noNaN: true }).map(String),
+    fc.constantFrom("", "1e6", "1_000", "0x10", "1.0", "ten", " "),
+    fc.string().filter((text) => !/^\s*\d+\s*$/u.test(text)),
+  );
+  fc.assert(
+    fc.property(bad, (text) => {
+      const value = proactiveValue("ceilingTokensPerDay", text);
+      assert.ok("error" in value, text);
+      const logs: string[] = [];
+      assert.equal(
+        parseProactive({ proactive: { ceilingTokensPerDay: text } }, (l) =>
+          logs.push(l),
+        ).ceilingTokensPerDay,
+        0,
+      );
+      assert.deepEqual(logs, [
+        "proactive: settings field ceilingTokensPerDay is not valid, using default",
+      ]);
+    }),
+    { seed: SEED, numRuns: 300 },
+  );
 });

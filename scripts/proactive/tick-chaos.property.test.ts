@@ -7,7 +7,7 @@
 // исключение шва; источники — пункты, ошибки, исключения, дубликаты ключей, гигантские unread,
 // пустые и враждебные имена; состояние на диске — нет, пусто, мусор, обрезано, версия новее,
 // огромный seen; отказ записи состояния в случайный момент; часы — любой час и минута, границы
-// тихих часов и суток, зоны с получасовым сдвигом, случайные briefTimes.
+// тихих часов и суток, зоны с получасовым сдвигом, случайные briefTimes и insightTimes.
 //
 // Отправка идёт настоящим швом sendTelegramHtml с поддельным fetch: то, что видит Telegram,
 // проверяется на проводе (outbound-Gate живёт в шве, не в тике).
@@ -20,7 +20,10 @@
 //   4) тик не поднимает wakes выше watchCapPerDay и modelWakes выше modelWakesPerDay;
 //   5) не больше одного Brief на слот в сутки;
 //   6) на проводе нет ни одного сгенерированного секрета, и ни одно сообщение — не голое QUIET;
-//   7) при выключенном тумблере обычные пункты не будят модель, Brief нет, сбои доходят.
+//   7) при выключенном тумблере обычные пункты не будят модель, Brief и Insight нет, сбои доходят;
+//   8) не больше одного хода Insight на день владельца и ни одного в тихий час;
+//   9) паузы нет: прогон в окне слота в день без заявки делает ход Insight при любой истории
+//      прошлых инсайтов (плагины в этом мире не стоят никогда), заявка не несёт полей паузы.
 import "../fixtures/no-host-anthropic.ts";
 import assert from "node:assert/strict";
 import {
@@ -242,6 +245,25 @@ const turnSpec: fc.Arbitrary<TurnSpec> = fc.oneof(
   },
 );
 
+/** Ответ хода Insight: тот же мусор или инсайт с кнопкой «Поставить»/«Install» любого `data`. */
+const insightTurn: fc.Arbitrary<TurnSpec> = fc.oneof(
+  turnSpec,
+  fc
+    .tuple(
+      fc.constantFrom("Поставить", "Install", "Не надо"),
+      fc.oneof(
+        fc.constantFrom("count-receipts", "../x", "A-B"),
+        fc.string({ maxLength: 50 }),
+      ),
+      fc.constantFrom('"', "'"),
+    )
+    .map(([word, name, q]) => ({
+      kind: "reply" as const,
+      text: `Нашла дело.\n<tg-button-row><tg-button type="callback_data" data=${q}${word} ${name}${q}>${word}</tg-button></tg-button-row>`,
+      secrets: [],
+    })),
+);
+
 type SendMode = "ok" | "refuse" | "netdown" | "throw";
 const sendModes = fc.array(
   fc.constantFrom<SendMode>("ok", "ok", "ok", "refuse", "netdown", "throw"),
@@ -329,6 +351,7 @@ type TickSpec = {
   readonly fixed: readonly number[];
   readonly watchTurn: TurnSpec;
   readonly briefTurn: TurnSpec;
+  readonly insightTurn: TurnSpec;
   readonly sends: readonly SendMode[];
   readonly writeFails: readonly number[];
   readonly recordOk: readonly boolean[];
@@ -351,6 +374,7 @@ const tickSpec: fc.Arbitrary<TickSpec> = fc.record({
   fixed: fc.array(fc.nat(UNITS.length - 1), { maxLength: 1 }),
   watchTurn: turnSpec,
   briefTurn: turnSpec,
+  insightTurn,
   sends: sendModes,
   writeFails: fc.array(fc.nat(3), { maxLength: 2 }),
   recordOk: fc.array(fc.boolean(), { minLength: 1, maxLength: 3 }),
@@ -371,7 +395,13 @@ const config: fc.Arbitrary<ProactiveConfig> = fc.record({
   staleMinutes: fc.constantFrom(0, 30, 60, 24 * 60),
   watchCapPerDay: fc.integer({ min: 0, max: 3 }),
   modelWakesPerDay: fc.integer({ min: 0, max: 3 }),
+  // Ceiling дня выключен: у мира нет расхода, его прогоны — в tick.test.ts.
+  ceilingTokensPerDay: fc.constant(0),
   briefTimes,
+  insightTimes: fc.oneof(
+    fc.constant([]),
+    briefTimes.map((t) => t.slice(0, 1)),
+  ),
   urgentSenders: fc.constantFrom([], ["wife"], ["Маша", "wife"]),
 });
 
@@ -483,10 +513,17 @@ class World {
   readonly starting = new Set<string>();
   readonly wire: Wire[] = [];
   readonly sent: { tick: number; part: string }[] = [];
-  readonly turns: { tick: number; prompt: string; day: string }[] = [];
+  readonly turns: {
+    tick: number;
+    prompt: string;
+    day: string;
+    hour: number;
+  }[] = [];
   readonly secrets: Secret[] = [];
   readonly recorded: { tick: number; key: string }[] = [];
   readonly logs: string[] = [];
+  /** Исход каждой записи состояния — по тику, для свойства (9). */
+  readonly writes: { tick: number; ok: boolean }[] = [];
   readonly problems: string[] = [];
   seq = 0;
   tick = -1;
@@ -668,11 +705,9 @@ class World {
         failuresSource(this.dir, this.systemctl(t.timers)),
       ],
       runTurn: (prompt) => {
-        this.turns.push({
-          tick: this.tick,
-          prompt,
-          day: localDay(this.now, this.s.zone).day,
-        });
+        const { day, hour } = localDay(this.now, this.s.zone);
+        this.turns.push({ tick: this.tick, prompt, day, hour });
+        if (prompt.startsWith("Insight:")) return this.turn(t.insightTurn);
         return this.turn(
           prompt.includes("Brief: slot") ? t.briefTurn : t.watchTurn,
         );
@@ -695,10 +730,13 @@ class World {
               ...this.failing.keys(),
               ...this.secrets.slice(0, 1).map((x) => x.shown),
             ]),
-      writeState: (path, state) =>
-        t.writeFails.includes(writes++)
-          ? Promise.reject(new Error("ENOSPC: no space left on device"))
-          : writeProactiveState(path, state),
+      writeState: (path, state) => {
+        const ok = !t.writeFails.includes(writes++);
+        this.writes.push({ tick: this.tick, ok });
+        return ok
+          ? writeProactiveState(path, state)
+          : Promise.reject(new Error("ENOSPC: no space left on device"));
+      },
       log: (line) => this.logs.push(line),
     };
   }
@@ -837,6 +875,7 @@ async function calmTick(w: World): Promise<void> {
     fixed: [],
     watchTurn: { kind: "reply", text: "QUIET", secrets: [] },
     briefTurn: { kind: "reply", text: "QUIET", secrets: [] },
+    insightTurn: { kind: "reply", text: "QUIET", secrets: [] },
     sends: ["ok"],
     writeFails: [],
     recordOk: [true],
@@ -850,7 +889,10 @@ async function calmTick(w: World): Promise<void> {
         !w.throttled(key) && !(f.timer && f.at <= w.firstRunAt - 24 * HOUR),
     )
     .map(([key]) => key);
-  const { code } = await w.step(calm);
+  let { code } = await w.step(calm);
+  // Прогон с Insight кончается без Watch (ADR-0022): сбой приходит следующим спокойным прогоном.
+  if (w.turns.some((x) => x.tick === w.tick && x.prompt.startsWith("Insight:")))
+    ({ code } = await w.step({ ...calm, advanceMin: 60 }));
   assert.equal(
     code,
     0,
@@ -939,7 +981,7 @@ test(`chaos (4): a tick never lifts wakes over watchCapPerDay, and lifts modelWa
         ];
         if (mNow <= Math.max(modelCap, mWas)) return;
         const watch = w.turns.filter(
-          (t) => t.tick === w.tick && !t.prompt.includes("Brief: slot"),
+          (t) => t.tick === w.tick && /^Watch: /mu.test(t.prompt),
         );
         assert.ok(
           watch.length === 1 &&
@@ -1018,11 +1060,122 @@ test(`chaos (7): with the toggle off ordinary items never wake the model and the
               "(7) a Brief with the toggle off",
             );
             assert.ok(
+              !prompt.startsWith("Insight:"),
+              "(7) an Insight with the toggle off",
+            );
+            assert.ok(
               !/^- (?:tg|mail):/mu.test(prompt),
               `(7) an ordinary item woke the model: ${prompt.slice(0, 300)}`,
             );
           }
           if (stateWorks(s)) await calmTick(w);
+        },
+      });
+    }),
+    options,
+  );
+});
+
+/**
+ * Серии под Insight: тумблер включён, тихих часов нет, один слот Insight, файл есть; тики идут по
+ * слотам через сутки и чаще, с любым ответом модели, отказами отправки и записи.
+ */
+const insightSeries = fc
+  .record({
+    s: series,
+    hour: fc.integer({ min: 0, max: 20 }),
+    steps: fc.array(fc.constantFrom(30, 24 * 60, 24 * 60, 48 * 60, 72 * 60), {
+      minLength: 3,
+      maxLength: 10,
+    }),
+  })
+  .map(({ s, hour, steps }) => ({
+    ...s,
+    cfg: {
+      ...s.cfg,
+      enabled: true,
+      quietFromHour: 0,
+      quietToHour: 0,
+      insightTimes: [`${String(hour).padStart(2, "0")}:00`],
+    },
+    zone: "UTC" as const,
+    startMin: hour * 60,
+    disk: "counters" as const,
+    ticks: steps.map((advanceMin, i) => ({
+      ...s.ticks[i % s.ticks.length],
+      advanceMin: i === 0 ? 0 : advanceMin,
+    })),
+  }));
+
+/**
+ * Серии под тихий час: слот Insight в первый тихий час, тихие часы накрывают всё окно слота (3 ч),
+ * тики через полчаса внутри них. Без этих серий снятую проверку тихого часа ловил не каждый сид.
+ */
+const quietSeries = insightSeries.map((s) => {
+  const hour = s.startMin / 60;
+  return {
+    ...s,
+    cfg: { ...s.cfg, quietFromHour: hour, quietToHour: (hour + 4) % 24 },
+    ticks: s.ticks.map((t, i) => ({ ...t, advanceMin: i === 0 ? 0 : 30 })),
+  };
+});
+
+test(`chaos (8): no more than one Insight a day of the owner, and none in a quiet hour (seed ${SEED})`, async () => {
+  await fc.assert(
+    fc.asyncProperty(fc.oneof(series, insightSeries, quietSeries), (s) =>
+      runSeries(s, {
+        end: (w) => {
+          const days = new Set<string>();
+          for (const { prompt, day, hour } of w.turns) {
+            if (!prompt.startsWith("Insight:")) continue;
+            assert.ok(!days.has(day), `(8) a second Insight on ${day}`);
+            assert.ok(
+              !isQuietHour(w.s.cfg, hour),
+              `(8) an Insight at ${hour}:xx, a quiet hour`,
+            );
+            days.add(day);
+          }
+        },
+      }),
+    ),
+    options,
+  );
+});
+
+test(`chaos (9): no pause — every run in the window of the slot on a day without a claim makes an Insight, whatever the past ones (seed ${SEED})`, async () => {
+  // Без Brief: слот Brief забирает прогон себе, Insight ждёт следующего, и окно здесь не об этом.
+  const noBrief = insightSeries.map((s) => ({
+    ...s,
+    cfg: { ...s.cfg, briefTimes: [] },
+  }));
+  await fc.assert(
+    fc.asyncProperty(noBrief, async (s) => {
+      const slotMin = s.startMin;
+      await runSeries(s, {
+        each: (w, { before, after }) => {
+          const { day, hour, minute } = localDay(w.now, w.s.zone);
+          const since = hour * 60 + minute - slotMin;
+          const due =
+            before !== null &&
+            before.insight?.day !== day &&
+            since >= 0 &&
+            since <= 180;
+          const ran = w.turns.some(
+            (t) => t.tick === w.tick && t.prompt.startsWith("Insight:"),
+          );
+          const claimWritten =
+            w.writes.find((x) => x.tick === w.tick)?.ok === true;
+          if (due && claimWritten)
+            assert.ok(ran, `(9) no Insight on ${day} at ${hour}:${minute}`);
+          const insight = after?.insight as Record<string, unknown> | undefined;
+          if (insight?.day === day && before?.insight?.day !== day)
+            assert.deepEqual(
+              Object.keys(insight)
+                .filter((k) => k !== "tree")
+                .sort(),
+              ["day", "draft"],
+              "(9) the claim carries a pause",
+            );
         },
       });
     }),

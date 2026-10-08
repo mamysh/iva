@@ -37,6 +37,7 @@ type HeldSend = {
 type EventOptions = {
   chatId: string;
   sessionId: string;
+  chatType?: string;
 };
 type ChannelEventHandler = (
   data: Record<string, unknown>,
@@ -66,6 +67,7 @@ type FailureAdapter = {
     context: unknown,
   ) => void | Promise<void>;
   "turn.started": ChannelEventHandler;
+  "input.resolved": ChannelEventHandler;
   "actions.requested": ChannelEventHandler;
   "action.partial": ChannelEventHandler;
   "action.result": ChannelEventHandler;
@@ -112,7 +114,7 @@ globalThis.fetch = async (url, init = {}) => {
 
 const telegramTestModule = "../agent/channels/telegram.ts?failure-events-test";
 const [
-  { default: channel },
+  { default: channel, rememberAccepted },
   { chatKeyOf, getChatStatus, setChatStatus },
   { ContextContainer, contextStorage },
   { SessionKey },
@@ -144,7 +146,11 @@ function traceEvents(): Record<string, unknown>[] {
 
 after(() => rmSync(dataDir, { recursive: true, force: true }));
 
-function eventContext({ chatId, sessionId }: EventOptions) {
+function eventContext({
+  chatId,
+  sessionId,
+  chatType = "private",
+}: EventOptions) {
   const ctx = new ContextContainer();
   ctx.set(SessionKey, {
     auth: { current: null, initiator: null },
@@ -162,7 +168,7 @@ function eventContext({ chatId, sessionId }: EventOptions) {
   const state = {
     ...adapter.state,
     chatId: String(chatId),
-    chatType: "private",
+    chatType,
     messageThreadId: null,
   };
   return {
@@ -217,7 +223,7 @@ function holdSend(chatId: string) {
   return { release: releaseResolve, started };
 }
 
-test("turn.failed posts a humanized error with error id even when finishStatus CAS misses", async () => {
+test("turn.failed posts a humanized error without error id even when finishStatus CAS misses", async () => {
   const chatId = "701";
   const sessionId = "failed-session-cas-miss";
   const key = chatKeyOf(chatId);
@@ -245,7 +251,7 @@ test("turn.failed posts a humanized error with error id even when finishStatus C
   assert.equal(sends.length, 1);
   assert.equal(
     sends[0].body!.text,
-    "Provider limit exhausted - resets in 3hr 59min; wait or switch models: /model\n\nError id: err-limit-701",
+    "Provider limit exhausted - resets in 3hr 59min; wait or switch models: /model",
   );
   assert.equal(getChatStatus(key)!.sessionId, "newer-session");
 
@@ -291,7 +297,7 @@ test("session.failed clears its run-status and deduplicates repeated delivery", 
   assert.equal(callsSince(before, "sendMessage").length, 1);
   assert.equal(
     callsSince(before, "sendMessage")[0].body!.text,
-    "Provider balance/plan exhausted - top up or switch models: /model\n\nError id: err-billing-702",
+    "Provider balance/plan exhausted - top up or switch models: /model",
   );
 
   await emitSessionFailed(data, { chatId, sessionId });
@@ -467,8 +473,7 @@ test("turn.failed redacts a provider key before it reaches Bot API", async () =>
   assert.equal(sends.length, 1);
   const text = String(sends[0].body!.text);
   assert.equal(text.includes("zzzz"), false);
-  assert.equal(text.includes("[REDACTED]"), true);
-  assert.equal(text.endsWith("Error id: err-key-706"), true);
+  assert.equal(text.includes("err-key-706"), false);
 });
 
 // errorId никто не чистит по дороге: если шов канала снять, ключ уедет в чат целым.
@@ -495,7 +500,7 @@ test("turn.failed redacts a secret carried by errorId itself", async () => {
   assert.equal(sends.length, 1);
   const text = String(sends[0].body!.text);
   assert.equal(text.includes("zzzz"), false);
-  assert.equal(text.endsWith("Error id: [REDACTED]"), true);
+  assert.equal(text.includes("Error id"), false);
 });
 
 // Худший вход разом: пусто в message, многострочный стек и оба секрета в одной ошибке.
@@ -509,7 +514,7 @@ test("session.failed survives an empty error and redacts a multi-line one", asyn
     );
     const empty = callsSince(emptyBefore, "sendMessage");
     assert.equal(empty.length, 1);
-    assert.equal(empty[0].body!.text, "Turn failed: Unknown provider error");
+    assert.match(String(empty[0].body!.text), /^I could not answer: /u);
 
     const before = apiCalls.length;
     await emitSessionFailed(
@@ -527,9 +532,185 @@ test("session.failed survives an empty error and redacts a multi-line one", asyn
     assert.equal(text.includes("zzzz"), false);
     assert.equal(text.includes("AAAA"), false);
     assert.equal(text.includes("at stack"), false);
-    assert.equal(text.includes("[REDACTED]"), true);
+    assert.equal(text.includes("err-hostile-709"), false);
   } finally {
     restore();
+  }
+});
+
+// Обрыв посреди ответа (c1, 07.10.2026): eve закрыла ход, не повторяя его. Владелец получает
+// вопрос и кнопку «Повторить» — кнопка живёт только в rich-сообщении, поэтому реплика идёт
+// sendRichMessage, а не голым sendMessage. Error id остаётся в журнале.
+test("a stream broken mid-answer posts one Try again button through a rich message", async () => {
+  const chatId = "720";
+  const sessionId = "failed-mid-answer";
+  const previous = process.env.MODEL_PROVIDER;
+  process.env.MODEL_PROVIDER = "claude";
+  const before = apiCalls.length;
+  try {
+    await emitTurnFailed(
+      {
+        code: "MODEL_CALL_FAILED",
+        details: { errorId: "err-mid-720", attempts: 1, answerStarted: true },
+        message:
+          "api.anthropic.com did not finish the response (the stream broke off before message_stop)",
+        sequence: 0,
+        turnId: "turn_0",
+      },
+      { chatId, sessionId },
+    );
+  } finally {
+    if (previous === undefined) delete process.env.MODEL_PROVIDER;
+    else process.env.MODEL_PROVIDER = previous;
+  }
+  assert.equal(callsSince(before, "sendMessage").length, 0);
+  const rich = callsSince(before, "sendRichMessage");
+  assert.equal(rich.length, 1);
+  const markdown = String(
+    (rich[0].body!.rich_message as { markdown?: unknown }).markdown,
+  );
+  assert.match(
+    markdown,
+    /The connection to Anthropic broke off in the middle/u,
+  );
+  assert.match(
+    markdown,
+    /<tg-button type="callback_data" data="Try again">Try again<\/tg-button>/u,
+  );
+  assert.equal(markdown.includes("err-mid-720"), false);
+  assert.equal(String(rich[0].body!.chat_id), chatId);
+});
+
+// Первый запрос хода оборвался — вопроса в истории сессии нет. Канал помнит текст
+// последнего принятого сообщения чата и цитирует его; «Повторить» в тексте нажатия
+// приносит модели и цитату.
+test("a mid-answer break quotes the last accepted message of the chat", async () => {
+  const chatId = "721";
+  const { rememberTurnQuestion } = await import("#lib/turn-question.ts");
+  rememberTurnQuestion(chatKeyOf(chatId), {
+    text: "Сколько <b>стоит</b> *ремонт*?",
+    media: false,
+  });
+  const before = apiCalls.length;
+  await emitTurnFailed(
+    {
+      code: "MODEL_CALL_FAILED",
+      details: { errorId: "err-mid-721", attempts: 1, answerStarted: true },
+      message: "terminated",
+      sequence: 0,
+      turnId: "turn_0",
+    },
+    { chatId, sessionId: "failed-mid-answer-quote" },
+  );
+  const rich = callsSince(before, "sendRichMessage");
+  assert.equal(rich.length, 1);
+  const markdown = String(
+    (rich[0].body!.rich_message as { markdown?: unknown }).markdown,
+  );
+  assert.match(
+    markdown,
+    /in the middle of the answer to «Сколько ‹b›стоит‹\/b› \\\*ремонт\\\*\?»\. Try again\?/u,
+  );
+  assert.equal((markdown.match(/<tg-button[\s>]/gu) ?? []).length, 1);
+});
+
+async function midAnswerNotice(
+  chatId: string,
+  question: { text: string; media: boolean },
+  chatType = "private",
+): Promise<{ rich: string | null; plain: string | null }> {
+  const { rememberTurnQuestion } = await import("#lib/turn-question.ts");
+  rememberTurnQuestion(chatKeyOf(chatId), question);
+  const before = apiCalls.length;
+  await emitTurnFailed(
+    {
+      code: "MODEL_CALL_FAILED",
+      details: { errorId: `err-${chatId}`, attempts: 1, answerStarted: true },
+      message: "terminated",
+      sequence: 0,
+      turnId: "turn_0",
+    },
+    { chatId, sessionId: `mid-answer-${chatId}`, chatType },
+  );
+  const rich = callsSince(before, "sendRichMessage")[0];
+  const plain = callsSince(before, "sendMessage")[0];
+  return {
+    rich: rich
+      ? String((rich.body!.rich_message as { markdown?: unknown }).markdown)
+      : null,
+    plain: plain ? String(plain.body!.text) : null,
+  };
+}
+
+test("in a group the break notice names «your message» and never quotes it", async () => {
+  const { rich } = await midAnswerNotice(
+    "-1001722",
+    { text: "личное про зарплату", media: false },
+    "supergroup",
+  );
+  assert.ok(rich !== null);
+  assert.match(
+    rich,
+    /in the middle of the answer to your message\. Try again\?/u,
+  );
+  assert.doesNotMatch(rich, /зарплат/u);
+});
+
+test("a message with an attachment is asked again, without a button", async () => {
+  const { rich, plain } = await midAnswerNotice("723", {
+    text: "",
+    media: true,
+  });
+  assert.equal(rich, null);
+  assert.equal(
+    plain,
+    "The connection to the provider broke off in the middle of the answer to your message with an attachment. Send it again.",
+  );
+});
+
+// Провод канала, а не только модуль вопроса: принятое голосовое или фото без подписи
+// стирает прежний вопрос и метит вложение, и после обрыва кнопки нет — Ива просит прислать
+// сообщение ещё раз (мутант «media: false» в канале обязан краснеть здесь).
+test("a voice or a photo without a caption, then a mid-answer break: no button, send it again", async () => {
+  const { rememberTurnQuestion } = await import("#lib/turn-question.ts");
+  for (const [chatId, raw] of [
+    ["724", { voice: { file_id: "voice-1", duration: 3 } }],
+    ["725", { photo: [{ file_id: "photo-1", width: 1, height: 1 }] }],
+  ] as const) {
+    rememberTurnQuestion(chatKeyOf(chatId), {
+      text: "прежний вопрос",
+      media: false,
+    });
+    await rememberAccepted(
+      chatKeyOf(chatId),
+      {
+        attachments: [],
+        caption: "",
+        chat: { id: chatId, type: "private" },
+        messageId: "1",
+        raw,
+        text: "",
+      },
+      Promise.resolve({ auth: null }),
+    );
+    const before = apiCalls.length;
+    await emitTurnFailed(
+      {
+        code: "MODEL_CALL_FAILED",
+        details: { errorId: `err-${chatId}`, attempts: 3, answerStarted: true },
+        message: "terminated",
+        sequence: 0,
+        turnId: "turn_0",
+      },
+      { chatId, sessionId: `media-${chatId}` },
+    );
+    assert.equal(callsSince(before, "sendRichMessage").length, 0);
+    const sends = callsSince(before, "sendMessage");
+    assert.equal(sends.length, 1);
+    const text = String(sends[0].body!.text);
+    assert.match(text, /to your message with an attachment/u);
+    assert.match(text, /Send it again\.$/u);
+    assert.doesNotMatch(text, /tg-button|прежний вопрос/u);
   }
 });
 
@@ -964,4 +1145,78 @@ test("Trace: ответ модели уходит в журнал ключом �
     (gate?.data as Record<string, unknown>).text,
     "готово, отпуск в июле",
   );
+});
+
+// Знак очереди под сообщением, которое ждёт своего хода (agent/lib/telegram-turn-start.ts).
+const queuedSign = (sessionId: string, messageId: number) => ({
+  queuedIngressId: `ingress-${messageId}`,
+  queuedIngressAt: 1_000,
+  queuedStatusAt: 1_010,
+  queuedStatusMessageId: messageId,
+  queuedSessionId: sessionId,
+});
+const signCleared = {
+  queuedIngressId: null,
+  queuedIngressAt: null,
+  queuedStatusAt: null,
+  queuedStatusMessageId: null,
+  queuedSessionId: null,
+};
+
+test("session.failed deletes only the queued sign of its own session", async () => {
+  const chatId = "760";
+  const key = chatKeyOf(chatId);
+  const data = { code: "X", message: "dead", sessionId: "s-dead" };
+
+  // Знак сообщения, вставшего за ходом чужой (живой) сессии, упавшая сессия не трогает.
+  setChatStatus(key, { status: "idle", ...queuedSign("s-live", 961) });
+  let before = apiCalls.length;
+  await emitSessionFailed(data, { chatId, sessionId: "s-dead" });
+  assert.equal(getChatStatus(key)?.queuedStatusMessageId, 961);
+  assert.equal(
+    callsSince(before, "deleteMessage").some(
+      (call) => call.body?.message_id === 961,
+    ),
+    false,
+  );
+
+  // Свой знак уходит: буфер входа умершей сессии хода уже не начнёт.
+  setChatStatus(key, { ...signCleared, ...queuedSign("s-dead", 962) });
+  before = apiCalls.length;
+  await emitSessionFailed(
+    { ...data, message: "dead again" },
+    { chatId, sessionId: "s-dead" },
+  );
+  assert.equal(getChatStatus(key)?.queuedStatusMessageId, undefined);
+  assert.deepEqual(
+    callsSince(before, "deleteMessage").map((call) => call.body?.message_id),
+    [962],
+  );
+});
+
+test("a turn resumed by an answer to a question takes the sign without the queued message's ingressAt", async () => {
+  const chatId = "761";
+  const sessionId = "s-hitl";
+  const key = chatKeyOf(chatId);
+  setChatStatus(key, { status: "idle", ...queuedSign(sessionId, 963) });
+  const context = eventContext({ chatId, sessionId });
+
+  // eve шлёт input.resolved до turn.started хода, который продолжит ответ на вопрос.
+  await contextStorage.run(context.ctx, async () => {
+    await adapter["input.resolved"](
+      {
+        resolutions: [
+          { kind: "question", outcome: "answered", requestId: "req-1" },
+        ],
+      },
+      context.value,
+    );
+    await adapter["turn.started"]({ turnId: "turn_hitl" }, context.value);
+  });
+
+  const status = getChatStatus(key);
+  assert.equal(status?.statusMessageId, 963, "the sign is the turn's status");
+  assert.equal(status?.ingressAt, undefined);
+  assert.equal(status?.statusAt, undefined);
+  assert.equal(status?.queuedStatusMessageId, undefined);
 });

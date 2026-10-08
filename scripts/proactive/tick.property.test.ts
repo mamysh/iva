@@ -70,7 +70,9 @@ const config: fc.Arbitrary<ProactiveConfig> = fc.record({
   staleMinutes: fc.constantFrom(0, 30, 60, 120),
   watchCapPerDay: fc.integer({ min: 0, max: 3 }),
   modelWakesPerDay: fc.integer({ min: 0, max: 4 }),
+  ceilingTokensPerDay: fc.constant(0),
   briefTimes: fc.constant(PROACTIVE_DEFAULTS.briefTimes),
+  insightTimes: fc.constant([]),
   urgentSenders: fc.constant(["wife"]),
 });
 
@@ -141,8 +143,9 @@ class World {
         },
       ],
       runTurn: (prompt) => {
-        // Ход Brief — не ход Watch: в счётчики Watch не идёт (его свойства — brief.test.ts).
-        if (prompt.startsWith("Brief:"))
+        // Ход Brief или Insight — не ход Watch: в счётчики Watch не идёт (их свойства —
+        // brief.test.ts и insight.test.ts).
+        if (prompt.startsWith("Brief:") || prompt.startsWith("Insight:"))
           return Promise.resolve({
             status: "completed" as const,
             message: "QUIET",

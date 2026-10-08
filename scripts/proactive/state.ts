@@ -20,6 +20,21 @@ export type SeenEntry = {
 /** Счётчик одного дня; день — дата в зоне владельца, другой день — ноль. */
 export type DayCount = { readonly day: string; readonly count: number };
 
+/**
+ * Insight (ADR-0022); поля нет — Insight ещё не было, файл старой версии читается. Файл версии с
+ * недельной паузой несёт ещё `misses` и `pausedUntilMs`: они читаются и больше ничего не значат.
+ */
+export type InsightState = {
+  readonly day: string; // день заявки в зоне владельца; "" — не было
+  readonly draft: string; // имя черновика доставленного инсайта; "?" — имя не годится; "" — QUIET
+  /**
+   * Отпечаток черновика в минуту отправки (`pluginTreeDigest(...).slice(0, 12)`): по нему
+   * неинтерактивный `iva plugin add` ставит ровно тот черновик, что был в сообщении. Нет поля —
+   * сверки нет (файл прошлой версии, QUIET, имя «?» или отпечаток не посчитался).
+   */
+  readonly tree?: string;
+};
+
 export type ProactiveState = {
   readonly schemaVersion: number;
   readonly seen: Readonly<Record<string, SeenEntry>>;
@@ -30,6 +45,7 @@ export type ProactiveState = {
     readonly slots: readonly number[];
   };
   readonly failuresSeenUpToMs: number;
+  readonly insight?: InsightState;
 };
 
 class ProactiveStateError extends Error {}
@@ -70,16 +86,33 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Поля Insight; `tree` необязателен — файл без него (прошлая версия) годится. */
+const isInsightFields = (value: Record<string, unknown>): boolean =>
+  typeof value.day === "string" &&
+  typeof value.draft === "string" &&
+  (value.tree === undefined || typeof value.tree === "string");
+
+/** Поле `insight` необязательно: его нет — годится. */
+const isInsight = (value: unknown): boolean =>
+  value === undefined || (isObject(value) && isInsightFields(value));
+
+function isBriefDone(value: unknown): boolean {
+  const brief = value as Partial<ProactiveState["briefDone"]> | null;
+  return (
+    typeof brief?.day === "string" &&
+    Array.isArray(brief.slots) &&
+    brief.slots.every(isCount)
+  );
+}
+
 function isState(value: Record<string, unknown>): boolean {
-  const brief = value.briefDone as Partial<ProactiveState["briefDone"]> | null;
   return (
     isObject(value.seen) &&
     Object.values(value.seen).every(isSeenEntry) &&
     isDayCount(value.wakes) &&
     isDayCount(value.modelWakes) &&
-    typeof brief?.day === "string" &&
-    Array.isArray(brief.slots) &&
-    brief.slots.every(isCount) &&
+    isBriefDone(value.briefDone) &&
+    isInsight(value.insight) &&
     typeof value.failuresSeenUpToMs === "number" &&
     Number.isFinite(value.failuresSeenUpToMs)
   );

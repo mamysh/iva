@@ -22,6 +22,7 @@ import { MODEL_PROVIDER_NAMES } from "#lib/model-provider.ts";
 import { createVersionStore, layoutFor, releaseOf } from "./version-store.ts";
 import {
   runVersionUpdate,
+  stockFailureLine,
   versionOverlay,
   type Runner,
   type UpdateOutcome,
@@ -233,6 +234,11 @@ test("the new version's updater runs before there is a node_modules to run with"
   const seen = new Set<string>();
   const queue = [join(root, "update-finish.ts")];
   const foreign: string[] = [];
+  // The outbound Gate is loaded by a call inside try/catch and fails open when the tree
+  // cannot load it (scripts/lib/notice.test.ts: «a notice still goes out when the authored
+  // tree is not there»); the updater reaches it only for an Alert, after `npm ci`. Its
+  // static imports are still walked.
+  const failOpen = new Set([join(root, "lib/notice.ts")]);
   while (queue.length > 0) {
     const file = queue.pop()!;
     if (seen.has(file)) continue;
@@ -241,7 +247,7 @@ test("the new version's updater runs before there is a node_modules to run with"
     const specifiers = [
       ...source.matchAll(/^\s*(?:import|export)[^"]*?from\s*"([^"]+)"/gmu),
       ...source.matchAll(/^\s*import\s+"([^"]+)"/gmu),
-      ...source.matchAll(/\bimport\("([^"]+)"\)/gu),
+      ...(failOpen.has(file) ? [] : source.matchAll(/\bimport\("([^"]+)"\)/gu)),
     ];
     for (const [, specifier] of specifiers) {
       if (specifier.startsWith("node:")) continue;
@@ -444,6 +450,159 @@ test("a markdown rule file in the slot is live, not built", async (t) => {
     ),
     "export default 1;\n",
   );
+});
+
+// Шапка скилла с c1: metadata.hermes объектом. eve-build её отвергает; фальшивая сборка
+// отвергает файл по слову BREAK — так же, как eve отвергла бы эту шапку в дереве.
+const CROOKED_SKILL = `---
+name: zz-crooked
+description: Checks the crooked header
+metadata:
+  hermes:
+    emoji: "🧪"
+    requires: [git]
+---
+# Crooked
+The build refuses this header: BREAK
+`;
+
+test("an owner's skill is not a build input: a crooked header leaves the rest applied", async (t) => {
+  const iva = world(t);
+  customFile(iva.home, "agent/skills/zz-crooked/SKILL.md", CROOKED_SKILL);
+  customFile(iva.home, "agent/connections/mine.ts", "export const mine = 1;\n");
+
+  const outcome = updated(await iva.update());
+  assert.equal(outcome.custom, "applied");
+  assert.equal(
+    existsSync(join(iva.home, "current/agent/skills/zz-crooked")),
+    false,
+  );
+  assert.equal(
+    readFileSync(join(iva.home, "current/agent/connections/mine.ts"), "utf8"),
+    "export const mine = 1;\n",
+  );
+  assert.deepEqual(iva.notices, []);
+
+  // Правка скилла не новая версия: резолвер читает его с диска на ходу.
+  customFile(
+    iva.home,
+    "agent/skills/zz-crooked/SKILL.md",
+    `${CROOKED_SKILL}more\n`,
+  );
+  assert.deepEqual(await iva.update(), {
+    status: "current",
+    version: outcome.version,
+  });
+});
+
+/** Alert о заводской сборке, пойманный вместо отправки. */
+function alerts(): {
+  texts: string[];
+  alertCustom: (text: string) => Promise<void>;
+} {
+  const texts: string[] = [];
+  return {
+    texts,
+    alertCustom: (text) => {
+      texts.push(text);
+      return Promise.resolve();
+    },
+  };
+}
+
+test("a customization that does not build tells the owner with the first line of the error", async (t) => {
+  const iva = world(t);
+  customFile(iva.home, "agent/connections/mine.ts", "BREAK this build\n");
+  const said = alerts();
+
+  const outcome = updated(await iva.update({ alertCustom: said.alertCustom }));
+  assert.equal(outcome.custom, "stock");
+  assert.equal(said.texts.length, 1, said.texts.join("\n---\n"));
+  assert.equal(
+    stockFailureLine(said.texts[0]),
+    "cannot compile agent/connections/mine.ts",
+  );
+});
+
+test("a customization that does not start tells the owner with the first line of the error", async (t) => {
+  const iva = world(t);
+  updated(await iva.update());
+  customFile(iva.home, "agent/connections/mine.ts", "export const mine = 1;\n");
+  const said = alerts();
+
+  const outcome = updated(
+    await iva.update({
+      alertCustom: said.alertCustom,
+      probe: (dir, port) =>
+        existsSync(join(dir, "agent/connections/mine.ts"))
+          ? Promise.resolve({
+              ok: false,
+              log: "\nError: Cannot find module x\n",
+            })
+          : fixtureProbe()(dir, port),
+    }),
+  );
+  assert.equal(outcome.custom, "stock");
+  assert.equal(said.texts.length, 1, said.texts.join("\n---\n"));
+  assert.equal(stockFailureLine(said.texts[0]), "Error: Cannot find module x");
+});
+
+test("a held-back customization tells the owner the version did not come up", async (t) => {
+  const iva = world(t);
+  updated(await iva.update());
+  customFile(iva.home, "agent/connections/mine.ts", "export const mine = 1;\n");
+  const serving = () =>
+    Promise.resolve(
+      existsSync(join(iva.home, "current/agent/connections/mine.ts"))
+        ? { ok: false, log: "the card store did not open" }
+        : { ok: true, log: "" },
+    );
+  assert.equal((await iva.update({ serving })).status, "unhealthy");
+  const said = alerts();
+
+  const back = updated(
+    await iva.update({ serving, alertCustom: said.alertCustom }),
+  );
+  assert.equal(back.custom, "stock");
+  assert.equal(said.texts.length, 1, said.texts.join("\n---\n"));
+  assert.match(said.texts[0], /did not come up/u);
+  assert.equal(stockFailureLine(said.texts[0]), null);
+});
+
+// Alert говорит о версии, на которой Ива работает: если заводская сборка не прошла пробу,
+// обновление уходит в unhealthy, работает прежняя версия с файлами владельца, и Alert был бы
+// ложным, а неделя дросселя заглушила бы настоящий.
+test("a stock build whose candidate does not start sends no Alert; the output keeps the line", async (t) => {
+  const iva = world(t);
+  updated(await iva.update());
+  customFile(iva.home, "agent/connections/mine.ts", "BREAK this build\n");
+  iva.release("0.3.15");
+  const said = alerts();
+
+  const outcome = await iva.update({
+    alertCustom: said.alertCustom,
+    probe: () =>
+      Promise.resolve({ ok: false, log: "no probe port stayed free" }),
+  });
+  assert.equal(outcome.status, "unhealthy");
+  assert.deepEqual(said.texts, []);
+  assert.match(iva.notices.join("\n"), /does not build against this version/u);
+});
+
+test("files that build again forgive the stock-build Alert, so a relapse speaks at once", async (t) => {
+  const iva = world(t);
+  customFile(iva.home, "agent/connections/mine.ts", "export const mine = 1;\n");
+  const alertState = join(layoutFor(iva.home).data, "alert-state.json");
+  writeFileSync(
+    alertState,
+    JSON.stringify({
+      "custom-build": { essence: "x", lastSentAt: Date.now() },
+    }),
+  );
+
+  const outcome = updated(await iva.update());
+  assert.equal(outcome.custom, "applied");
+  assert.deepEqual(JSON.parse(readFileSync(alertState, "utf8")), {});
 });
 
 test("a slot file with a bundled name refuses the version and keeps the running one", async (t) => {

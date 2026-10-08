@@ -2,25 +2,54 @@
 // turn boundary, and always reset the session. While the turn runs its owner may hand it a
 // chat to watch (TurnWatch), so the /stop path that cancels a channel turn cancels this one
 // too — the turn has no wall-clock cap, and only the silence watchdog or the owner ends it.
+// The one exception is a caller that passes a signal: the proactive tick ends its turns at
+// the run's IVA_JOB_STOP_AT, cancelling them on the server.
 // The turn posts no working-status message, so the chat has no ⏹ button of its own there.
 // It lives on the CLI half, not in `agent/`, and imports nothing from there: `iva remind`
 // has to load on an install whose authored tree is missing or half-written, and the delivery
 // child process runs the same turn.
 import { writtenInLanguage } from "./notice-policy.ts";
 
+/**
+ * Виды хода через этот модуль — одно место списка. Ход называет свой вид заголовком
+ * `x-iva-turn`, bearer-авторизация кладёт его в атрибут (agent/lib/eve-auth.ts, копия списка
+ * там сверяется тестом), хук расхода пишет вид в `source`.
+ */
+export const REMINDER_TURN_KINDS = [
+  "watch",
+  "brief",
+  "insight",
+  "reminder",
+  "signal",
+  "alert",
+] as const;
+
+export type ReminderTurnKind = (typeof REMINDER_TURN_KINDS)[number];
+
 export type ReminderClientOptions = {
   readonly host: string;
   readonly auth: { readonly bearer: () => Promise<string> };
+  /** eve Client шлёт их с каждым запросом хода. */
+  readonly headers?: Readonly<Record<string, string>>;
 };
+
+/** Заголовок вида хода; вид не назван — заголовка нет. */
+const turnHeaders = (turn: ReminderTurnKind | undefined) =>
+  turn === undefined ? {} : { headers: { "x-iva-turn": turn } };
 
 export function reminderClientOptions(
   env: NodeJS.ProcessEnv,
+  turn?: ReminderTurnKind,
 ): ReminderClientOptions {
   const bearer = String(env.ASSISTANT_BEARER ?? "").trim();
   if (!bearer) throw new Error("ASSISTANT_BEARER is missing — run: iva doctor");
   const port = env.IVA_PORT ?? "8723";
   const host = env.ASSISTANT_HOST ?? `http://127.0.0.1:${port}`;
-  return { host, auth: { bearer: () => Promise.resolve(bearer) } };
+  return {
+    host,
+    auth: { bearer: () => Promise.resolve(bearer) },
+    ...turnHeaders(turn),
+  };
 }
 
 export type TurnStreamEvent = {
@@ -135,6 +164,8 @@ export function reminderPrompt(
     "Do what it says, with your tools, and return the result as the final text of this turn: " +
     "the code will send that text to the chat where the reminder was asked for. " +
     "If it is a plain reminder with nothing to do, return the short reminder text. " +
+    "If it checks a long-running background job, load the background-check skill " +
+    "and return a bounded status snapshot instead of waiting for the job to finish. " +
     "The answer is never empty. " +
     `Write it ${writtenInLanguage(tr)}. ` +
     "Do not send anything yourself: no rich messages and no Telegram tools. " +
@@ -364,25 +395,33 @@ function turnBoundary(state: TurnState): {
   throw new ReminderTurnError("stream ended without a session boundary");
 }
 
+/** Ответ eve на остановку или сброс — не дольше SESSION_LIMIT_CANCEL_MS, иначе отказ. */
+async function answeredInTime(work: Promise<unknown>, what: string) {
+  const deadline = stallAfter(
+    SESSION_LIMIT_CANCEL_MS,
+    `${what} timed out after ${SESSION_LIMIT_CANCEL_MS}ms`,
+  );
+  try {
+    await Promise.race([work, deadline.stalled]);
+  } finally {
+    deadline.stop();
+  }
+}
+
 /**
- * Ход встал на лимит сессии: он гасится тем же путём, что и ход сводки
- * (scripts/lib/night-session.ts), — session.cancel с задачами, чтобы порождённая им задача
- * не работала дальше. Отказ остановки ход не спасает, он виден в журнале.
+ * Ход встал на лимит сессии или кончился по сроку: он гасится `session.cancel` с задачами,
+ * чтобы порождённая им задача не работала дальше. Отказ остановки ход не спасает, он виден в
+ * журнале; `why` отличает его от отмены у клиента (cancelStalled).
  */
 async function stopParkedTurn(
   session: { cancel(options: { readonly tasks: boolean }): Promise<unknown> },
   log: (...args: unknown[]) => void,
+  why: "session-limit" | "deadline",
 ): Promise<void> {
-  const deadline = stallAfter(
-    SESSION_LIMIT_CANCEL_MS,
-    `cancel timed out after ${SESSION_LIMIT_CANCEL_MS}ms`,
-  );
   try {
-    await Promise.race([session.cancel({ tasks: true }), deadline.stalled]);
+    await answeredInTime(session.cancel({ tasks: true }), "cancel");
   } catch (error) {
-    log("remind: session-limit turn cancel failed:", error);
-  } finally {
-    deadline.stop();
+    log(`remind: ${why} turn cancel failed:`, error);
   }
 }
 
@@ -397,51 +436,182 @@ function limitedTurn(feedback: ReminderTurn["feedback"]): ReminderTurn {
   };
 }
 
+/** Причина провала хода, не уложившегося в срок прогона. */
+const DEADLINE_FAILURE = "the turn ran past its deadline";
+
+/** Ход, кончившийся по сроку, — провал с причиной; текст хода не отдаётся. */
+const deadlineTurn = (feedback: ReminderTurn["feedback"]): ReminderTurn => ({
+  status: "failed",
+  cancelled: false,
+  message: DEADLINE_FAILURE,
+  feedback,
+});
+
+const noFeedback: ReminderTurn["feedback"] = () => Promise.resolve();
+
+const ABORTED = Symbol("aborted");
+
+/** Снят ли сигнал сейчас; сигнала нет — нет. */
+const isAborted = (signal: AbortSignal | undefined) => signal?.aborted === true;
+
+/**
+ * Снятие сигнала одним промисом, созданным до первого запроса хода. Событие abort приходит
+ * один раз: слушатель, повешенный позже, уже снятого сигнала не увидит, поэтому промис берёт и
+ * `aborted`, и событие. Без сигнала промис не разрешается никогда.
+ */
+function abortedBy(signal: AbortSignal | undefined): Promise<typeof ABORTED> {
+  return new Promise((resolve) => {
+    if (signal === undefined) return;
+    if (signal.aborted) resolve(ABORTED);
+    else
+      signal.addEventListener("abort", () => resolve(ABORTED), { once: true });
+  });
+}
+
+type Created = Awaited<ReturnType<ReminderClient["sessions"]["create"]>>;
+type Session = Created["session"];
+
+/**
+ * Сброс сессии. Срок, снятый до или во время сброса, ограничивает его ожидание
+ * SESSION_LIMIT_CANCEL_MS с этой минуты; без сигнала сброс ждётся, как раньше.
+ */
+async function resetSession(
+  session: Session,
+  aborted: Promise<typeof ABORTED>,
+): Promise<void> {
+  const reset = session.reset({ reason: "Reminder finished" });
+  const bounded = aborted.then(() => answeredInTime(reset, "reset"));
+  try {
+    await Promise.race([reset, bounded]);
+  } catch (error) {
+    console.error("remind: session reset failed:", error);
+  }
+}
+
+/** Сессии, вернувшиеся после срока: их отмена и сброс идут уже после ответа хода. */
+const lateTurns = new Set<Promise<void>>();
+
+/**
+ * Ждёт отмены и сброса сессий, вернувшихся после срока, не дольше `capMs`. Процесс тика
+ * выходит сразу после прогона, и без этого ожидания такая сессия доигрывала бы ход на сервере.
+ */
+export async function settleLateTurns(capMs: number): Promise<void> {
+  if (lateTurns.size === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, capMs);
+  });
+  try {
+    await Promise.race([Promise.allSettled([...lateTurns]), cap]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Создание сессии наперегонки со сроком. Срок пришёл раньше — сессии ещё нет, null; если
+ * create всё же вернулся позже, ход его сессии гасится с задачами и сессия сбрасывается.
+ */
+async function createBefore(
+  client: ReminderClient,
+  prompt: string,
+  aborted: Promise<typeof ABORTED>,
+  log: (...args: unknown[]) => void,
+): Promise<Created | null> {
+  const creating = client.sessions.create({ message: prompt });
+  const first = await Promise.race([creating, aborted]);
+  if (first !== ABORTED) return first;
+  const late = creating.then(
+    async ({ session }) => {
+      await stopParkedTurn(session, log, "deadline");
+      await resetSession(session, aborted);
+    },
+    () => {},
+  );
+  lateTurns.add(late);
+  void late.finally(() => lateTurns.delete(late));
+  return null;
+}
+
+/** Чтение хода наперегонки со сроком; срок уже прошёл — ход не читается. */
+function readBefore(
+  response: TurnResponse,
+  aborted: Promise<typeof ABORTED>,
+  signal: AbortSignal | undefined,
+  options: Parameters<typeof readWatchedTurn>[1],
+): Promise<TurnState | typeof ABORTED> {
+  if (isAborted(signal)) return Promise.resolve(ABORTED);
+  const reading = readWatchedTurn(response, options);
+  // Проигравшее чтение может отказать позже: этот отказ уже никому не нужен.
+  reading.catch(() => {});
+  return Promise.race([reading, aborted]);
+}
+
+/** Исход хода: срок, запрос eve «session-limit» или граница потока. */
+async function settleTurn(
+  state: TurnState | typeof ABORTED,
+  session: Session,
+  log: (...args: unknown[]) => void,
+): Promise<ReminderTurn> {
+  const feedback = (message: string) => session.send(message);
+  if (state === ABORTED) {
+    await stopParkedTurn(session, log, "deadline");
+    return deadlineTurn(feedback);
+  }
+  if (state.sessionLimit && !state.cancelled) {
+    await stopParkedTurn(session, log, "session-limit");
+    return limitedTurn(feedback);
+  }
+  const { status, cancelled } = turnBoundary(state);
+  return {
+    status,
+    cancelled,
+    ...(state.message === undefined ? {} : { message: state.message }),
+    feedback,
+  };
+}
+
+type TurnDeps = {
+  readonly createClient?: CreateClient;
+  readonly inactivityMs?: number;
+  /** Присмотр чата за ходом: без него ход идёт без записи (так его зовёт CLI). */
+  readonly watch?: TurnWatch;
+  readonly log?: (...args: unknown[]) => void;
+  /**
+   * Срок хода: снятый сигнал гасит ход на сервере с задачами. Без сигнала срока нет — так
+   * ходят напоминания (решение владельца 21.09.2026); сигнал передаёт только тик proactive.
+   */
+  readonly signal?: AbortSignal;
+};
+
+const withDefaults = (deps: TurnDeps) => ({
+  createClient: deps.createClient ?? defaultCreateClient,
+  inactivityMs: deps.inactivityMs ?? REMINDER_TURN_INACTIVITY_MS,
+  log: deps.log ?? console.error,
+});
+
 export async function runReminderTurn(
   prompt: string,
   options: ReminderClientOptions,
-  deps: {
-    readonly createClient?: CreateClient;
-    readonly inactivityMs?: number;
-    /** Присмотр чата за ходом: без него ход идёт без записи (так его зовёт CLI). */
-    readonly watch?: TurnWatch;
-    readonly log?: (...args: unknown[]) => void;
-  } = {},
+  deps: TurnDeps = {},
 ): Promise<ReminderTurn> {
-  const createClient = deps.createClient ?? defaultCreateClient;
-  const inactivityMs = deps.inactivityMs ?? REMINDER_TURN_INACTIVITY_MS;
-  const log = deps.log ?? console.error;
+  const { createClient, inactivityMs, log } = withDefaults(deps);
+  const { signal, watch } = deps;
+  if (isAborted(signal)) return deadlineTurn(noFeedback);
+  const aborted = abortedBy(signal);
   const client = await createClient(options);
-  let session:
-    | Awaited<ReturnType<ReminderClient["sessions"]["create"]>>["session"]
-    | undefined;
+  let session: Session | undefined;
   try {
-    const created = await client.sessions.create({ message: prompt });
+    const created = await createBefore(client, prompt, aborted, log);
+    if (created === null) return deadlineTurn(noFeedback);
     session = created.session;
-    const state = await readWatchedTurn(created.response, {
-      watch: deps.watch,
+    const state = await readBefore(created.response, aborted, signal, {
+      watch,
       inactivityMs,
       log,
     });
-    const feedback = (message: string) => created.session.send(message);
-    if (state.sessionLimit && !state.cancelled) {
-      await stopParkedTurn(created.session, log);
-      return limitedTurn(feedback);
-    }
-    const { status, cancelled } = turnBoundary(state);
-    return {
-      status,
-      cancelled,
-      ...(state.message === undefined ? {} : { message: state.message }),
-      feedback,
-    };
+    return await settleTurn(state, created.session, log);
   } finally {
-    if (session) {
-      try {
-        await session.reset({ reason: "Reminder finished" });
-      } catch (error) {
-        console.error("remind: session reset failed:", error);
-      }
-    }
+    if (session) await resetSession(session, aborted);
   }
 }

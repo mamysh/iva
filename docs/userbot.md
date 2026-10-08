@@ -1,8 +1,8 @@
-# Telegram userbot (beta, opt-in)
+# Telegram userbot (opt-in)
 
-> 🧪 **Beta — expect bugs.** This feature is new and still rough: onboarding steps or tool
-> calls can misbehave. Set it up **at your own risk** and don't lean on it for anything
-> critical yet. Feedback and issues welcome.
+> ⚠️ Automating a personal account is against Telegram's ToS and can get the account limited
+> or banned. The userbot is opt-in and used **at your own risk**; reading is far safer than
+> sending.
 
 ![Your secretary inside Telegram: the userbot reads group chats from your own account, collects summaries and replies as you, with a server-enforced anti-ban guardrail](../assets/iva-userbot.webp)
 
@@ -58,12 +58,20 @@ proxy's `/healthz` route, which reads authorization from the proxy's one live
 Telethon client and never opens another session. Diagnostics expose only fixed
 state/reason values; bearer tokens and transport errors are not returned.
 
-For tool parameter errors, Iva's [userbot skill](../agent/skills/telegram-userbot/SKILL.md)
-instructs it to omit unused optional fields, use actual account labels from `list_accounts`
-when a label is needed, and pass JSON booleans rather than strings. It repairs the named
-field instead of repeating the same failing call. A generic `GEN-ERR-328` response does
-not identify the cause; account discovery and health diagnostics help narrow it down,
-but the skill cannot restore error details hidden by the upstream Telegram MCP server.
+Iva's proxy publishes nullable input types for Telegram's optional arguments whose
+source function defaults to `None`, and accepts explicit `null` as that same default.
+Required arguments, nested values and tool output types retain their validation.
+This is local to the Telegram tools; a JSON Schema `default: null` by itself does not
+permit `null` in another MCP server's schema. Existing processes cache tool schemas:
+after upgrading, restart the proxy (`iva userbot setup`) and Iva (`iva restart`).
+
+For parameter errors, Iva's [userbot skill](../agent/skills/telegram-userbot/SKILL.md)
+instructs it to use the tool's schema, omit unused optional fields, and pass JSON
+booleans rather than strings. An explicit unknown account now returns a tool error
+with the available account labels before Telegram MCP masks it as `GEN-ERR`.
+Use `list_accounts` for actual labels. Omitted accounts keep the upstream single-account
+selection and read-only multi-account fanout. Other generic upstream `GEN-ERR` replies
+can still hide their cause; account discovery and health diagnostics help narrow it down.
 
 ## Safety knobs
 

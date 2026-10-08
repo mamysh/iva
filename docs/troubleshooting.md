@@ -18,7 +18,7 @@ Tokens run out too fast, or turns fail with a provider limit or `Bad Request`: s
 curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/main/diagnose-usage.sh | bash
 ```
 
-It packs the last three days (`IVA_DIAG_DAYS=7` for a week): tokens of every model step, the skeleton of every turn (model, why each step ended, tool names, which calls failed, steps with neither a tool call nor text) with a `summary.txt` on top, Iva's trace and the failure lines of the service journal. No chat text, no tool inputs or outputs and no `.env` values beyond the model settings leave the server. It goes to your chat with the bot as a `.tgz`; forward it.
+It packs the last three days (`IVA_DIAG_DAYS=7` for a week): tokens of every model step, the skeleton of every turn (model, why each step ended, tool names, which calls failed, steps with neither a tool call nor text) with a `summary.txt` on top, and the failure lines of the service journal. No chat text, no tool inputs or outputs and no `.env` values beyond the model settings leave the server. It goes to your chat with the bot as a `.tgz`; forward it.
 
 ## Common issues
 
@@ -61,9 +61,18 @@ iva restart
 
 Cause: a wedged turn lives in `.workflow-data`, and eve re-enqueues it on every start — plain `iva restart` brings it right back.
 
-If Iva reports `Model produced no output for 90s`, the provider stream stayed silent; retry, or switch the model.
+If Iva says the model takes too long to answer, the provider stream stayed silent (90 s without output, or 180 s for Claude through the CLI); write again, or switch the model. A known limit: a model that keeps thinking and then goes silent before the answer starts is asked again, so such a turn can wait up to three times the silence limit (up to 9 minutes with the CLI) before this message.
 
-For chat turns, transient failures before the provider stream opens get at most three model-call attempts, with default waits of 5s and 15s. Provider Retry-After minimums share that 20s total wait allowance; a longer required wait parks the turn instead of retrying early. Stopping the turn cancels the request and any wait. Transport retries stop once a stream opens; after retry exhaustion the session accepts your next message.
+For chat turns, a model request that fails transiently anywhere before the end of its answer (a 5xx, a dropped connection, a stream that broke in the middle of the text) is requested again: at most three requests, with waits of 5s and then 15s. A provider's Retry-After raises a wait but never lowers it below that floor; a Retry-After over a minute is not served, and the turn closes at once with "… asks to wait longer than a minute. Try again in a couple of minutes." An error chunk inside a 200 stream before the answer (OpenRouter 502) counts as a failure before the answer. Stopping the turn cancels the request and any wait. With Claude through the CLI each new request goes through its own admission relay. A repeat duplicates nothing: nothing reaches the chat while the answer streams, a partial answer is not kept, and a tool call waits for the end of the answer. Only a tool the provider ran itself (web search) stops the repeats. After the last request the session accepts your next message.
+
+### "The connection to … broke off" instead of an answer
+
+These chat messages replace the old `Turn failed: …` line. They say what happened and what to do; the provider's error text and the Error id are not in the chat. Find the failure by time in `iva trace` (fields `errorId`, `attempts`, `answerStarted`) or in the service journal (`journalctl --user -u iva.service`), where eve logs the same `errorId`.
+
+- "The connection to Anthropic broke off. I tried again 2 times, it did not work." All three requests failed before the answer started. Write again; if it keeps happening, check the server's network.
+- "The connection to Anthropic broke off in the middle of the answer to «<your question>». I tried again 2 times, it did not work. Try again?" with a «Try again» button. All three requests broke in the middle of the answer; its text never reached you, and a tool call of a broken request never ran (a tool runs only from an answer that reached its end). Tap the button: the tap brings the message text with the quoted question to the model, which answers again; tool results of the earlier steps are in the conversation and are not run again. The quote is the last message Iva accepted in that chat, cut to 120 characters; the tap gives the model the question in full. In a group the notice says "your message" and quotes nothing. If that message had an attachment (voice, photo, file), there is no button: the notice asks you to send it again, because a tap would bring the text without the file.
+- "… did not accept the key or login. Check it in /menu" (401/403): no repeats; fix the key in `/menu`, or the login on the server: `claude auth login` for Claude, `iva login` for the OpenAI subscription.
+- "I cannot reach …: the server has no connection to it": DNS or connection refused on every request; check the server's internet.
 
 ```bash
 iva reset   # stop services, quarantine workflow + Telegram busy/queue state, restart
@@ -88,6 +97,69 @@ Iva forces one OAuth refresh and retries once; if `Codex auth rejected (401 toke
 ### Bot silent or stuck after an update
 
 An update now resets every open session before services restart. Each chat starts with fresh context; Vault and long-term History stay intact. Telegram messages queued while services were stopped are also preserved.
+
+### Customization left out after an update
+
+Iva now also tells you in Telegram: «Iva is running the stock build: your files in data/custom do not
+build with this version — <first line of the error>…». The same Alert repeats at most once a week for
+the same files.
+
+The message `your customization in data/custom is not in this version` means Iva is running a stock
+build. The custom build or startup probe may have failed, or a previous failed start may have deferred
+another attempt. The files remain in the custom layer. The notice alone does not identify the cause.
+
+Start in the installation's active source directory: `cd ~/iva/current` on the Version layout, or
+`cd ~/iva` on an older checkout. Substitute your installation path if different. These checks only
+read files and service status; unlike `iva doctor`, they do not repair the installation:
+
+```bash
+iva version
+iva status
+node --env-file-if-exists=.env scripts/custom-recovery.ts status
+iva_data_dir=$(node --env-file-if-exists=.env --input-type=module -e '
+  import { resolveDataDir } from "./scripts/lib/data-dir.ts";
+  console.log(resolveDataDir(process.cwd()));
+')
+if [ -d "$iva_data_dir/custom/agent" ]; then
+  find "$iva_data_dir/custom/agent" -type f -print
+fi
+if [ -d "$iva_data_dir/logs" ]; then
+  ls -lt "$iva_data_dir/logs"
+fi
+```
+
+The status command reports the actual `customRoot` and any archived merge conflicts or manifest error.
+An empty conflict list does not mean the custom build succeeded. Inspect the relevant update log in
+the reported data directory locally, for example with `less "$iva_data_dir/logs/<update-log>"`. An
+update launched from Telegram can also leave its technical output in the user journal. Do not post
+raw logs, custom file contents or `.env` values: they can carry tokens and personal data. Share the
+version, failing step, file names and a reviewed error excerpt. `iva diagnose` is available when a
+support package is needed: it writes the package and repairs nothing; repairs are `iva doctor` in a
+terminal.
+
+For `skills/my-skill/SKILL.md` alongside `skills/my-skill.md`, compare the two custom
+sources locally. The current live skill resolver chooses the directory package and logs that the
+flat file was skipped. That rule does not establish what caused an older compile failure: use its
+actual error. `workflow store: 0 runs; 0 hook files` counts past workflow runs; it is not a count of
+loaded custom skills and does not diagnose this problem.
+
+Preserve both source copies outside `custom/agent/` and `custom/plugins/` before a correction. Keep
+the owner's intended behavior: merge differing procedures, or move the superseded copy to that
+backup only after choosing which one to keep. Do not delete the entire custom layer or restore a
+stash over the checkout. For an archived three-way conflict, ask Iva to **restore my update changes**;
+the bundled `update-recovery` skill uses the existing recovery commands.
+
+After correcting the diagnosed cause, rebuild through the existing updater:
+
+```bash
+iva update --force --verbose
+```
+
+This is a repair step, not a read-only check: it builds and probes a candidate and restarts services.
+The same action is `/update --force` in Telegram. Check the final result: a successful core update
+can still exclude broken custom sources. On an immutable Version, `npm run build` does not reapply
+changes from the custom layer. Only a developer checkout marked `.iva-dev` uses `npm run build`
+followed by an owner-initiated restart.
 
 ### Long or formatted message gets no reply
 
