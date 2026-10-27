@@ -33,6 +33,7 @@ import type {
   LanguageModelV4StreamResult,
 } from "@ai-sdk/provider";
 import {
+  wrapLanguageModel,
   ToolLoopAgent,
   isStepCount,
   jsonSchema,
@@ -50,6 +51,7 @@ const PRIVATE_TMP = mkdtempSync(join(tmpdir(), "iva-claude-cli-test-"));
 process.env.TMPDIR = PRIVATE_TMP;
 process.on("exit", () => rmSync(PRIVATE_TMP, { recursive: true, force: true }));
 import {
+  CLAUDE_TOOL_NAME_MAX,
   CLAUDE_MESSAGE_ID_PREFIX,
   CLAUDE_SILENCE_TIMEOUT_MS,
   claudeModel,
@@ -2406,7 +2408,7 @@ test("окружение CLI получает адрес реле и выклю�
   const env = claudeEnv(
     {
       PATH: "/usr/bin",
-      CLAUDE_CONFIG_DIR: "/home/iva/.claude",
+      CLAUDE_CONFIG_DIR: "/home/user/.claude",
       EMPTY: undefined,
     },
     "http://127.0.0.1:9999/admit/x",
@@ -2416,7 +2418,7 @@ test("окружение CLI получает адрес реле и выклю�
   assert.equal(env.CLAUDE_CODE_MAX_RETRIES, "0");
   assert.equal(env.DISABLE_AUTO_COMPACT, "1");
   // Чужой каталог настроек CLI не трогаем: там его логин.
-  assert.equal(env.CLAUDE_CONFIG_DIR, "/home/iva/.claude");
+  assert.equal(env.CLAUDE_CONFIG_DIR, "/home/user/.claude");
   assert.equal("EMPTY" in env, false);
   // Унаследованное тело запроса — чужие инструменты поверх наших; своё едет в settings.json.
   assert.equal(
@@ -2589,4 +2591,35 @@ test("readCompletion берёт текст, вызовы и причину из 
   assert.equal(completion.usage.inputTokens.total, 5);
   assert.equal(completion.hasUsage, true);
   assert.equal(readCompletion([]).hasUsage, false);
+});
+
+test("MCP schema without type reaches the Claude request with an object root", async (t) => {
+  const fake = fakeCli(t, "text");
+  const { toolNameWireMiddleware } = await import("./tool-wire-name.ts");
+  const model = wrapLanguageModel({
+    model: makeClaudeCliModel(MODEL),
+    middleware: toolNameWireMiddleware(CLAUDE_TOOL_NAME_MAX),
+  });
+  const inputSchema = {
+    properties: { query: { type: "string" as const } },
+    required: ["query"],
+    additionalProperties: false,
+  };
+  const parts = await drain(
+    await model.doStream({
+      prompt: userPrompt(),
+      tools: [{ ...WEATHER, name: "connection__search", inputSchema }],
+    }),
+  );
+  assert.equal(textOf(parts), "Готово");
+  const settings = fake.read().settings as {
+    env: { CLAUDE_CODE_EXTRA_BODY: string };
+  };
+  const body = JSON.parse(settings.env.CLAUDE_CODE_EXTRA_BODY) as {
+    tools: { input_schema: unknown }[];
+  };
+  assert.deepEqual(body.tools[0].input_schema, {
+    ...inputSchema,
+    type: "object",
+  });
 });

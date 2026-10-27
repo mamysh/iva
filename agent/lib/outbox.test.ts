@@ -3,6 +3,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import fc from "fast-check";
+import {
+  htmlToPlain,
+  richQuoteLine,
+  sanitizeTelegramHtml,
+} from "./telegram-format.ts";
 import {
   noticeSender,
   redactNotice,
@@ -70,6 +76,21 @@ function stub(replies: Replies = {}) {
   }
   return { sent, transport };
 }
+
+await test("HTML transport receives intact link addresses from Markdown", async () => {
+  const { sent, transport } = stub();
+  const result = await sendThroughOutbox(
+    "_до_ [название](https://ru.wikipedia.org/wiki/Крауч,_Блейк), [сюжет](https://en.wikipedia.org/wiki/Recursion_(Crouch_novel)). *после*",
+    transport,
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(sent, [
+    {
+      kind: "html",
+      text: '<i>до</i> <a href="https://ru.wikipedia.org/wiki/Крауч,_Блейк">название</a>, <a href="https://en.wikipedia.org/wiki/Recursion_(Crouch_novel)">сюжет</a>. <i>после</i>',
+    },
+  ]);
+});
 
 // Гейт логирует находки в console.error — ловим лог, не подменяя поведение доставки.
 function captureErrors(t: { after: (fn: () => void) => void }): string[] {
@@ -446,6 +467,78 @@ await test("отказ rich-сообщения проваливается в HTM
   assert.deepEqual(
     sent.map((s) => s.kind),
     ["rich", "html"],
+  );
+});
+
+await test("rich → HTML preserves escaped quotes and labels in button rows (seed 241024)", async () => {
+  const text = fc.string({
+    unit: fc.constantFrom(...'ab*_#|`[]()~$&\\<>"', "я", "😀"),
+    maxLength: 30,
+  });
+  await fc.assert(
+    fc.asyncProperty(
+      text,
+      fc.boolean(),
+      fc.array(fc.array(text, { minLength: 1, maxLength: 4 }), {
+        minLength: 1,
+        maxLength: 3,
+      }),
+      async (question, grouped, rows) => {
+        const visible = (value: string) =>
+          value.replaceAll("<", "‹").replaceAll(">", "›");
+        const quote = `Вопрос:${question}:конец`;
+        const labels = rows.map((row) =>
+          row.map((label) => `Выбор:${label}:конец`),
+        );
+        const markdown =
+          `> ${richQuoteLine(quote, 120)}\n\n` +
+          labels
+            .map((row) => {
+              const buttons = row.map(
+                (label) =>
+                  `<tg-button type="callback_data" data="ok">${richQuoteLine(label, 120)}</tg-button>`,
+              );
+              return grouped
+                ? `<tg-button-row>${buttons.join("")}</tg-button-row>`
+                : buttons.join("\n");
+            })
+            .join("\n");
+        const { sent, transport } = stub({
+          rich: () => ({
+            ok: false,
+            error: "400: rich unsupported",
+            retryPlain: false,
+          }),
+        });
+        const result = await sendThroughOutbox(markdown, transport);
+        assert.equal(result.ok, true);
+        assert.equal(result.fellBack, true);
+        assert.deepEqual(
+          sent.map((entry) => entry.kind),
+          ["rich", "html"],
+        );
+        const html = sent[1].text;
+        assert.equal(sanitizeTelegramHtml(html), html);
+        assert.doesNotMatch(html, /tg-button/u);
+        assert.deepEqual(
+          [...html.matchAll(/<blockquote>([\s\S]*?)<\/blockquote>/gu)].map(
+            (match) => htmlToPlain(match[1]),
+          ),
+          [visible(quote)],
+        );
+        assert.deepEqual(
+          [...html.matchAll(/<b>([\s\S]*?)<\/b>/gu)].map((match) =>
+            htmlToPlain(match[1]),
+          ),
+          labels.flat().map(visible),
+        );
+        assert.equal(
+          htmlToPlain(html).replace(/\s+/gu, " ").trim(),
+          [quote, ...labels.flat()].map(visible).join(" "),
+        );
+      },
+    ),
+    { seed: 241024, numRuns: 500 },
   );
 });
 

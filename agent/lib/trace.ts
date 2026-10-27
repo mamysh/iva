@@ -439,8 +439,16 @@ function traceUpdateKey(chatId: unknown, messageId: unknown): string {
 }
 
 type TelegramUpdateLike = {
+  stopped_message_generation?: {
+    chat?: { id?: unknown };
+    draft_id?: unknown;
+  } | null;
   update_id?: unknown;
-  message?: { message_id?: unknown; chat?: { id?: unknown } } | null;
+  message?: {
+    message_id?: unknown;
+    chat?: { id?: unknown };
+    iva_parts?: unknown;
+  } | null;
   callback_query?: {
     id?: unknown;
     message?: { chat?: { id?: unknown } } | null;
@@ -457,14 +465,24 @@ function updateFacts(update: TelegramUpdateLike): {
 } {
   const message = update.message ?? undefined;
   const callback = update.callback_query ?? undefined;
-  const chatId = message?.chat?.id ?? callback?.message?.chat?.id;
+  const stop = update.stopped_message_generation;
+  const chatId =
+    message?.chat?.id ?? callback?.message?.chat?.id ?? stop?.chat?.id;
   return {
     updateId: typeof update.update_id === "number" ? update.update_id : null,
     chatId: chatId ?? null,
     messageId: message
       ? scalarText(message.message_id)
-      : `cb:${scalarText(callback?.id)}`,
-    kind: message ? "message" : callback ? "callback" : "unknown",
+      : stop
+        ? `stop:${scalarText(update.update_id)}`
+        : `cb:${scalarText(callback?.id)}`,
+    kind: message
+      ? "message"
+      : callback
+        ? "callback"
+        : stop
+          ? "stopped_message_generation"
+          : "unknown",
   };
 }
 
@@ -861,6 +879,11 @@ export function traceBridgeAdmission(
   });
 }
 
+function updatePartCount(update: TelegramUpdateLike): number {
+  const parts = update.message?.iva_parts;
+  return Array.isArray(parts) && parts.length > 0 ? parts.length : 1;
+}
+
 /** Шов Bridge: апдейт отдан агенту (или не принят им). */
 export function traceBridgeDelivery(
   update: TelegramUpdateLike,
@@ -872,5 +895,35 @@ export function traceBridgeDelivery(
   emitBridge(update, accepted && !terminal ? "delivered" : "rejected", {
     accepted: accepted === "handled" || terminal ? accepted : Boolean(accepted),
     ms,
+    parts: updatePartCount(update),
   });
+}
+
+/** Шов Bridge: сообщение встало в очередь чата; count — сколько теперь ждёт. */
+export function traceBridgeQueued(
+  update: TelegramUpdateLike,
+  count: number,
+): void {
+  emitBridge(update, "queued", { count, parts: updatePartCount(update) });
+}
+
+export type HelperTraceEvent =
+  "refused" | "finished" | "store_broken" | "goal_due" | "goal_paused";
+
+export function traceHelper(
+  event: HelperTraceEvent,
+  id: string | null,
+  fields: Omit<TraceInput, "kind" | "name">,
+  options?: TraceOptions,
+): void {
+  appendTrace(
+    {
+      ...fields,
+      source: "helper",
+      kind: "helper",
+      name: event,
+      data: { ...fields.data, helper: id },
+    },
+    options,
+  );
 }

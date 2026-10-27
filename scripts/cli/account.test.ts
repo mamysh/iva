@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
+import "../fixtures/systemd-env.ts";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import test from "node:test";
@@ -163,7 +164,7 @@ test("uninstall preserves confirmation, removal, and purge ordering", async () =
       },
     }),
     {
-      homeDir: () => "/home/person",
+      homeDir: () => "/home/user",
       remove: (path, options) =>
         events.push(`remove:${path}:${JSON.stringify(options)}`),
       log: (...args) => events.push(`log:${args.join(" ")}`),
@@ -179,7 +180,7 @@ test("uninstall preserves confirmation, removal, and purge ordering", async () =
     "has-systemd",
     "remove-units",
     "ok:Removed systemd units: 2",
-    "remove:/home/person/.local/bin/iva:undefined",
+    "remove:/home/user/.local/bin/iva:undefined",
     "ok:iva command removed from ~/.local/bin",
     `confirm:Delete the ${ROOT} directory AND vault IRREVERSIBLY?:false`,
     "read-env",
@@ -377,4 +378,17 @@ test("login catches flow failures but leaves lazy import failures outside its tr
 
   await assert.rejects(failedImport.cmdLogin([]), /import boom/);
   assert.deepEqual(importEvents, ["load-oauth"]);
+});
+
+test("repair 15: macOS uninstall confirmation names Iva jobs", async () => {
+  const warnings: string[] = [];
+  const rt = runtime({
+    warn: (m) => warnings.push(m),
+    confirm: () => Promise.resolve(false),
+  });
+  rt.systemd.manager = "launchd";
+  await createAccountCommands(rt, lifecycle(), { log: () => {} }).cmdUninstall(
+    [],
+  );
+  assert.match(warnings[0], /задания Ивы/);
 });

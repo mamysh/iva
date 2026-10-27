@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { cp, mkdir, symlink } from "node:fs/promises";
 import { createServer } from "node:net";
+import type { Readable } from "node:stream";
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,21 +29,30 @@ export async function prepareApp(sandbox: string): Promise<string> {
   const app = join(sandbox, "app");
   await mkdir(app, { recursive: true });
   // Деревья те же, что у промоутнутого рантайма; полноту списка держит страж.
-  for (const dir of [...RUNTIME_SOURCE_TREES, "patches", "vault-template"]) {
+  for (const dir of [...RUNTIME_SOURCE_TREES, "vault-template"]) {
     await cp(join(ROOT, dir), join(app, dir), { recursive: true });
   }
   for (const file of ["package.json", "package-lock.json", "tsconfig.json"]) {
     await cp(join(ROOT, file), join(app, file));
   }
-  // node_modules симлинком: npm ci уже проверяет разрешение зависимостей в соседнем CI-шаге,
+  // node_modules симлинком: npm ci отдельно проверяет разрешение зависимостей,
   // а здесь он бы стоил минуты и сотни мегабайт на каждый прогон.
   await symlink(join(ROOT, "node_modules"), join(app, "node_modules"), "dir");
   await mkdir(join(app, "data"), { recursive: true });
   return app;
 }
 
-function capture(note: Note) {
-  return (buf: Buffer) => String(buf).split("\n").filter(Boolean).forEach(note);
+function capture(stream: Readable, note: Note) {
+  let pending = "";
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk: string) => {
+    const lines = (pending + chunk).split("\n");
+    pending = lines.pop() ?? "";
+    lines.filter(Boolean).forEach(note);
+  });
+  stream.on("end", () => {
+    if (pending) note(pending);
+  });
 }
 
 export function runNode(
@@ -57,10 +67,10 @@ export function runNode(
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    child.stdout.on("data", capture(note));
-    child.stderr.on("data", capture(note));
+    capture(child.stdout, note);
+    capture(child.stderr, note);
     child.on("error", reject);
-    child.on("exit", (code) =>
+    child.on("close", (code) =>
       code === 0
         ? resolve()
         : reject(new Error(`node ${args.join(" ")} exited with ${code}`)),
@@ -86,8 +96,8 @@ export function startEve(
     ],
     { cwd: app, env, detached: true, stdio: ["ignore", "pipe", "pipe"] },
   );
-  child.stdout.on("data", capture(note));
-  child.stderr.on("data", capture(note));
+  capture(child.stdout, note);
+  capture(child.stderr, note);
   return child;
 }
 

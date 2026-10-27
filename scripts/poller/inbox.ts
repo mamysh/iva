@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import {
-  acknowledgeQueueHead,
+  acknowledgeQueueItems,
   enqueueQueueFile,
   isTelegramQueueUpdate,
   loadQueueFile,
+  quarantineQueueRecords,
   queueCount,
   queueKeys,
   shouldQueueBusyUpdate,
+  type DamagedQueueRecord,
   type TelegramQueueItem,
   type TelegramQueueUpdate,
 } from "../lib/telegram-queue.ts";
@@ -137,6 +139,22 @@ function admissionPolicy(
   return { action: "own", key };
 }
 
+function isReadyInboxItem(
+  key: string,
+  item: TelegramQueueItem,
+): item is TelegramQueueItem & {
+  update: TelegramQueueUpdate;
+  enqueuedAt: number;
+} {
+  return (
+    isTelegramQueueUpdate(item.update) &&
+    inboxKeyFor(item.update) === key &&
+    typeof item.enqueuedAt === "number" &&
+    Number.isFinite(item.enqueuedAt) &&
+    item.enqueuedAt >= 0
+  );
+}
+
 export function selectReadyInboxBatch(
   key: string,
   items: readonly TelegramQueueItem[],
@@ -146,16 +164,10 @@ export function selectReadyInboxBatch(
   const collector = createCollector(collectorOptions);
   const updateIds: number[] = [];
   for (const item of items) {
-    const update = item.update;
-    if (
-      !isTelegramQueueUpdate(update) ||
-      inboxKeyFor(update) !== key ||
-      typeof item.enqueuedAt !== "number" ||
-      !Number.isFinite(item.enqueuedAt) ||
-      item.enqueuedAt < 0
-    ) {
+    if (!isReadyInboxItem(key, item)) {
       throw new Error(`invalid durable Telegram inbox item ${item.updateId}`);
     }
+    const update = item.update;
     updateIds.push(item.updateId);
     const offered = collectorOffer(collector, update, item.enqueuedAt);
     if (offered.status === "passthrough" || offered.status === "ready") {
@@ -217,8 +229,10 @@ export async function promoteReadyInbox({
   loadImpl = async () =>
     (await loadQueueFile(TELEGRAM_INBOX_FILE, { strict: true })).document,
   routeImpl = routeMessageUpdate,
-  acknowledgeImpl = (key: string, updateId: number) =>
-    acknowledgeQueueHead(TELEGRAM_INBOX_FILE, key, updateId, { strict: true }),
+  acknowledgeImpl = (key: string, ids: readonly number[]) =>
+    acknowledgeQueueItems(TELEGRAM_INBOX_FILE, key, ids, { strict: true }),
+  quarantineImpl = (records: readonly DamagedQueueRecord[]) =>
+    quarantineQueueRecords(TELEGRAM_INBOX_FILE, records, { logImpl: log }),
   backoff = inboxPromotionBackoff,
 }: {
   now?: () => number;
@@ -227,16 +241,35 @@ export async function promoteReadyInbox({
     Awaited<ReturnType<typeof loadQueueFile>>["document"]
   >;
   routeImpl?: (update: TelegramQueueUpdate) => Promise<RouteMessageResult>;
-  acknowledgeImpl?: (key: string, updateId: number) => Promise<unknown>;
+  acknowledgeImpl?: (key: string, ids: readonly number[]) => Promise<unknown>;
+  quarantineImpl?: (records: readonly DamagedQueueRecord[]) => Promise<unknown>;
   backoff?: Map<string, InboxPromotionBackoff>;
 } = {}): Promise<number> {
   const snapshot = await loadImpl();
   for (const key of queueKeys(snapshot)) {
     const attemptAt = now();
     if (attemptAt < (backoff.get(key)?.nextAttemptAt ?? 0)) continue;
+    // Запись, которую входящие не могут доставить, уходит в карантин и снимается, а не
+    // роняет мост: падение здесь повторялось на каждом старте (16.10.2026).
+    const items = snapshot.queues[key];
+    const damaged = items.filter((item) => !isReadyInboxItem(key, item));
+    if (damaged.length > 0) {
+      await quarantineImpl(
+        damaged.map((record) => ({
+          chatKey: key,
+          index: items.indexOf(record),
+          reason: `invalid durable Telegram inbox item ${record.updateId}`,
+          record,
+        })),
+      );
+      await acknowledgeImpl(
+        key,
+        damaged.map((record) => record.updateId),
+      );
+    }
     const batch = selectReadyInboxBatch(
       key,
-      snapshot.queues[key],
+      items.filter((item) => !damaged.includes(item)),
       attemptAt,
       collectorOptions,
     );
@@ -244,11 +277,7 @@ export async function promoteReadyInbox({
     const routed = await routeImpl(batch.update);
     // terminal-drop — исход, после которого повторять доставку нечем и незачем:
     // владение снимается ровно так же, как после принятого хода (issue #203).
-    if (
-      routed !== "queued" &&
-      routed !== "delivered" &&
-      routed !== "terminal-drop"
-    ) {
+    if (!["queued", "delivered", "terminal-drop", "dropped"].includes(routed)) {
       const failures = (backoff.get(key)?.failures ?? 0) + 1;
       backoff.set(key, {
         failures,
@@ -257,9 +286,8 @@ export async function promoteReadyInbox({
       continue;
     }
     backoff.delete(key);
-    for (const updateId of batch.updateIds) {
-      await acknowledgeImpl(key, updateId);
-    }
+    // Одна запись: остаток пачки после обрыва несёт её update_id и закрыл бы её целиком.
+    await acknowledgeImpl(key, batch.updateIds);
   }
   const remaining = await loadImpl();
   return queueKeys(remaining).reduce(

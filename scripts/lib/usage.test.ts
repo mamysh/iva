@@ -29,6 +29,30 @@ const step = (over: Partial<UsageRecord> = {}): UsageRecord => ({
   ...over,
 });
 
+void test("old and fingerprinted rows round-trip together without changing totals", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "iva-usage-compatible-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const old = step({ in: 10, out: 2, total: 12 });
+  const recent = step({
+    step: 1,
+    in: 20,
+    out: 3,
+    total: 23,
+    request: {
+      system: "12345678",
+      cache: "23456789",
+      tools: "34567890",
+      toolCount: 0,
+    },
+  });
+  appendUsage(old, dir);
+  appendUsage(recent, dir);
+  const rows = readEntries(dir);
+  assert.deepEqual(rows, [old, recent]);
+  assert.equal(summarize(rows, { window: "last" }).last?.total, 35);
+  assert.equal("request" in rows[0], false);
+});
+
 void test("last turn reports the current context, not the sum of steps", () => {
   const entries = [
     step({ step: 0, in: 104_632, out: 160, total: 104_792 }),
@@ -496,4 +520,41 @@ void test("by source: each kind of Iva's turn is its own row, other background t
   assert.match(report, /^• background: 50 tokens/mu);
   assert.match(report, /^• chat: 40 tokens/mu);
   assert.doesNotMatch(report, /cron|digest/u);
+});
+
+void test("POISON usage skips arbitrary JSON scalars and arrays, seed 20261016", () => {
+  const dir = mkdtempSync(join(tmpdir(), "iva-poison-usage-"));
+  try {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.oneof(
+            fc.constant(null),
+            fc.boolean(),
+            fc.integer(),
+            fc.string(),
+            fc.array(fc.jsonValue()),
+          ),
+          { minLength: 1, maxLength: 15 },
+        ),
+        (bad) => {
+          const good = step({ total: 9 });
+          writeFileSync(
+            join(dir, "usage.jsonl"),
+            [
+              JSON.stringify(good),
+              ...bad.map((value) => JSON.stringify(value)),
+              "{broken",
+              JSON.stringify(good),
+            ].join("\n"),
+          );
+          assert.deepEqual(readEntries(dir), [good, good]);
+          assert.deepEqual(readEntries(dir), [good, good]);
+        },
+      ),
+      { seed: 20261016, numRuns: 100 },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

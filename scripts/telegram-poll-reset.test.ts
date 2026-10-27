@@ -81,6 +81,7 @@ type DrainOptions = {
   deliverImpl: (update: QueueUpdate) => Promise<boolean>;
   settleUntil: Map<string, number>;
   inFlight: Map<string, unknown>;
+  pins: Map<string, readonly number[]>;
 };
 type WriteQueueOptions = {
   nonce?: string;
@@ -238,21 +239,18 @@ test("scoped reset deletes the pre-reset Working message", async () => {
   status.setChatStatus(key, {
     status: "running",
     sessionId: "s1",
-    statusMessageId: 999,
+    draftId: 999,
   });
   const calls: Array<{ calledKey: string; id: string | number }> = [];
 
   await completeScopedResetState(key, {
     clearQueue: false,
-    deleteMessageImpl: async (calledKey, id) => {
-      calls.push({ calledKey, id });
-    },
   });
 
-  assert.deepEqual(calls, [{ calledKey: key, id: 999 }]);
+  assert.deepEqual(calls, []);
   const reset = status.getChatStatus(key);
   assert.equal(reset.status, "idle");
-  assert.equal(reset.statusMessageId, undefined);
+  assert.equal(reset.draftId, undefined);
 });
 
 test("failed private queue cleanup does not expose an idle tombstone", async () => {
@@ -346,6 +344,7 @@ test("startup reconciliation prevents a remotely reset private queue from draini
       },
       settleUntil: new Map(),
       inFlight: new Map(),
+      pins: new Map(),
     }),
     0,
   );
@@ -390,6 +389,7 @@ test("a pending reset intent fences its queue head while other chats drain", asy
     },
     settleUntil: new Map(),
     inFlight: new Map(),
+    pins: new Map(),
   });
 
   assert.deepEqual(delivered, [911]);
@@ -688,6 +688,7 @@ test("a message queued after failed /new survives reconcile and enters the new s
 
   const delivered: number[] = [];
   const inFlight = new Map<string, unknown>();
+  const pins = new Map<string, readonly number[]>();
   assert.equal(
     await drainReadyQueueHeads({
       deliverImpl: (candidate) => {
@@ -696,6 +697,7 @@ test("a message queued after failed /new survives reconcile and enters the new s
       },
       settleUntil: new Map(),
       inFlight,
+      pins,
     }),
     0,
   );
@@ -707,6 +709,7 @@ test("a message queued after failed /new survives reconcile and enters the new s
       },
       settleUntil: new Map(),
       inFlight,
+      pins,
     }),
     0,
   );

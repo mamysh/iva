@@ -1,5 +1,5 @@
 import { defineHook } from "eve/hooks";
-import { TURN_KINDS } from "../lib/eve-auth.js";
+import { TURN_KINDS, isHelperTurn } from "../lib/eve-auth.js";
 import { resolveModelProvider } from "../lib/model-provider.js";
 import {
   appendUsage,
@@ -8,6 +8,8 @@ import {
   stepInputTokens,
   subagentTurnId,
   usageRecord,
+  takeUsageRequest,
+  type UsageRequest,
   type ParentLike,
 } from "../lib/usage.js";
 import {
@@ -29,10 +31,12 @@ import {
 // ВАЖНО: в отличие от transcript.ts НЕ фильтруем finishReason="tool-calls" — расход есть на
 // КАЖДОМ шаге модели, включая tool-call раунды.
 
-// Модель/провайдер не приходят в событие — используем тот же строгий выбор, что и runtime.
-const { name: PROVIDER, model: MODEL } = resolveModelProvider();
+// Модель провайдера приходит в завершённом событии шага; провайдер общий для всех узлов графа.
+const { name: PROVIDER, model: TEXT_MODEL } = resolveModelProvider();
 
 interface StepData {
+  request?: UsageRequest;
+  providerModelId?: string;
   stepIndex: number;
   turnId: string;
   usage?: {
@@ -45,6 +49,7 @@ interface StepData {
 
 /** Чей шаг: сессия, канал, имя инлайн-субагента и родитель сессии-ребёнка. */
 interface StepOwner {
+  readonly model: string;
   readonly sessionId: string;
   readonly source: string;
   readonly subagent?: string;
@@ -60,10 +65,14 @@ interface Initiator {
 /** Источник строки: вид хода Ивы из bearer-атрибута, иначе вид канала. */
 function sourceOf(ctx: {
   readonly session: {
-    readonly auth?: { readonly initiator: Initiator | null };
+    readonly auth?: {
+      readonly initiator: Initiator | null;
+      readonly current?: Initiator | null;
+    };
   };
   readonly channel: { readonly kind?: string };
 }): string {
+  if (isHelperTurn(ctx)) return "helper";
   const initiator = ctx.session.auth?.initiator;
   const turn =
     initiator?.authenticator === "iva-bearer"
@@ -95,11 +104,12 @@ function record(data: StepData, owner: StepOwner): void {
     {
       source,
       provider: PROVIDER,
-      model: MODEL,
+      model: owner.model,
       sessionId,
       turnId: data.turnId ?? "",
       step: data.stepIndex ?? 0,
       subagent, // undefined для top-level — JSON.stringify его опускает
+      request: data.request,
       ...parentFields(parent),
     },
     tokens,
@@ -117,6 +127,7 @@ export default defineHook({
       // ребёнок встроенного agent идёт под своей сессией.
       recordStepInput(ctx.session.id, stepInputTokens(event.data.usage));
       record(event.data, {
+        model: event.data.providerModelId ?? TEXT_MODEL,
         sessionId: ctx.session.id,
         source: sourceOf(ctx),
         parent: ctx.session.parent,
@@ -142,6 +153,11 @@ export default defineHook({
         record(
           {
             ...inner.data,
+            request: takeUsageRequest({
+              sessionId: ctx.session.id,
+              turnId: inner.data.turnId ?? "",
+              step: inner.data.stepIndex ?? 0,
+            }),
             turnId: subagentTurnId(
               ctx.session.turn,
               event.data.subagentName,
@@ -149,6 +165,7 @@ export default defineHook({
             ),
           },
           {
+            model: inner.data.providerModelId ?? TEXT_MODEL,
             sessionId: ctx.session.id,
             source: sourceOf(ctx),
             subagent: event.data.subagentName,

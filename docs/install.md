@@ -1,5 +1,15 @@
 # Install
 
+## Through an AI agent
+
+Paste this into Claude Code, Codex or Claude Desktop. The agent will check your server or Mac, run the installer and help you get a reply from your bot. [Instructions for the agent](https://iva-agent.com/install.txt).
+
+```text
+Install Iva for me, instructions: https://iva-agent.com/install.txt
+```
+
+On macOS, the same installer uses Homebrew and launchd. Units are named `app.iva.*`; plists live in `~/Library/LaunchAgents` and logs in `~/Library/Logs/Iva/`. Log in on the Mac screen before installing. The Mac must stay on and awake for Iva to work. A night missed while the Mac is off is skipped; after sleep, launchd runs the pending calendar job when the Mac wakes. Use `iva status` and `iva logs -f` to inspect the installation.
+
 Everything between `curl` and a working bot. One command on a fresh server: the installer asks your language, walks you through five keys, and ends by messaging you from your own bot.
 
 ## Requirements
@@ -69,13 +79,13 @@ Re-running the same command later is safe: over an installation that already exi
 
 Every stage checks whether its work is already done and skips it, so a run after a failure costs seconds instead of minutes:
 
-| Stage           | Skipped when                                                                            |
-| --------------- | --------------------------------------------------------------------------------------- |
-| System packages | the command is already there (`git`, `gh`, `python3`, `ffmpeg`, `pandoc`, `pdftotext`)  |
-| `npm ci`        | `node_modules` matches `package-lock.json` — npm's own record; patches are re-applied   |
-| agent-browser   | the binary is installed and really opens a page                                         |
-| `gws`           | the binary is installed (`iva update` keeps it current)                                 |
-| Build           | `.output` carries this installer's stamp for the current commit, local edits and `.env` |
+| Stage           | Skipped when                                                                                    |
+| --------------- | ----------------------------------------------------------------------------------------------- |
+| System packages | the command is already there (`git`, `gh`, `python3`, `ffmpeg`, `pandoc`, `pdftotext`)          |
+| `npm ci`        | `node_modules` matches `package-lock.json` — npm's own record, including the pinned eve archive |
+| agent-browser   | the binary is installed and really opens a page                                                 |
+| `gws`           | the binary is installed (`iva update` keeps it current)                                         |
+| Build           | `.output` carries this installer's stamp for the current commit, local edits and `.env`         |
 
 The wizard, the vault check, the `iva` command and the systemd units are cheap, so they run every time. A run that fails is undone: the copy it made of `.env` goes back, the build it replaced is put back, and both copies are deleted — on Ctrl-C and on a dropped SSH session too. The code is never this script's to move.
 
@@ -110,7 +120,13 @@ Skipped setup, or no terminal at install time:
 cd ~/iva && npm run setup
 ```
 
-Then re-run the install command above — it finds the existing checkout and finishes the build, the systemd units and the confirmation.
+Then repeat the regular install command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smixs/iva-agent/main/install.sh | bash
+```
+
+The installer continues the first installation while autostart is still pending. It reuses completed stages, opens the wizard with your saved values as defaults, enables autostart and sends the confirmation in Telegram. On Linux it also enables linger so Iva keeps running after you leave the SSH session. Once autostart is configured, later runs use the updater.
 
 ## Next steps
 

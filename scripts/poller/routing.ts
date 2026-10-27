@@ -4,6 +4,8 @@ import {
   queueCount,
   queueHead,
   queueKeys,
+  quarantineQueueRecords,
+  type DamagedQueueRecord,
   shouldQueueBusyUpdate,
   TELEGRAM_QUEUE_FATAL_DURABILITY,
 } from "../lib/telegram-queue.ts";
@@ -12,6 +14,8 @@ import type {
   TelegramQueueMessage,
   TelegramQueueUpdate,
 } from "../lib/telegram-queue.ts";
+import { join } from "node:path";
+import { joinUpdates, queueBatchLength } from "../lib/telegram-collect.ts";
 import {
   getChatStatus,
   isCompacting,
@@ -20,6 +24,7 @@ import {
   setChatStatusIf,
 } from "#lib/run-status.ts";
 import { tr } from "#lib/i18n.ts";
+import { traceBridgeQueued } from "#lib/trace.ts";
 import {
   TELEGRAM_CLOSED_SESSION_KIND,
   telegramTurnPolicy,
@@ -36,21 +41,20 @@ import {
 import { chatKey } from "./offset.ts";
 import { pacedDeliver, type DeliverOptions } from "./deliver.ts";
 import {
-  acknowledgeTelegramQueueHead,
+  acknowledgeTelegramQueueItems,
   acknowledgeQueued,
   clearFailedDirectIngress,
-  deleteStaleWorkingMessage,
   enqueueTelegramQueueUpdate,
   hasPrivateResetIntent,
   loadQueue,
   QUEUE_DELIVERY_TIMEOUT_MS,
   QUEUE_DRAIN_BUDGET_MS,
+  queueBatchPins,
   queueDrainRotation,
   queueInFlight,
   queueSettleUntil,
   sendStaleRunNotice,
   statusGeneration,
-  undrainableLegacyLogged,
 } from "./queue.ts";
 import type { QueuePhase } from "./queue.ts";
 import { alertOnce, alertResolved } from "../lib/notice-policy.ts";
@@ -85,10 +89,6 @@ type DirectDeliveryOptions = {
   alertImpl?: typeof alertOnce;
   alertResolvedImpl?: typeof alertResolved;
   alertDataDir?: string;
-  deleteMessageImpl?: (
-    key: string,
-    messageId: string | number,
-  ) => MaybePromise<unknown>;
   now?: () => number;
   trImpl?: (en: string, ru: string) => string;
   logImpl?: (...parts: unknown[]) => void;
@@ -105,7 +105,6 @@ async function deliverDirectUpdate(
     alertImpl = alertOnce,
     alertResolvedImpl = alertResolved,
     alertDataDir = DATA_DIR,
-    deleteMessageImpl = deleteStaleWorkingMessage,
     now = Date.now,
     trImpl = tr,
     logImpl = log,
@@ -137,7 +136,6 @@ async function deliverDirectUpdate(
         startedAt,
         statusImpl,
         setStatusIfImpl,
-        deleteMessageImpl,
         now,
       });
     } catch (error) {
@@ -209,6 +207,24 @@ export type RouteMessageResult =
   | "queued"
   | "terminal-drop";
 
+// Дубль после обрыва уже в очереди: время постановки не переписываем, сбой Trace молчит.
+function traceQueued(
+  update: TelegramQueueUpdate,
+  queued: { count: number; added?: boolean },
+  logImpl: (...parts: unknown[]) => void,
+  traceImpl: (
+    update: TelegramQueueUpdate,
+    count: number,
+  ) => void = traceBridgeQueued,
+) {
+  if (queued.added === false) return;
+  try {
+    traceImpl(update, queued.count);
+  } catch (error) {
+    logImpl(`queue trace failed for ${update.update_id}:`, errorMessage(error));
+  }
+}
+
 export async function routeMessageUpdate(
   update: TelegramQueueUpdate,
   {
@@ -222,6 +238,7 @@ export async function routeMessageUpdate(
     shouldQueueImpl = shouldQueueBusyUpdate,
     enqueueImpl = enqueueTelegramQueueUpdate,
     acknowledgeImpl = acknowledgeQueued,
+    traceQueuedImpl,
     deliverImpl = pacedDelivery,
     statusImpl = getChatStatus,
     setStatusIfImpl = setChatStatusIf,
@@ -229,7 +246,6 @@ export async function routeMessageUpdate(
     alertImpl = alertOnce,
     alertResolvedImpl = alertResolved,
     alertDataDir = DATA_DIR,
-    deleteMessageImpl = deleteStaleWorkingMessage,
     now = Date.now,
     trImpl = tr,
     allowedUserIds = ALLOWED,
@@ -255,11 +271,12 @@ export async function routeMessageUpdate(
     enqueueImpl?: (
       key: string,
       candidate: TelegramQueueUpdate,
-    ) => MaybePromise<{ count: number }>;
+    ) => MaybePromise<{ count: number; added?: boolean }>;
     acknowledgeImpl?: (
       update: TelegramQueueUpdate,
       count: number,
     ) => MaybePromise<unknown>;
+    traceQueuedImpl?: (update: TelegramQueueUpdate, count: number) => void;
     deliverImpl?: DeliverImpl;
     statusImpl?: StatusImpl;
     setStatusIfImpl?: SetStatusIfImpl;
@@ -267,10 +284,6 @@ export async function routeMessageUpdate(
     alertImpl?: typeof alertOnce;
     alertResolvedImpl?: typeof alertResolved;
     alertDataDir?: string;
-    deleteMessageImpl?: (
-      key: string,
-      messageId: string | number,
-    ) => MaybePromise<unknown>;
     now?: () => number;
     trImpl?: (en: string, ru: string) => string;
     allowedUserIds?: ReadonlySet<string>;
@@ -292,11 +305,12 @@ export async function routeMessageUpdate(
     (resetPending || !replyToBotImpl(update.message) || compactingImpl(key))
   ) {
     const queue = await loadQueueImpl();
+    // Прямая доставка не обгоняет очередь чата (specs/QueueDrain.tla, свидетель -switch).
     const mustQueue =
       resetPending ||
       inFlight.has(key) ||
-      (turnPolicy === "queue" &&
-        (runningImpl(key) || queueCountImpl(queue, key) > 0));
+      queueCountImpl(queue, key) > 0 ||
+      (turnPolicy === "queue" && runningImpl(key));
     if (mustQueue) {
       if (!shouldQueueImpl(update, { allowedUserIds, botUsername })) {
         return "dropped";
@@ -311,6 +325,7 @@ export async function routeMessageUpdate(
         );
         return "enqueue-failed";
       }
+      traceQueued(update, queued, logImpl, traceQueuedImpl);
       await acknowledgeImpl(update, queued.count);
       return "queued";
     }
@@ -325,11 +340,46 @@ export async function routeMessageUpdate(
     alertImpl,
     alertResolvedImpl,
     alertDataDir,
-    deleteMessageImpl,
     now,
     trImpl,
     logImpl,
   });
+}
+
+// Пачка с головы очереди: закреп (queueBatchPins), пока его id с головы, иначе queueBatchLength.
+// Закреп — одна доставка: остаток, который сброс /new оставил от неё (id не обязаны
+// расти), идёт под её же update_id, и ledger eve ответит handled, а не вторым ходом.
+function queueBatch(
+  snapshot: TelegramQueueDocument,
+  key: string,
+  head: TelegramQueueUpdate,
+  pins: Map<string, readonly number[]>,
+) {
+  const items = snapshot.queues[key];
+  const end = items.findIndex((item, index) => index > 0 && !item.update);
+  const replayable = end < 0 ? items : items.slice(0, end);
+  let pin = pins.get(key) ?? [];
+  let count = replayable.findIndex((item) => !pin.includes(item.updateId));
+  if (count < 0) count = replayable.length;
+  if (count === 0) {
+    const rest = replayable.slice(1).flatMap((item) => item.update ?? []);
+    count = queueBatchLength([head, ...rest]);
+    pin = replayable.slice(0, count).map((item) => item.updateId);
+    pins.set(key, pin);
+  }
+  const batch = replayable.slice(0, count);
+  const copies = batch
+    .slice(1)
+    .flatMap((item) => materializeQueueItem(key, item) ?? []);
+  const update = joinUpdates([head, ...copies]);
+  const updateId = pin[pin.length - 1];
+  return {
+    updateIds: batch.map((item) => item.updateId),
+    update:
+      update.update_id === updateId
+        ? update
+        : { ...update, update_id: updateId },
+  };
 }
 
 export async function drainReadyQueueHeads({
@@ -347,31 +397,43 @@ export async function drainReadyQueueHeads({
       retry: false,
       timeoutMs,
     }),
-  acknowledgeImpl = acknowledgeTelegramQueueHead,
+  acknowledgeImpl = acknowledgeTelegramQueueItems,
   legacyAllowedUserIds = ALLOWED,
   now = Date.now,
   settleUntil = queueSettleUntil,
   inFlight = queueInFlight,
+  pins = queueBatchPins,
   rotationState = queueDrainRotation,
   passBudgetMs = QUEUE_DRAIN_BUDGET_MS,
   deliveryTimeoutMs = QUEUE_DELIVERY_TIMEOUT_MS,
   gateWaitMs = RUN_STALE_MS,
   resetPendingImpl = hasPrivateResetIntent,
+  quarantineImpl = (records: readonly DamagedQueueRecord[]) =>
+    quarantineQueueRecords(join(DATA_DIR, "telegram-queue.json"), records, {
+      logImpl: log,
+    }),
 }: {
   loadImpl?: () => MaybePromise<TelegramQueueDocument>;
   runningImpl?: (key: string) => boolean;
   statusImpl?: StatusImpl;
   deliverImpl?: DeliverImpl;
-  acknowledgeImpl?: (key: string, updateId: number) => MaybePromise<unknown>;
+  acknowledgeImpl?: (
+    key: string,
+    updateIds: readonly number[],
+  ) => MaybePromise<unknown>;
   legacyAllowedUserIds?: ReadonlySet<string>;
   now?: () => number;
   settleUntil?: Map<string, number>;
   inFlight?: Map<string, QueuePhase>;
+  pins?: Map<string, readonly number[]>;
   rotationState?: { afterKey: string | null };
   passBudgetMs?: number;
   deliveryTimeoutMs?: number;
   gateWaitMs?: number;
   resetPendingImpl?: (chatKey: string) => boolean;
+  quarantineImpl?: (
+    records: readonly DamagedQueueRecord[],
+  ) => MaybePromise<unknown>;
 } = {}) {
   const snapshot = await loadImpl();
   const keys = [...new Set([...queueKeys(snapshot), ...inFlight.keys()])];
@@ -418,16 +480,26 @@ export async function drainReadyQueueHeads({
     const item = queueHead(snapshot, key);
     if (!item) continue;
     if (running || (settleUntil.get(key) ?? 0) > now()) continue;
-    const update = materializeQueueItem(key, item, { legacyAllowedUserIds });
-    if (!update) {
-      if (!undrainableLegacyLogged.has(key)) {
-        log(
-          `queued legacy messages for ${key} cannot be replayed because their author is not verifiable`,
-        );
-        undrainableLegacyLogged.add(key);
+    const head = materializeQueueItem(key, item, { legacyAllowedUserIds });
+    if (!head) {
+      try {
+        await quarantineImpl([
+          {
+            chatKey: key,
+            index: 0,
+            reason: "unreplayable queue head",
+            record: item,
+          },
+        ]);
+      } catch (error) {
+        log("queue head quarantine failed:", key, errorCode(error));
+        continue;
       }
+      await acknowledgeImpl(key, [item.updateId]);
+      pins.delete(key);
       continue;
     }
+    const { updateIds, update } = queueBatch(snapshot, key, head, pins);
     const timeoutMs = Math.max(
       1,
       Math.min(deliveryTimeoutMs, deadline - now()),
@@ -440,7 +512,7 @@ export async function drainReadyQueueHeads({
       accepted = await deliverImpl(update, { timeoutMs });
     } catch (error) {
       log(
-        `queued update ${item.updateId} delivery failed:`,
+        `queued updates ${updateIds.join(",")} delivery failed:`,
         errorMessage(error),
       );
     }
@@ -449,10 +521,10 @@ export async function drainReadyQueueHeads({
       continue;
     }
     if (accepted === TELEGRAM_CLOSED_SESSION_KIND) {
-      // Ход не начнётся никогда: голову снимаем тем же ack, что и обработанную,
-      // иначе очередь этого чата встаёт на ней навсегда (issue #203).
+      // Ход не начнётся никогда: пачку (ответ боту всегда один в ней) снимаем тем же
+      // ack, что и обработанную, иначе очередь чата встаёт на ней навсегда (issue #203).
       log(
-        `dropped queued update ${item.updateId} for ${key} — the target session is closed`,
+        `dropped queued updates ${updateIds.join(",")} for ${key} — the target session is closed`,
       );
       inFlight.delete(key);
     } else if (accepted === "handled") {
@@ -477,19 +549,21 @@ export async function drainReadyQueueHeads({
         });
       }
     }
-    // Keep a just-accepted head until its removal is itself durable. If this write
-    // fails, the next pass deliberately replays the same head (at-least-once).
+    // Keep a just-accepted batch pinned until its removal is itself durable. If this
+    // write fails, the next pass deliberately replays the same batch (at-least-once).
     try {
-      await acknowledgeImpl(key, item.updateId);
+      await acknowledgeImpl(key, updateIds);
+      pins.delete(key);
       settleUntil.set(key, now() + Math.max(SETTLE_MS, 0));
     } catch (error) {
       if (errorCode(error) === TELEGRAM_QUEUE_FATAL_DURABILITY) {
         inFlight.delete(key);
+        pins.delete(key);
         rotationState.afterKey = null;
         throw error;
       }
       log(
-        `queued update ${item.updateId} ack failed; head retained or restored:`,
+        `queued updates ${updateIds.join(",")} ack failed; batch retained or restored:`,
         errorMessage(error),
       );
     }

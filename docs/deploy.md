@@ -1,5 +1,7 @@
 # Deploy
 
+On macOS, `install.sh` uses launchd with unit labels `app.iva.*` and plists in `~/Library/LaunchAgents`. The same `iva status/restart/start/stop/logs/update/doctor/uninstall` commands operate those units. Logs are in `~/Library/Logs/Iva/`. Units run in the logged-in GUI session, so the Mac must be on and awake. A calendar job missed during sleep runs on wake; a night while the Mac is off is skipped.
+
 Iva runs on one VPS as two systemd user services, two systemd watchdog timers, and four in-process eve schedules. `install.sh` sets all of it up ([install](./install.md)); this page is what's actually running and how to operate it.
 
 ## Transport: long polling
@@ -22,12 +24,12 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://<your-domain>/eve/v1/telegram",
        "secret_token":"'"$TELEGRAM_WEBHOOK_SECRET_TOKEN"'",
-       "allowed_updates":["message","callback_query"]}'
+       "allowed_updates":["message","callback_query","stopped_message_generation"]}'
 ```
 
 Note: `getUpdates` — which the setup wizard uses to discover your user ID — stops working while a webhook is registered.
 
-What you give up without the bridge: the out-of-band commands are gone (`/menu`, `/stop`, `/new`, `/restart`, `/start`, `/model`, `/think`, `/update`, `/usage`, `/help` reach the model as ordinary text instead of being handled), and so are the busy-time queue with its 👀 acknowledgement, per-chat pacing, and durable offset. Only `/task`, `/tasks` and `/digest` are model-routed by design. The ⏹ Stop button keeps working in both modes: the channel answers the tap itself and calls its own cancel route.
+What you give up without the bridge: the out-of-band commands are gone (`/menu`, `/stop`, `/new`, `/restart`, `/start`, `/model`, `/think`, `/update`, `/usage`, `/help` reach the model as ordinary text instead of being handled), and so are the busy-time queue with its 👀 acknowledgement, per-chat pacing, and durable offset. Only `/task`, `/tasks` and `/digest` are model-routed by design. The native ■ control in a private chat draft works in both modes. The channel verifies the webhook secret and cancels the draft's exact turn through its own cancel route. Groups and topics show typing; use `/stop` with the bridge.
 
 ## systemd units
 

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -22,7 +23,7 @@ import {
   createQueueItem,
   enqueueItem,
   queueHead,
-  removeQueueHead,
+  removeQueueItems,
 } from "./lib/telegram-queue.ts";
 import {
   addTelegramQueueReceipt,
@@ -411,7 +412,7 @@ test("intentional authored no-send accepts queued contact, then the later text k
     enqueueItem({ version: 1, queues: {} }, "1:", createQueueItem(contact, 1))
       .document,
     "1:",
-    createQueueItem(privateUpdate(102, "after contact"), 2),
+    createQueueItem(privateUpdate(102, "/x"), 2),
   ).document;
   const sent: number[] = [];
   const deliverImpl = productionTelegramDelivery(
@@ -429,10 +430,11 @@ test("intentional authored no-send accepts queued contact, then the later text k
       },
     },
   );
-  const acknowledgeImpl = async (key: string, updateId: number) => {
-    document = removeQueueHead(document, key, updateId);
+  const acknowledgeImpl = async (key: string, updateIds: readonly number[]) => {
+    document = removeQueueItems(document, key, updateIds).document;
   };
   const inFlight = new Map();
+  const pins = new Map();
 
   assert.equal(
     await drainReadyQueueHeads({
@@ -442,6 +444,7 @@ test("intentional authored no-send accepts queued contact, then the later text k
       acknowledgeImpl,
       settleUntil: new Map(),
       inFlight,
+      pins,
     }),
     1,
   );
@@ -456,6 +459,7 @@ test("intentional authored no-send accepts queued contact, then the later text k
       acknowledgeImpl,
       settleUntil: new Map(),
       inFlight,
+      pins,
     }),
     0,
   );
@@ -567,7 +571,7 @@ test("production Telegram deferred failure retains the head and cannot start the
       createQueueItem(privateUpdate(101, "first"), 1),
     ).document,
     "1:",
-    createQueueItem(privateUpdate(102, "second"), 2),
+    createQueueItem(privateUpdate(102, "/x"), 2),
   ).document;
   const attempts: number[] = [];
 
@@ -578,11 +582,12 @@ test("production Telegram deferred failure retains the head and cannot start the
       attempts.push(update.update_id);
       throw new Error("injected Eve acceptance failure");
     }),
-    acknowledgeImpl: async (key: string, updateId: number) => {
-      document = removeQueueHead(document, key, updateId);
+    acknowledgeImpl: async (key: string, updateIds: readonly number[]) => {
+      document = removeQueueItems(document, key, updateIds).document;
     },
     settleUntil: new Map(),
     inFlight: new Map(),
+    pins: new Map(),
   });
 
   assert.equal(remaining, 2);
@@ -590,16 +595,16 @@ test("production Telegram deferred failure retains the head and cannot start the
   assert.deepEqual(attempts, [101]);
 });
 
-test("production Telegram receipt removes exactly one head only after Eve send resolves", async () => {
-  let document = enqueueItem(
-    enqueueItem(
-      { version: 1, queues: {} },
-      "1:",
-      createQueueItem(privateUpdate(101, "first"), 1),
-    ).document,
-    "1:",
-    createQueueItem(privateUpdate(102, "second"), 2),
-  ).document;
+test("production Telegram receipt removes exactly the batch only after Eve send resolves", async () => {
+  let document = [
+    privateUpdate(101, "first"),
+    privateUpdate(102, "second"),
+    privateUpdate(103, "/x"),
+  ].reduce<ReturnType<typeof enqueueItem>["document"]>(
+    (current, update, index) =>
+      enqueueItem(current, "1:", createQueueItem(update, index + 1)).document,
+    { version: 1, queues: {} },
+  );
   const acceptance = deferred();
   const attempts: number[] = [];
 
@@ -610,24 +615,25 @@ test("production Telegram receipt removes exactly one head only after Eve send r
       attempts.push(update.update_id);
       return acceptance.promise;
     }),
-    acknowledgeImpl: async (key: string, updateId: number) => {
-      document = removeQueueHead(document, key, updateId);
+    acknowledgeImpl: async (key: string, updateIds: readonly number[]) => {
+      document = removeQueueItems(document, key, updateIds).document;
     },
     settleUntil: new Map(),
     inFlight: new Map(),
+    pins: new Map(),
   });
 
   await waitFor(() => attempts.length === 1, "the first delivery attempt");
   assert.equal(queueHead(document, "1:")?.updateId, 101);
-  assert.deepEqual(attempts, [101]);
+  assert.deepEqual(attempts, [102], "the batch speaks with its last id");
 
   acceptance.resolve({ id: "accepted-session" });
   assert.equal(await drain, 1);
-  assert.equal(queueHead(document, "1:")?.updateId, 102);
+  assert.equal(queueHead(document, "1:")?.updateId, 103);
   assert.deepEqual(
     attempts,
-    [101],
-    "one drain pass must keep one in-flight head per chat",
+    [102],
+    "one drain pass must keep one in-flight batch per chat",
   );
 });
 
@@ -1251,4 +1257,58 @@ test("an ordinary send failure stays transient and never claims the closed-sessi
     console.error = priorError;
   }
   assert.equal(attempts, 1, "транзиентный сбой не перемаршрутизируется");
+});
+
+test("POISON completed ledger retains good ids while removing only bad entries", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "iva-poison-ledger-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const completedUpdatesFile = join(root, "completed.json");
+  writeFileSync(
+    completedUpdatesFile,
+    JSON.stringify({
+      botId: "999",
+      updates: [701, null, -1, "private id", {}, 702],
+    }),
+  );
+  let sends = 0;
+  const logs: string[] = [];
+  t.mock.method(console, "error", (...parts: unknown[]) =>
+    logs.push(parts.map(String).join(" ")),
+  );
+  const delivery = productionTelegramDelivery(
+    async () => ({ id: `accepted-${++sends}` }),
+    { completedUpdatesFile },
+  );
+  for (const id of [701, 702, 701])
+    assert.equal(await delivery(privateUpdate(id, "duplicate")), "handled");
+  assert.equal(sends, 0);
+  assert.deepEqual(JSON.parse(readFileSync(completedUpdatesFile, "utf8")), {
+    botId: "999",
+    updates: [701, 702],
+  });
+  assert.ok(logs.length > 0);
+  assert.ok(logs.every((line) => !line.includes("private id")));
+  const copies = readdirSync(root).filter((name) => name.includes(".damaged-"));
+  assert.equal(copies.length, 4);
+  assert.deepEqual(
+    copies
+      .map(
+        (name) =>
+          (
+            JSON.parse(readFileSync(join(root, name), "utf8")) as {
+              record: unknown;
+            }
+          ).record,
+      )
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    [null, -1, "private id", {}].sort((a, b) =>
+      JSON.stringify(a).localeCompare(JSON.stringify(b)),
+    ),
+  );
+  assert.equal(await delivery(privateUpdate(703, "new")), true);
+  assert.equal(sends, 1);
+  assert.deepEqual(JSON.parse(readFileSync(completedUpdatesFile, "utf8")), {
+    botId: "999",
+    updates: [701, 702, 703],
+  });
 });

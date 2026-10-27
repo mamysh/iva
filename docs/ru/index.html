@@ -19,9 +19,11 @@
     <link rel="alternate" hreflang="en" href="https://iva-agent.com/" />
     <link rel="alternate" hreflang="ru" href="https://iva-agent.com/ru/" />
     <link rel="alternate" hreflang="x-default" href="https://iva-agent.com/" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -44,8 +46,8 @@
       content="Open-source AI-ассистент, живущий в вашем Telegram. Многослойная память, которая складывается в хранилище, принадлежащее вам, голос, зрение, ваш личный аккаунт. Одна команда, ваш сервер, бесплатно и open source."
     />
     <meta property="og:url" content="https://iva-agent.com/ru/" />
-    <meta property="og:image" content="https://iva-agent.com/iva-og.jpg" />
-    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image" content="https://iva-agent.com/brand/og-dark-ru.png" />
+    <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1280" />
     <meta property="og:image:height" content="640" />
     <meta
@@ -63,7 +65,7 @@
       name="twitter:description"
       content="Open-source AI-ассистент, живущий в вашем Telegram. Многослойная память, голос, зрение, ваш личный аккаунт. Одна команда, ваш сервер, бесплатно и open source."
     />
-    <meta name="twitter:image" content="https://iva-agent.com/iva-og.jpg" />
+    <meta name="twitter:image" content="https://iva-agent.com/brand/og-dark-ru.png" />
     <meta
       name="twitter:image:alt"
       content="Iva — лучший личный AI-ассистент для Telegram"
@@ -79,7 +81,7 @@
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Linux, macOS",
         "url": "https://iva-agent.com/ru/",
-        "image": "https://iva-agent.com/iva-og.jpg",
+        "image": "https://iva-agent.com/brand/og-dark-ru.png",
         "license": "https://github.com/smixs/iva-agent/blob/main/LICENSE",
         "codeRepository": "https://github.com/smixs/iva-agent",
         "inLanguage": ["en", "ru"],
@@ -215,10 +217,10 @@
         letter-spacing: 0.04em;
         font-size: 15px;
       }
-      .nav-logo svg {
-        width: 17px;
-        height: 17px;
-        color: var(--green);
+      .nav-logo img {
+        width: 54px;
+        height: 30px;
+        flex-shrink: 0;
       }
       .nav-links {
         display: flex;
@@ -317,6 +319,11 @@
         color: #fff;
         padding-right: 0.06em;
       }
+      .hero h1 img {
+        display: block;
+        width: clamp(260px, 34vw, 440px);
+        height: auto;
+      }
       .hero-sub {
         margin-top: 26px;
         font-size: clamp(13px, 1.6vw, 15px);
@@ -373,7 +380,7 @@
           transform 180ms var(--ease-out),
           box-shadow 220ms var(--ease-out);
       }
-      .btn-primary svg {
+      .btn svg {
         width: 16px;
         height: 16px;
         display: block;
@@ -475,7 +482,7 @@
         gap: 12px;
         padding: 10px 12px 10px 20px;
         border-radius: 9999px;
-        max-width: min(92vw, 640px);
+        max-width: min(92vw, 760px);
       }
       .hero-install code {
         font-size: 12.5px;
@@ -514,6 +521,21 @@
       .hero-install button.done {
         color: #bfe3b0;
       }
+      .hero-agent {
+        flex-direction: column;
+        padding: 10px 12px;
+        border-radius: 24px;
+      }
+      .hero-agent code {
+        max-width: 100%;
+        white-space: normal;
+        user-select: text;
+      }
+      .hero-agent-hint {
+        font-size: clamp(10px, 2.5vw, 12px);
+        white-space: nowrap;
+        color: rgba(255, 255, 255, 0.7);
+      }
       .hero-meta {
         font-size: 12px;
         letter-spacing: 0.18em;
@@ -539,6 +561,66 @@
         .hero-bottom {
           justify-content: center;
           padding-bottom: 0;
+        }
+      }
+
+      .btn-agent {
+        border: 0;
+        cursor: pointer;
+        font-family: inherit;
+        line-height: inherit;
+      }
+      .btn-agent svg {
+        width: 16px;
+        height: 16px;
+        display: block;
+        flex-shrink: 0;
+      }
+      .btn-agent.done {
+        color: #2f6b2a;
+      }
+      @media (max-width: 600px) {
+        .hero-cta {
+          width: 100%;
+          max-width: 360px;
+          align-items: stretch;
+          gap: 14px;
+        }
+        .cta-row {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 10px;
+        }
+        .cta-row .btn {
+          justify-content: center;
+          padding-block: 14px;
+        }
+        .hero-agent-hint {
+          white-space: normal;
+          text-align: center;
+          margin-top: -6px;
+        }
+        .hero-install {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 10px;
+          max-width: none;
+          padding: 14px;
+          border-radius: 20px;
+        }
+        .hero-install code {
+          white-space: normal;
+          overflow-wrap: anywhere;
+          line-height: 1.55;
+          font-size: 12px;
+        }
+        .hero-install button {
+          padding: 10px 14px;
+        }
+        .hero-meta {
+          text-align: center;
+          letter-spacing: 0.12em;
+          line-height: 1.8;
         }
       }
 
@@ -885,28 +967,14 @@
         }
       }
     </style>
-    <link rel="stylesheet" href="/analytics.css?v=1" />
-    <script defer src="/analytics.js?v=1"></script>
+    <link rel="stylesheet" href="/analytics.css?v=2" />
+    <script defer src="/analytics.js?v=2"></script>
   </head>
   <body>
     <nav aria-label="Основная навигация">
       <div class="liquid-glass nav-pill">
         <a class="nav-logo" href="#" aria-label="Iva, на главную">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M12 4v16" />
-            <path d="M12 7c-1.2-2.2-3.6-3-6-2.6.5 2.6 2.8 3.8 6 2.6z" />
-            <path d="M12 11c1.2-2.2 3.6-3 6-2.6-.5 2.6-2.8 3.8-6 2.6z" />
-            <path d="M12 15c-1-1.8-3-2.5-5-2.2.4 2.2 2.3 3.2 5 2.2z" />
-          </svg>
-          IVA
+          <img src="/brand/logo-dark.svg" alt="IVA" width="54" height="30" />
         </a>
         <div class="nav-links">
           <a href="#memory">Память</a>
@@ -929,7 +997,7 @@
         />
       </div>
       <div class="hero-mid">
-        <h1>IVA</h1>
+        <h1><img src="/brand/logo-dark.svg" alt="IVA" width="2243" height="1257" /></h1>
         <p class="hero-sub">Лучший личный AI-ассистент для Telegram</p>
       </div>
       <div class="hero-bottom">
@@ -939,8 +1007,21 @@
         </p>
         <div class="hero-cta">
           <div class="cta-row">
+            <button
+              id="copy-ai"
+              type="button"
+              class="btn btn-primary btn-agent"
+              aria-describedby="agent-hint"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>
+              <span class="lbl">Установить с помощью ИИ-агента</span>
+            </button>
+            <code id="agent-prompt" hidden
+              >Установи мне Иву, инструкция:
+              https://iva-agent.com/install.txt</code
+            >
             <a
-              class="btn btn-primary"
+              class="btn btn-glass liquid-glass"
               href="https://github.com/smixs/iva-agent/blob/main/README.ru.md"
             >
               <svg
@@ -997,6 +1078,9 @@
               Star on GitHub
             </a>
           </div>
+          <p id="agent-hint" class="hero-agent-hint">
+            ИИ-агент: вставьте скопированное в Claude Code, Codex или Claude Desktop
+          </p>
           <div class="liquid-glass hero-install">
             <code id="cmd"
               >curl -fsSL
@@ -1416,7 +1500,7 @@
               >Majento</a
             >
           </p>
-          <span>Iva</span>
+          <span><img src="/brand/logo-dark.svg" alt="IVA" width="43" height="24" style="vertical-align: middle" /></span>
           Open source ·
           <a href="https://github.com/smixs/iva-agent/blob/main/LICENSE">MIT</a
           ><br />
@@ -1487,22 +1571,37 @@
 
       function wireCopy(btnId, cmdId) {
         var btn = document.getElementById(btnId);
-        if (!btn) return;
+        var source = document.getElementById(cmdId);
+        if (!btn || !source) return;
+        var target = btn.querySelector(".lbl") || btn;
+        var label = target.textContent;
         btn.addEventListener("click", function () {
-          var cmd = document
-            .getElementById(cmdId)
-            .textContent.replace(/\s+/g, " ")
-            .trim();
-          navigator.clipboard.writeText(cmd).then(function () {
-            btn.textContent = "Скопировано";
+          var cmd = source.textContent.replace(/\s+/g, " ").trim();
+          function selectText() {
+            source.hidden = false;
+            var range = document.createRange();
+            range.selectNodeContents(source);
+            var selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            target.textContent = "Фраза выделена. Скопируйте её";
+          }
+          function copied() {
+            target.textContent = "Скопировано";
             btn.classList.add("done");
             setTimeout(function () {
-              btn.textContent = "Копировать";
+              target.textContent = label;
               btn.classList.remove("done");
             }, 1600);
-          });
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(cmd).then(copied).catch(selectText);
+          } else {
+            selectText();
+          }
         });
       }
+      wireCopy("copy-ai", "agent-prompt");
       wireCopy("copy", "cmd");
       wireCopy("copy2", "cmd2");
 

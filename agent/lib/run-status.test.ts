@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns test registration promises. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -328,6 +328,44 @@ test("a fresh orphan lock fails within a bounded timeout", () => {
   rmSync(lock, { force: true });
 });
 
+test("ordinary writers preserve an orphan lock older than recovery's threshold", () => {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    IVA_RUN_STATUS_LOCK_TIMEOUT_MS: "150",
+  };
+  delete env.IVA_RUN_STATUS_LOCK_STALE_MS;
+  execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+    import assert from "node:assert/strict";
+    import fs from "node:fs";
+    import { join } from "node:path";
+    import { acquireFileLockSync } from ${JSON.stringify(new URL("./fs-atomic.ts", import.meta.url).href)};
+    const status = await import(${JSON.stringify(pathToFileURL(modulePath).href)});
+    const key = "ordinary-threshold:";
+    status.setChatStatus(key, { status: "running", sessionId: "ordinary" });
+    const file = join(${JSON.stringify(dataDir)}, "run-status.d", Buffer.from(key).toString("base64url") + ".json");
+    const before = fs.readFileSync(file, "utf8");
+    const lock = file + ".lock";
+    assert.ok(acquireFileLockSync(lock, { timeoutMs: 100, staleMs: 30_000 }));
+    const age = new Date(Date.now() - 3_000);
+    fs.utimesSync(lock, age, age);
+    try {
+      assert.throws(() => status.setChatStatus(key, { status: "idle" }), /run-status lock timeout/u);
+      assert.equal(fs.readFileSync(file, "utf8"), before);
+      assert.equal(fs.existsSync(lock), true);
+    } finally {
+      fs.rmSync(lock, { recursive: true, force: true });
+    }
+  `,
+    ],
+    { env, stdio: "pipe" },
+  );
+});
+
 test("one corrupt per-chat file is quarantined without blocking neighbors", () => {
   const corruptKey = "corrupt:";
   const neighborKey = "neighbor:";
@@ -512,4 +550,43 @@ test("a write with touch: false moves generation but keeps updatedAt", async () 
   await new Promise((resolve) => setTimeout(resolve, 5));
   const touched = status.setChatStatusIf(chatKey, { status: "running" }, {});
   assert.ok((touched?.updatedAt ?? 0) > (first.updatedAt ?? 0));
+});
+
+test("legacy status UI fields survive a heartbeat and retire with the turn pair", () => {
+  const key = "legacy-ui:";
+  const dir = join(dataDir, "run-status.d");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${Buffer.from(key).toString("base64url")}.json`);
+  writeFileSync(
+    file,
+    JSON.stringify({
+      status: "running",
+      sessionId: "s",
+      turnId: "t",
+      statusMessageId: 1,
+      statusAt: 2,
+      queuedStatusMessageId: 3,
+      queuedStatusAt: 4,
+    }),
+  );
+  assert.equal(status.getChatStatus(key)?.sessionId, "s");
+  status.setChatStatus(key, { draftId: 41 });
+  const written = JSON.parse(readFileSync(file, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const fields = [
+    "statusMessageId",
+    "statusAt",
+    "queuedStatusMessageId",
+    "queuedStatusAt",
+  ];
+  for (const [index, field] of fields.entries())
+    assert.equal(written[field], index + 1);
+  assert.equal(written.sessionId, "s");
+  assert.equal(written.turnId, "t");
+  assert.equal(written.draftId, 41);
+  status.setChatStatus(key, { turnId: "next-turn" });
+  for (const field of fields)
+    assert.equal(Object.hasOwn(status.getChatStatus(key) ?? {}, field), false);
 });

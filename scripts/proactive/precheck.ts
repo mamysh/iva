@@ -10,7 +10,10 @@
 // Сбои (T3) — `systemctl --user`: таймерные сервисы пользователя и сервисы плагинов; идут и при
 // выключенном тумблере.
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { serviceManager } from "../lib/service-manager.ts";
+import { describeLaunchd } from "../lib/launchd.ts";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -30,6 +33,8 @@ export type WatchItem = {
   readonly unread: number;
   readonly from: Sender;
   readonly note?: string;
+  readonly message_id?: number;
+  readonly topic_id?: number;
   /**
    * Сбой регулярной задачи (T3): пределы и тумблер его не держат. `essence` — существо для
    * дросселя Alert, `at` — время выхода (сдвигает `failuresSeenUpToMs` в заявке).
@@ -187,10 +192,54 @@ async function listChats(
     );
     if (rows.length >= limit)
       log(`proactive: telegram ${chatType} chats hit the limit ${limit}`);
-    for (const item of rows.map((row) => chatItem(row, botId)))
-      if (item) items.set(item.key, item);
+    for (const item of rows.map((row) => chatItem(row, botId))) {
+      if (!item) continue;
+      const metadata =
+        chatType === "group" ? await groupMessage(call, item, log) : {};
+      items.set(item.key, { ...item, ...metadata });
+    }
   }
   return [...items.values()];
+}
+
+/** Последнее сообщение группы; тему берём из канонической ссылки, обычный reply_to ей не является. */
+async function groupMessage(
+  call: CallTool,
+  item: WatchItem,
+  log: (line: string) => void,
+) {
+  let message_id: number | undefined;
+  try {
+    const chat_id = Number(item.key.slice(3));
+    const result = parseJson(
+      await call("list_messages", { chat_id, limit: 1 }),
+    ) as { results?: Array<{ id?: unknown }> } | undefined;
+    message_id = count(result?.results?.[0]?.id) || undefined;
+    if (message_id === undefined) return {};
+    const link = await call("get_message_link", { chat_id, message_id });
+    const topic_id = topicOfLink(link, item, message_id);
+    return { message_id, ...(topic_id === undefined ? {} : { topic_id }) };
+  } catch {
+    log(`proactive: telegram message metadata unavailable for ${item.key}`);
+    return message_id === undefined ? {} : { message_id };
+  }
+}
+
+/** ExportMessageLink возвращает маршрут темы. Сверяем чат и сообщение перед передачей id. */
+function topicOfLink(link: string, item: WatchItem, message_id: number) {
+  const exported = /^Link: (https:\/\/t\.me\/\S+)(?:\n|$)/u.exec(link)?.[1];
+  if (!exported) return undefined;
+  const url = new URL(exported);
+  const path = url.pathname.slice(1).split("/");
+  const peer = path.shift();
+  const matches =
+    peer === "c"
+      ? `-100${path.shift()}` === item.key.slice(3)
+      : peer === item.from.username;
+  if (!matches || path.length > 2 || Number(path.at(-1)) !== message_id)
+    return undefined;
+  const topic = path.length === 2 ? path[0] : url.searchParams.get("thread");
+  return count(Number(topic)) || undefined;
 }
 
 /** Личные чаты и группы с упоминаниями; нет токена прокси — не подключён. */
@@ -388,11 +437,11 @@ const tokens = (out: string) =>
 /**
  * Время выхода из `systemctl show`: обычный формат «Sat 2026-10-04 03:30:47 UTC» / «… +05» (вызов
  * идёт с TZ=UTC) или `@<секунды>` (`--timestamp=unix`; до systemd 251 значения нет и systemctl
- * отвергает флаг, поэтому вызов его не передаёт). Пусто — не выходил. Иное — ошибка: источник
+ * отвергает флаг, поэтому вызов его не передаёт). Пусто или n/a — не выходил. Иное — ошибка: источник
  * `error`, пункт `check:timers`.
  */
 export function exitTime(value: string): number | null {
-  if (value === "") return null;
+  if (value === "" || value === "n/a") return null;
   const unix = /^@(\d{1,12})$/u.exec(value);
   if (unix) return Number(unix[1]) * 1000;
   const m =
@@ -412,6 +461,25 @@ export function exitTime(value: string): number | null {
  * последнего запуска не `success` (цикл перезапусков).
  */
 async function unitStates(run: Systemctl) {
+  if (run === runSystemctl && serviceManager() === "launchd") {
+    const dir = join(homedir(), "Library/LaunchAgents");
+    const names = existsSync(dir)
+      ? readdirSync(dir)
+          .filter((name) => /^app\.iva\..+\.plist$/u.test(name))
+          .map((name) => `${name.slice(8, -6)}.service`)
+      : [];
+    return {
+      units: describeLaunchd(names).map((state) => ({
+        unit: state.unit,
+        timer: state.nextRun !== null,
+        failing: state.lastExit !== null && state.lastExit !== 0 && !state.pid,
+        essence: String(state.lastExit ?? ""),
+        at: Date.now(),
+        note: `a regular job failed: ${state.unit}: exit status ${state.lastExit}`,
+      })),
+      error: null,
+    };
+  }
   const listed = await systemctl(run, "list-timers", "--all", "--no-legend");
   // Колонки `next left last passed unit activates`: сервисы — после имени таймера.
   const timers = new Set(
@@ -424,7 +492,7 @@ async function unitStates(run: Systemctl) {
   );
   const plugins = tokens(await systemctl(run, ...PLUGIN_UNITS.split(" ")));
   const names = [...new Set([...timers, ...plugins.map((row) => row[0])])];
-  if (names.length === 0) return [];
+  if (names.length === 0) return { units: [], error: null };
   const shown = await systemctl(run, ...SHOW.split(" "), ...names);
   // Блоки `show` разделены пустой строкой, свойство — `Имя=значение`.
   const blocks = new Map(
@@ -435,7 +503,8 @@ async function unitStates(run: Systemctl) {
       return [p.Id, p];
     }),
   );
-  return names.map((unit) => {
+  const errors: string[] = [];
+  const units = names.flatMap((unit) => {
     const p = blocks.get(unit) ?? {};
     const timer = timers.has(unit);
     const [status = "", result = ""] = [p.ExecMainStatus, p.Result];
@@ -443,16 +512,26 @@ async function unitStates(run: Systemctl) {
     // Сервис с Restart= падает по кругу в «activating auto-restart» и до `failed` не доходит:
     // упавшим его делает и Result последнего запуска.
     const crashed = result !== "" && result !== "success";
-    return {
-      unit,
-      timer,
-      failing: timer
-        ? !["", "0"].includes(status)
-        : plugins.some(failed) || crashed,
-      essence: timer ? status : result,
-      ...exitNote(unit, status, result, p.ExecMainExitTimestamp),
-    };
+    let note;
+    try {
+      note = exitNote(unit, status, result, p.ExecMainExitTimestamp);
+    } catch (error) {
+      errors.push(message(error));
+      return [];
+    }
+    return [
+      {
+        unit,
+        timer,
+        failing: timer
+          ? !["", "0"].includes(status)
+          : plugins.some(failed) || crashed,
+        essence: timer ? status : result,
+        ...note,
+      },
+    ];
   });
+  return { units, error: errors.join("; ") || null };
 }
 
 /** Время выхода и строка пункта: что упало, код, Result, когда. */
@@ -474,15 +553,15 @@ export function failuresSource(
 ): Source {
   const check: Source["check"] = async (since) => {
     const { now = Date.now(), failuresSeenUpToMs = 0 } = since ?? {};
-    let units;
+    let states;
     try {
-      units = await unitStates(run);
+      states = await unitStates(run);
     } catch (error) {
       const silent = error instanceof SystemctlFailed;
       return { items: [], error: message(error), silent };
     }
     const items: WatchItem[] = [];
-    for (const { unit, timer, failing, essence, at, note } of units) {
+    for (const { unit, timer, failing, essence, at, note } of states.units) {
       const key = `failure:${unit}`;
       if (!failing) alertResolved(dataDir, key);
       else if (
@@ -497,7 +576,7 @@ export function failuresSource(
           failure: { essence, at },
         });
     }
-    return { items, error: null };
+    return { items, error: states.error };
   };
   return { name: "timers", prefix: "failure:", always: true, check };
 }
@@ -512,8 +591,9 @@ export async function unfixedFailures(
   try {
     for (const f of await openFailures({ dir: dataDir, now }))
       lines.push(`${f.source} ${f.name}: ${f.reason}`);
-    for (const u of await unitStates(run))
-      if (u.timer && u.failing) lines.push(u.note);
+    const { units, error } = await unitStates(run);
+    for (const u of units) if (u.timer && u.failing) lines.push(u.note);
+    if (error) lines.push(`failures check failed: ${error}`);
   } catch (error) {
     // Нет systemctl (macOS) — таймеров нет, это не сбой проверки.
     if (!(error instanceof SystemctlMissing))

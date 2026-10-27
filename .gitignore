@@ -7,6 +7,7 @@ node_modules
 .workflow-data
 .next
 .output
+.eve-out/
 .nitro
 dist
 .DS_Store
@@ -34,6 +35,8 @@ agent/skills/**/*.pem
 
 # A developer marks their own checkout with this file, and `iva update` refuses it.
 /.iva-dev
+/.iva-installed
+/.iva-installing
 
 # Update candidate worktree (iva update)
 /.iva-update/
@@ -51,6 +54,8 @@ agent/skills/**/*.pem
 .memory.lock
 .netlify/
 attachments/
+# eve's attachment handlers are package source; user attachments stay ignored.
+!/eve/packages/eve/src/internal/attachments/
 scripts/xfeed/
 
 # Local working contract, not part of the public product

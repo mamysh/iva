@@ -24,7 +24,44 @@ import { join } from "node:path";
 import test, { after, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import {
+  eveArchive,
+  NPM_CLI,
+  type ArchiveFault,
+} from "./fixtures/eve-archive.ts";
+
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
+const PYTHON = execFileSync("sh", ["-c", "command -v python3"], {
+  encoding: "utf8",
+}).trim();
+const RUN_IN_TTY = `import os,pty,select,signal,sys,time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp('bash', ['bash', *sys.argv[1:]])
+os.write(fd, sys.stdin.buffer.read())
+deadline = time.monotonic() + 15
+try:
+    while True:
+        if select.select([fd], [], [], 0.1)[0]:
+            try:
+                data = os.read(fd, 65536)
+            except OSError:
+                data = b''
+            sys.stdout.buffer.write(data)
+            sys.stdout.buffer.flush()
+            if os.environ.get('IVA_TEST_DEFAULT_ANSWERS') == '1' and (data.endswith(b': ') or data.endswith(b'[Y/n] ')):
+                os.write(fd, b'\\n')
+        finished, status = os.waitpid(pid, os.WNOHANG)
+        if finished:
+            break
+        if time.monotonic() > deadline:
+            os.killpg(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            raise TimeoutError('installer did not exit after terminal answers')
+finally:
+    os.close(fd)
+sys.exit(os.waitstatus_to_exitcode(status))
+`;
 
 /**
  * Every stand-in records the call and succeeds: what the installer must be judged on is
@@ -39,6 +76,8 @@ exit 0
 /** sudo records root calls and models only D13's private cleanup and failure boundary. */
 const SUDO = `#!/bin/sh
 echo "sudo $*" >> "$IVA_TEST_CALLS"
+[ "$IVA_TEST_SUDO_PASSWORD" != 1 ] || exit 1
+[ "$1" != -n ] || shift
 
 replace_managed_path() {
   [ -n "$IVA_TEST_REPLACE_GH_PATH" ] || return
@@ -179,6 +218,14 @@ IVA_NVM_INSTALLER
     if [ "$IVA_TEST_FAIL_ARTIFACT_DOWNLOAD" = "$artifact" ]; then exit 22; fi
     printf 'synthetic npm package\n' >"$out"
     ;;
+  *google-workspace-cli-*-unknown-linux-musl.tar.gz)
+    if [ "$IVA_TEST_FAIL_ARTIFACT_DOWNLOAD" = musl ]; then exit 22; fi
+    mkdir -p "$TMPDIR/musl"
+    printf '#!/bin/sh\necho "gws 0.22.5"\nexit \${IVA_TEST_MUSL_EXIT:-0}\n' >"$TMPDIR/musl/gws"
+    chmod +x "$TMPDIR/musl/gws"
+    tar -czf "$out" -C "$TMPDIR/musl" ./gws
+    rm -rf "$TMPDIR/musl"
+    ;;
 esac
 exit 0
 `;
@@ -189,6 +236,8 @@ echo "sha256sum $*" >> "$IVA_TEST_CALLS"
 last=""
 for arg in "$@"; do last="$arg"; done
 case "$last" in
+  *aarch64-unknown-linux-musl.tar.gz) artifact=musl; expected=e700fe63524932b10ec2130b47ece90aa850e66005fe52ccfc4cf8767bf9919a ;;
+  *x86_64-unknown-linux-musl.tar.gz) artifact=musl; expected=4db473dde4b1ab872e4ff35d769b0d4af1f1a6441a605e79d5cf8ada9c87e920 ;;
   */iva-uv-*) artifact=uv; expected=${PINNED_ARTIFACTS.uv.sha256} ;;
   */iva-nvm-*) artifact=nvm; expected=${PINNED_ARTIFACTS.nvm.sha256} ;;
   */iva-agent-browser-*) artifact=agent-browser; expected=${PINNED_ARTIFACTS.agentBrowser.sha256} ;;
@@ -203,6 +252,7 @@ printf '%s  %s\n' "$expected" "$last"
 
 /** Package-manager stand-in that can reject only an install containing gh. */
 const PACKAGE_MANAGER = `#!/bin/sh
+[ "$IVA_TEST_OS" != Darwin ] || [ "$IVA_TEST_BREW_READ_STDIN" != 1 ] || cat >/dev/null
 echo "$(basename "$0") $*" >> "$IVA_TEST_CALLS"
 if [ "$IVA_TEST_FAIL_GH_PACKAGE" = 1 ]; then
   for arg in "$@"; do
@@ -264,9 +314,12 @@ case "$1" in
     printf '%s\\n' "$IVA_TEST_NPM_PREFIX"
     ;;
   ci|install)
+    if [ -n "$IVA_TEST_REAL_NPM" ]; then
+      "$IVA_TEST_NODE" "$IVA_TEST_REAL_NPM" "$@"
+      exit $?
+    fi
     mkdir -p node_modules/.bin
     cp package-lock.json node_modules/.package-lock.json
-    ln -sf "$IVA_TEST_RECORDER" node_modules/.bin/patch-package
     ;;
   exec)
     case "$*" in
@@ -309,6 +362,13 @@ case "$1" in
     if [ -n "$tool" ]; then
       mkdir -p "$install_prefix/bin"
       ln -sf "$IVA_TEST_RECORDER" "$install_prefix/bin/$tool"
+      if [ "$tool" = gws ]; then
+        mkdir -p "$install_prefix/lib/node_modules/@googleworkspace/cli/bin"
+        binary="$install_prefix/lib/node_modules/@googleworkspace/cli/bin/gws"
+        printf '#!/bin/sh\necho "gws --version" >> "$IVA_TEST_CALLS"\nif [ -n "$IVA_TEST_GWS_ERROR" ]; then echo "$IVA_TEST_GWS_ERROR" >&2; exit 1; fi\necho "gws 0.22.5"\n' >"$binary"
+        chmod +x "$binary"
+        ln -sf "$binary" "$install_prefix/bin/gws"
+      fi
     fi
     ;;
 esac
@@ -371,12 +431,15 @@ if (args[0] === "_activate-units" && process.env.IVA_TEST_UNITS_FAIL) {
 `;
 
 type RunOptions = {
+  readonly args?: readonly string[];
   readonly calls?: string;
   readonly env?: Readonly<Record<string, string>>;
   /** The installer to run, when it must be one sitting inside the installation. */
   readonly script?: string;
   /** Run it with no stderr at all, the way a terminal that went away leaves it. */
   readonly closedStderr?: boolean;
+  readonly pipedStdin?: boolean;
+  readonly ttyInput?: string;
 };
 
 type World = {
@@ -386,6 +449,7 @@ type World = {
   readonly piped: string;
   readonly home: string;
   readonly tmp: string;
+  environment(options?: RunOptions): Record<string, string>;
   run(options?: RunOptions): SpawnSyncReturns<string>;
   /**
    * The same run without blocking, so a signal can arrive while it is working - which is
@@ -418,6 +482,21 @@ const IDENTITY = {
  */
 const TOOLS = realpathSync(mkdtempSync(join(tmpdir(), "iva-install-tools-")));
 const RECORDER_PATH = join(TOOLS, "recorder");
+writeFileSync(
+  join(TOOLS, "uname"),
+  '#!/bin/sh\nif [ "$1" = -m ]; then echo "${IVA_TEST_ARCH:-aarch64}"; else echo "${IVA_TEST_OS:-Linux}"; fi\n',
+  { mode: 0o755 },
+);
+writeFileSync(
+  join(TOOLS, "launchctl"),
+  '#!/bin/sh\necho "launchctl $*" >> "$IVA_TEST_CALLS"\ncase "$1 $2" in "print gui/"*/app.iva.*) [ "${IVA_TEST_UNITS_ENABLED:-1}" = 1 ] || exit 113 ;; esac\n[ "${IVA_TEST_GUI:-1}" = 1 ] || exit 113\n',
+  { mode: 0o755 },
+);
+writeFileSync(
+  join(TOOLS, "systemctl"),
+  '#!/bin/sh\necho "systemctl $*" >> "$IVA_TEST_CALLS"\nif [ "$2" = is-enabled ] && [ "${IVA_TEST_UNITS_ENABLED:-1}" != 1 ]; then echo "disabled: synthetic user bus unavailable" >&2; exit 1; fi\n',
+  { mode: 0o755 },
+);
 writeFileSync(RECORDER_PATH, RECORDER);
 chmodSync(RECORDER_PATH, 0o755);
 // Everything the installer may reach for, stubbed by name. The package layer is here on
@@ -425,7 +504,6 @@ chmodSync(RECORDER_PATH, 0o755);
 // apt-get and a real dpkg, and a missing `gh` sends the installer to cli.github.com over
 // the network. A test suite must not run either.
 for (const name of [
-  "systemctl",
   "loginctl",
   "uv",
   "dpkg",
@@ -546,10 +624,6 @@ function createWorld(t: TestContext, options: { env?: boolean } = {}): World {
   // The installation carries the installer, as the repository does: it is the one a re-run
   // over it executes.
   cpSync(join(ROOT, "install.sh"), join(install, "install.sh"));
-  // A patched dependency, like the real installation has: the hook that applies it is
-  // npm's, so skipping npm has to apply it instead.
-  mkdirSync(join(install, "patches"), { recursive: true });
-  writeFileSync(join(install, "patches/eve+0.30.8.patch"), "");
   // The shipped ignore rules, so what the installer leaves behind is judged by them.
   cpSync(join(ROOT, ".gitignore"), join(install, ".gitignore"));
 
@@ -565,11 +639,24 @@ function createWorld(t: TestContext, options: { env?: boolean } = {}): World {
   git("commit", "--quiet", "-m", "fixture");
   // A release is a vX.Y.Z tag: a new installation checks out the newest one.
   git("tag", "v1.0.0");
-  execFileSync("git", ["clone", "--quiet", "--bare", install, remote]);
+  // Use Git transport rather than racing a filesystem copy of loose objects.
+  execFileSync("git", [
+    "clone",
+    "--quiet",
+    "--no-local",
+    "--bare",
+    install,
+    remote,
+  ]);
   git("remote", "add", "origin", remote);
 
-  if (options.env !== false)
+  if (options.env !== false) {
     writeFileSync(join(install, ".env"), "AGENT_LANGUAGE=en\nIVA_PORT=8723\n");
+    writeFileSync(join(install, ".iva-installed"), "autostart configured\n");
+  } else {
+    // The clone stage finished; the first installer has not exited successfully yet.
+    writeFileSync(join(install, ".iva-installing"), "pending\n");
+  }
 
   const environment = (runOptions: RunOptions): Record<string, string> => ({
     ...IDENTITY,
@@ -601,23 +688,32 @@ function createWorld(t: TestContext, options: { env?: boolean } = {}): World {
     piped: join(dir, "install.sh"),
     home,
     tmp,
+    environment: (options = {}) => environment(options),
     git,
     calls: (path = defaultCalls) =>
       existsSync(path) ? readFileSync(path, "utf8") : "",
     run: (runOptions = {}) => {
       const installer = runOptions.script ?? join(install, "install.sh");
-      const argv = runOptions.closedStderr
-        ? [
-            "-c",
-            'exec 2>&-; exec bash "$0" "$@"',
-            installer,
-            "--non-interactive",
-          ]
-        : [installer, "--non-interactive"];
-      return spawnSync("bash", argv, {
+      const argv = runOptions.pipedStdin
+        ? ["-s", "--", ...(runOptions.args ?? ["--non-interactive"])]
+        : runOptions.closedStderr
+          ? [
+              "-c",
+              'exec 2>&-; exec bash "$0" "$@"',
+              installer,
+              "--non-interactive",
+            ]
+          : [installer, ...(runOptions.args ?? ["--non-interactive"])];
+      const shell = runOptions.ttyInput === undefined ? "bash" : PYTHON;
+      const command =
+        runOptions.ttyInput === undefined ? argv : ["-c", RUN_IN_TTY, ...argv];
+      return spawnSync(shell, command, {
         cwd: dir,
         encoding: "utf8",
         env: environment(runOptions),
+        input: runOptions.pipedStdin
+          ? readFileSync(installer, "utf8")
+          : runOptions.ttyInput,
       });
     },
     runAsync: (runOptions = {}) => {
@@ -692,6 +788,626 @@ function assertPrivateGhAptBoundary(world: World, calls: string): void {
 
 void test("install.sh is valid bash", () => {
   execFileSync("bash", ["-n", join(ROOT, "install.sh")]);
+});
+
+const MINIMAL_ENV =
+  "AGENT_LANGUAGE=en\nMODEL_PROVIDER=opencode\nOPENCODE_API_KEY=oc-key-123456\nOPENCODE_MODEL=deepseek-v4-pro\nTELEGRAM_BOT_TOKEN=123:tg-token\nTELEGRAM_ALLOWED_USER_IDS=11,22\nASSISTANT_TIMEZONE=Asia/Tashkent\n";
+
+for (const os of ["Linux", "Darwin"]) {
+  for (const current of ["linked", "broken"]) {
+    void test(`${os}: versioned installation with disabled units and a ${current === "linked" ? "stale marker" : "broken current link"} goes to updater`, (t) => {
+      const world = createWorld(t);
+      const target = join(world.dir, "versioned");
+      mkdirSync(join(target, "versions/0.5.4-test/bin"), { recursive: true });
+      symlinkSync(
+        current === "linked" ? "versions/0.5.4-test" : "missing-version",
+        join(target, "current"),
+      );
+      cpSync(
+        join(world.install, "bin/iva.mjs"),
+        join(target, "versions/0.5.4-test/bin/iva.mjs"),
+      );
+      writeFileSync(join(target, ".env"), MINIMAL_ENV);
+      writeFileSync(join(target, ".iva-installing"), "stale\n");
+      const env = { IVA_TEST_OS: os, IVA_TEST_UNITS_ENABLED: "0" };
+      const disabled = spawnSync(
+        os === "Linux" ? "systemctl" : "launchctl",
+        os === "Linux"
+          ? ["--user", "is-enabled", "iva.service"]
+          : ["print", "gui/501/app.iva.iva"],
+        { env: world.environment({ env }), encoding: "utf8" },
+      );
+      assert.notEqual(
+        disabled.status,
+        0,
+        "the service fixture must model disabled units",
+      );
+      const result = world.run({
+        script: world.piped,
+        calls: join(world.dir, "route.log"),
+        env: {
+          ...env,
+          INSTALL_DIR: target,
+          REPO_URL: "https://github.com/smixs/iva-agent.git",
+        },
+      });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      assert.match(world.calls(join(world.dir, "route.log")), /^iva update$/mu);
+      assert.doesNotMatch(
+        world.calls(join(world.dir, "route.log")),
+        /is-enabled|app\.iva\./u,
+      );
+      assert.doesNotMatch(result.stderr, /synthetic user bus/u);
+      assert.equal(existsSync(join(target, ".git")), false);
+      assert.equal(existsSync(join(target, ".iva-installing")), false);
+    });
+  }
+  void test(`${os}: completed checkout with disabled units goes to updater`, (t) => {
+    const world = createWorld(t);
+    // Legacy installations have neither marker; their checkout and .env identify them.
+    rmSync(join(world.install, ".iva-installed"));
+    const result = world.run({
+      script: world.piped,
+      env: {
+        IVA_TEST_OS: os,
+        IVA_TEST_UNITS_ENABLED: "0",
+        REPO_URL: "https://github.com/smixs/iva-agent.git",
+      },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(world.calls(), /^iva update$/mu);
+    assert.doesNotMatch(result.stderr, /synthetic user bus/u);
+  });
+}
+
+for (const kind of ["foreign", "unrecognized"]) {
+  void test(`occupied ${kind} INSTALL_DIR is preserved and gets one actionable refusal`, (t) => {
+    const world = createWorld(t);
+    const target = join(world.dir, "occupied");
+    mkdirSync(target);
+    writeFileSync(join(target, ".env"), "PERSONAL=keep\n");
+    writeFileSync(join(target, ".iva-installing"), "stale\n");
+    if (kind === "foreign") {
+      execFileSync("git", ["init", "-q", target]);
+      writeFileSync(
+        join(target, "package.json"),
+        '{"name":"someone-else","scripts":{"install":"exit 77"}}\n',
+      );
+    }
+    const before = readdirSync(target).sort();
+    const result = world.run({
+      script: world.piped,
+      env: { INSTALL_DIR: target },
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /INSTALL_DIR.*occupied.*ls -la/iu);
+    assert.doesNotMatch(
+      result.stdout + result.stderr,
+      /fatal:|Continuing first installation/u,
+    );
+    assert.equal(readFileSync(join(target, ".env"), "utf8"), "PERSONAL=keep\n");
+    assert.deepEqual(readdirSync(target).sort(), before);
+    assert.equal(world.calls(), "");
+  });
+}
+
+for (const os of ["Linux", "Darwin"]) {
+  void test(`${os}: a deferred install resumes from the downloaded command and completes autostart`, (t) => {
+    const world = fileSetupWorld(t);
+    const first = world.run({ env: { IVA_TEST_OS: os } });
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    assert.equal(existsSync(join(world.install, ".iva-installing")), false);
+    assert.equal(
+      readFileSync(join(world.install, ".iva-installed"), "utf8"),
+      "autostart=false\n",
+    );
+    // The documented npm run setup step has saved the person's configuration.
+    writeFileSync(join(world.install, ".env"), MINIMAL_ENV);
+    const callsPath = join(world.dir, "resume.log");
+    const second = world.run({
+      script: world.piped,
+      args: [],
+      ttyInput: "1\n",
+      calls: callsPath,
+      env: {
+        IVA_TEST_OS: os,
+        REPO_URL: "https://github.com/smixs/iva-agent.git",
+        NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+        IVA_TEST_DEFAULT_ANSWERS: "1",
+      },
+    });
+    assert.equal(second.status, 0, second.stdout + second.stderr);
+    const calls = world.calls(callsPath);
+    assert.match(second.stdout, /Continuing first installation/u);
+    assert.match(second.stdout, /Provider \(1\/2\/3\/4\/5\/6\)/u);
+    assert.doesNotMatch(calls, /^iva update$|^npm ci$/mu);
+    // Adding .env changes a build input; dependencies are still reusable.
+    assert.match(calls, /^npm exec -- eve build$/mu);
+    assert.match(calls, /^iva _install-units$/mu);
+    assert.match(calls, /^iva _activate-units$/mu);
+    if (os === "Linux") {
+      const linger = calls.indexOf("loginctl enable-linger ");
+      assert.ok(linger >= 0, calls);
+      assert.ok(linger < calls.indexOf("iva _install-units"), calls);
+    }
+    assert.match(calls, /^curl -s --config - --data-urlencode chat_id=11 /mu);
+    assert.match(second.stdout, /Sent you a confirmation in Telegram/u);
+    assert.equal(
+      readFileSync(join(world.install, ".iva-installed"), "utf8"),
+      "autostart=true\n",
+    );
+    assert.equal(existsSync(join(world.install, ".iva-installing")), false);
+
+    const thirdCalls = join(world.dir, "completed.log");
+    const third = world.run({
+      script: world.piped,
+      calls: thirdCalls,
+      env: {
+        IVA_TEST_OS: os,
+        REPO_URL: "https://github.com/smixs/iva-agent.git",
+      },
+    });
+    assert.equal(third.status, 0, third.stdout + third.stderr);
+    assert.match(world.calls(thirdCalls), /^iva update$/mu);
+    assert.doesNotMatch(world.calls(thirdCalls), /iva _activate-units/u);
+  });
+
+  void test(`${os}: declined autostart resumes with the existing build`, (t) => {
+    const world = createWorld(t);
+    const first = world.run({
+      args: ["--skip-setup"],
+      ttyInput: "1\nn\n",
+      env: { IVA_TEST_OS: os },
+    });
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    assert.equal(
+      readFileSync(join(world.install, ".iva-installed"), "utf8"),
+      "autostart=false\n",
+    );
+    const callsPath = join(world.dir, "resume.log");
+    const second = world.run({
+      script: world.piped,
+      calls: callsPath,
+      env: { IVA_TEST_OS: os },
+    });
+    assert.equal(second.status, 0, second.stdout + second.stderr);
+    assert.match(second.stdout, /Continuing first installation/u);
+    assert.match(second.stdout, /Build is current/u);
+    assert.doesNotMatch(
+      world.calls(callsPath),
+      /^iva update$|^npm ci$|eve build/mu,
+    );
+    assert.match(world.calls(callsPath), /^iva _activate-units$/mu);
+    assert.equal(
+      readFileSync(join(world.install, ".iva-installed"), "utf8"),
+      "autostart=true\n",
+    );
+  });
+}
+
+void test("a completion marker overrides a stale first-install marker", (t) => {
+  const world = createWorld(t);
+  writeFileSync(join(world.install, ".iva-installed"), "autostart=true\n");
+  writeFileSync(join(world.install, ".iva-installing"), "stale\n");
+  const result = world.run({
+    script: world.piped,
+    env: {
+      REPO_URL: "https://github.com/smixs/iva-agent.git",
+    },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(world.calls(), /^iva update$/mu);
+  assert.doesNotMatch(world.calls(), /npm ci|iva _activate-units/u);
+  assert.equal(existsSync(join(world.install, ".iva-installing")), false);
+});
+
+void test("an explicit configured checkout asks only whether to reconfigure", (t) => {
+  const world = fileSetupWorld(t);
+  writeFileSync(join(world.install, ".env"), MINIMAL_ENV);
+  writeFileSync(join(world.install, ".iva-installed"), "complete\n");
+  const result = world.run({
+    args: [],
+    ttyInput: "1\n",
+    env: {
+      NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+      IVA_TEST_DEFAULT_ANSWERS: "1",
+    },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /Reconfigure from scratch\?/u);
+  assert.doesNotMatch(result.stdout, /Provider \(1\/2\/3\/4\/5\/6\)/u);
+});
+
+void test("the installer takes Russian from the supplied env file", (t) => {
+  const world = fileSetupWorld(t);
+  const source = join(world.dir, "answers.env");
+  writeFileSync(
+    source,
+    MINIMAL_ENV.replace("AGENT_LANGUAGE=en", "AGENT_LANGUAGE=ru"),
+  );
+  const result = world.run({
+    args: ["--env-file", source],
+    env: {
+      NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+    },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /Установка завершена/u);
+  assert.doesNotMatch(result.stdout, /Installation complete/u);
+});
+
+void test("--env-file alone asks no questions with a controlling terminal", (t) => {
+  const world = fileSetupWorld(t);
+  const source = join(world.dir, "answers.env");
+  writeFileSync(source, MINIMAL_ENV);
+  const result = world.run({
+    args: ["--env-file", source],
+    ttyInput: "1\n\n",
+    env: {
+      NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+    },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.doesNotMatch(
+    result.stdout,
+    /Reconfigure from scratch\?|\[Y\/n\]|current\/default/u,
+  );
+  const complete = readFileSync(join(world.install, ".env"), "utf8");
+  assert.match(complete, /^TELEGRAM_WEBHOOK_SECRET_TOKEN=[a-f0-9]{48}\r?$/mu);
+  assert.match(world.calls(), /iva _activate-units/u);
+});
+
+void test("an unfinished checkout resumes first installation from the downloaded installer", (t) => {
+  const world = fileSetupWorld(t);
+  writeFileSync(join(world.install, ".env"), MINIMAL_ENV);
+  const result = world.run({
+    script: world.piped,
+    args: [],
+    ttyInput: "1\n",
+    env: {
+      NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+      IVA_TEST_DEFAULT_ANSWERS: "1",
+    },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /Provider \(1\/2\/3\/4\/5\/6\)/u);
+  assert.doesNotMatch(world.calls(), /^iva update$/mu);
+  assert.match(world.calls(), /^iva _activate-units$/mu);
+  assert.equal(existsSync(join(world.install, ".iva-installed")), true);
+});
+
+void test("deferred setup finishes explicitly through the first-install wizard", (t) => {
+  const world = fileSetupWorld(t);
+  const first = world.run();
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  assert.equal(existsSync(join(world.install, ".iva-installed")), true);
+  assert.equal(existsSync(join(world.install, ".iva-installing")), false);
+  writeFileSync(join(world.install, ".env"), MINIMAL_ENV);
+  const result = world.run({
+    args: [],
+    ttyInput: "1\n",
+    calls: join(world.dir, "resume.log"),
+    env: {
+      NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+      IVA_TEST_DEFAULT_ANSWERS: "1",
+    },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const calls = world.calls(join(world.dir, "resume.log"));
+  assert.doesNotMatch(calls, /^iva update$|^npm ci$/mu);
+  assert.match(calls, /^iva _activate-units$/mu);
+  assert.doesNotMatch(result.stdout, /Reconfigure from scratch\?/u);
+  assert.match(result.stdout, /Provider \(1\/2\/3\/4\/5\/6\)/u);
+  assert.equal(
+    readFileSync(join(world.install, ".iva-installed"), "utf8"),
+    "autostart=true\n",
+  );
+});
+
+void test("failed first activation resumes even when both legacy unit files exist", (t) => {
+  const world = fileSetupWorld(t);
+  const source = join(world.dir, "answers.env");
+  writeFileSync(source, MINIMAL_ENV);
+  const options = {
+    script: world.piped,
+    args: ["--env-file", source],
+    env: {
+      NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+    },
+  };
+  const failed = world.run({
+    ...options,
+    env: { ...options.env, IVA_TEST_UNITS_FAIL: "1" },
+  });
+  assert.equal(failed.status, 1, failed.stdout + failed.stderr);
+  assert.equal(existsSync(join(world.install, ".iva-installed")), false);
+  const units = join(world.home, ".config/systemd/user");
+  mkdirSync(units, { recursive: true });
+  for (const unit of ["iva.service", "iva-telegram-poll.service"])
+    writeFileSync(join(units, unit), "written before activation failed\n");
+  const resumed = world.run(options);
+  assert.equal(resumed.status, 0, resumed.stdout + resumed.stderr);
+  assert.equal(existsSync(join(world.install, ".iva-installed")), true);
+  assert.equal(existsSync(join(world.install, ".iva-installing")), false);
+  assert.doesNotMatch(world.calls(), /^iva update$/mu);
+});
+
+const DROP_SETUP_TTY = `import os,pty,select,signal,sys,time
+mode, installer = sys.argv[1:]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp('bash', ['bash', installer])
+output = b''
+dropped = False
+deadline = time.monotonic() + 12
+try:
+    while True:
+        if fd >= 0 and select.select([fd], [], [], 0.05)[0]:
+            try:
+                data = os.read(fd, 65536)
+            except OSError:
+                data = b''
+            output += data
+            if b'current/default' in output and b'LANG_SENT' not in output:
+                os.write(fd, b'1\\n')
+                output += b'LANG_SENT'
+            if (b'Reconfigure from scratch?' in output or b'Provider (1/2/3/4/5/6)' in output) and not dropped:
+                dropped = True
+                deadline = time.monotonic() + 2
+                if mode == 'signal':
+                    os.kill(pid, signal.SIGHUP)
+                else:
+                    os.close(fd)
+                    fd = -1
+        finished, status = os.waitpid(pid, os.WNOHANG)
+        if finished:
+            if not dropped:
+                sys.stdout.buffer.write(output)
+            sys.exit(0 if dropped and os.waitstatus_to_exitcode(status) != 0 else 97)
+        if time.monotonic() > deadline:
+            sys.stdout.buffer.write(output)
+            sys.exit(98)
+finally:
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if fd >= 0:
+        os.close(fd)
+`;
+
+void test("setup EOF fails instead of leaving an unfinished configuration successful", async (t) => {
+  const world = fileSetupWorld(t);
+  const input = join(world.dir, "answers.env");
+  const output = join(world.dir, "candidate.env");
+  writeFileSync(input, MINIMAL_ENV);
+  const child = spawn(
+    process.execPath,
+    [join(world.install, "scripts/setup.mjs")],
+    {
+      detached: true,
+      cwd: world.install,
+      env: world.environment({
+        env: {
+          IVA_CONFIG_INPUT: input,
+          IVA_CONFIG_OUTPUT: output,
+          AGENT_LANGUAGE: "en",
+          NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+        },
+      }),
+    },
+  );
+  let transcript = "";
+  child.stdout.on("data", (data: Buffer) => {
+    transcript += data.toString();
+    if (transcript.includes("Reconfigure from scratch?")) child.stdin.end();
+  });
+  child.stderr.on("data", (data: Buffer) => {
+    transcript += data.toString();
+  });
+  const timer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+  const code = await new Promise<number | null>((done) =>
+    child.once("close", done),
+  );
+  clearTimeout(timer);
+  assert.match(transcript, /Reconfigure from scratch/u);
+  assert.equal(code, 1, transcript);
+  assert.equal(existsSync(output), false);
+});
+
+for (const mode of ["signal", "terminal"]) {
+  void test(`a lost setup ${mode} stops promptly and releases the installer lock`, (t) => {
+    const world = fileSetupWorld(t);
+    writeFileSync(join(world.install, ".env"), MINIMAL_ENV);
+    const result = spawnSync(
+      PYTHON,
+      ["-c", DROP_SETUP_TTY, mode, join(world.install, "install.sh")],
+      {
+        cwd: world.dir,
+        encoding: "utf8",
+        env: world.environment({
+          calls: join(world.dir, "drop.log"),
+          env: {
+            NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+          },
+        }),
+      },
+    );
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(existsSync(join(world.install, "data/install.lock")), false);
+    assert.equal(existsSync(join(world.install, ".iva-installed")), false);
+    assert.doesNotMatch(
+      world.calls(join(world.dir, "drop.log")),
+      /iva _activate-units/u,
+    );
+  });
+}
+
+function fileSetupWorld(t: TestContext): World {
+  const world = createWorld(t, { env: false });
+  // Run the real setup against synthetic HTTP, inside the installer's isolated tree.
+  cpSync(join(ROOT, "scripts/setup"), join(world.install, "scripts/setup"), {
+    recursive: true,
+  });
+  cpSync(join(ROOT, "scripts/lib"), join(world.install, "scripts/lib"), {
+    recursive: true,
+  });
+  cpSync(
+    join(ROOT, "scripts/setup.mjs"),
+    join(world.install, "scripts/setup.mjs"),
+  );
+  cpSync(join(ROOT, "packages"), join(world.install, "packages"), {
+    recursive: true,
+  });
+  mkdirSync(join(world.install, "node_modules"));
+  for (const entry of readdirSync(join(ROOT, "node_modules"))) {
+    if (!entry.startsWith("."))
+      symlinkSync(
+        join(ROOT, "node_modules", entry),
+        join(world.install, "node_modules", entry),
+      );
+  }
+  return world;
+}
+
+void test("--env-file completes minimal answers through setup before activating units", (t) => {
+  const world = fileSetupWorld(t);
+  const source = join(world.dir, "answers.env");
+  writeFileSync(source, MINIMAL_ENV, { mode: 0o644 });
+  const result = world.run({
+    args: ["--non-interactive", "--env-file", source],
+    env: {
+      NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+    },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const complete = readFileSync(join(world.install, ".env"), "utf8");
+  assert.match(complete, /^ASSISTANT_BEARER=[A-Za-z0-9_-]{43}$/mu);
+  assert.match(complete, /^TELEGRAM_WEBHOOK_SECRET_TOKEN=[a-f0-9]{48}$/mu);
+  assert.match(complete, /^TELEGRAM_BOT_USERNAME=ivabot$/mu);
+  const port = /^IVA_PORT=(\d+)$/mu.exec(complete)?.[1];
+  assert.ok(port);
+  assert.ok(Number(port) >= 1 && Number(port) <= 65535);
+  assert.ok(complete.includes(`ASSISTANT_HOST=http://127.0.0.1:${port}\n`));
+  for (const value of [
+    "ASSISTANT_VAULT_DIR=vault",
+    "ASSISTANT_DATA_DIR=data",
+    "IVA_PORT=",
+    "ASSISTANT_HOST=http://127.0.0.1:",
+    "TELEGRAM_DIGEST_CHAT_ID=11",
+    "ASSISTANT_TIMEZONE=Asia/Tashkent",
+    "OPENCODE_CONTEXT_WINDOW=131072",
+  ])
+    assert.ok(complete.includes(value), value);
+  assert.equal(statSync(join(world.install, ".env")).mode & 0o777, 0o600);
+  assert.equal(readFileSync(source, "utf8"), MINIMAL_ENV);
+  assert.match(world.calls(), /iva _install-units/u);
+  assert.match(world.calls(), /iva _activate-units/u);
+  assert.doesNotMatch(
+    result.stdout + result.stderr + world.calls(),
+    /oc-key-123456|123:tg-token/u,
+  );
+  assert.doesNotMatch(result.stdout, /Configure the keys first/u);
+  assert.match(result.stdout, /Done — everything written to \.env/u);
+  assert.doesNotMatch(result.stdout, /Ready — settings validated for apply/u);
+});
+
+for (const fault of ["provider", "telegram"]) {
+  void test(`--env-file rejects invalid ${fault} credentials before writing units`, (t) => {
+    const world = fileSetupWorld(t);
+    const source = join(world.dir, "answers.env");
+    writeFileSync(source, MINIMAL_ENV);
+    const result = world.run({
+      args: ["--non-interactive", "--env-file", source],
+      env: {
+        NODE_OPTIONS: `--import=${join(ROOT, "scripts/fixtures/setup-wizard-fetch.ts")}`,
+        IVA_TEST_SETUP_FAULT: fault,
+      },
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(
+      result.stdout + result.stderr,
+      fault === "provider"
+        ? /OpenCode.*(?:key|credentials|ключ)/iu
+        : /Telegram.*(?:token|токен)/iu,
+    );
+    assert.doesNotMatch(world.calls(), /iva _(?:install|activate)-units/u);
+    assert.equal(existsSync(join(world.install, ".env")), false);
+  });
+}
+
+void test("--env-file refuses configured installations and missing input before changes", (t) => {
+  const world = createWorld(t);
+  const original = readFileSync(join(world.install, ".env"), "utf8");
+  const source = join(world.dir, "answers.env");
+  writeFileSync(source, MINIMAL_ENV);
+  const existing = world.run({ args: ["--env-file", source] });
+  assert.equal(existing.status, 1);
+  assert.match(
+    existing.stdout + existing.stderr,
+    /--env-file.*first install/iu,
+  );
+  assert.equal(readFileSync(join(world.install, ".env"), "utf8"), original);
+  assert.equal(world.calls(), "");
+  const absent = world.run({ args: ["--env-file"] });
+  assert.equal(absent.status, 1);
+  assert.match(absent.stdout + absent.stderr, /--env-file.*file/iu);
+});
+
+for (const os of ["Linux", "Darwin"]) {
+  for (const configured of [false, true]) {
+    void test(`${os}: ${configured ? "declined autostart" : "unconfigured installation"} omits bot readiness and status hints`, (t) => {
+      const world = createWorld(t, { env: configured });
+      const result = world.run({
+        env: { IVA_TEST_OS: os },
+        ...(configured ? { args: ["--skip-setup"], ttyInput: "1\nn\n" } : {}),
+      });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      if (configured) assert.match(result.stdout, /\[Y\/n\]/u);
+      else assert.match(result.stdout, /Configure the keys first/u);
+      const summary = result.stdout.slice(
+        result.stdout.lastIndexOf("Installation complete"),
+      );
+      assert.doesNotMatch(
+        summary,
+        /✅ The bot is ready|✅ Бот готов|Bot status:|Bot logs:|iva-telegram-poll/u,
+      );
+      assert.doesNotMatch(summary, /^ {4}iva (?:status|logs -f)\r?$/mu);
+      assert.doesNotMatch(world.calls(), /iva _(?:install|activate)-units/u);
+    });
+  }
+  void test(`${os}: enabled autostart retains bot readiness and status hints`, (t) => {
+    const world = createWorld(t);
+    const result = world.run({ env: { IVA_TEST_OS: os } });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const summary = result.stdout.slice(
+      result.stdout.lastIndexOf("Installation complete"),
+    );
+    assert.match(summary, /✅ The bot is ready/u);
+    if (os === "Darwin") {
+      assert.match(summary, /^ {4}iva status\r?$/mu);
+      assert.match(summary, /^ {4}iva logs -f\r?$/mu);
+    } else {
+      assert.match(summary, /Bot status:.*iva-telegram-poll/u);
+      assert.match(summary, /Bot logs:.*iva-telegram-poll/u);
+    }
+  });
+}
+
+void test("headless sudo refusal names root bootstrap before optional package work", (t) => {
+  const world = createWorld(t, { env: false });
+  const result = world.run({
+    env: { IVA_TEST_SUDO_PASSWORD: "1", IVA_TEST_MISSING_COMMANDS: "gh" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(
+    result.stdout + result.stderr,
+    /sudo.*(?:terminal|TTY).*bootstrap\.sh.*root/iu,
+  );
+  assert.match(world.calls(), /sudo -n/u);
+  assert.doesNotMatch(world.calls(), /sudo -v/u);
+  assert.match(world.calls(), /agent-browser install\n/u);
+  assert.doesNotMatch(world.calls(), /agent-browser install --with-deps/u);
 });
 
 void test("all downloaded installers and packages use exact pinned artifacts", () => {
@@ -966,7 +1682,7 @@ void test("optional GitHub CLI retries a transient private cleanup failure", (t)
   assert.equal(
     calls
       .split("\n")
-      .filter((line) => /sudo rm -rf -- .*\/iva-gh-apt-/u.test(line)).length,
+      .filter((line) => /sudo -n rm -rf -- .*\/iva-gh-apt-/u.test(line)).length,
     2,
   );
   assertPrivateGhAptBoundary(world, calls);
@@ -990,7 +1706,7 @@ void test("optional GitHub CLI reports a persistent private cleanup failure", (t
   assert.equal(
     calls
       .split("\n")
-      .filter((line) => /sudo rm -rf -- .*\/iva-gh-apt-/u.test(line)).length,
+      .filter((line) => /sudo -n rm -rf -- .*\/iva-gh-apt-/u.test(line)).length,
     2,
   );
   assertNoSharedGhAptPaths(calls);
@@ -1124,6 +1840,8 @@ void test("an exit before any work is done stays quiet and succeeds", () => {
   assert.equal(help.status, 0, help.stdout + help.stderr);
   assert.equal(help.stderr, "");
   assert.match(help.stdout, /--skip-setup/u);
+  assert.match(help.stdout, /--env-file/u);
+  assert.match(help.stdout, /-h, --help\s+show this help/u);
 });
 
 void test("a stage killed mid-way fails the install and gives the old build back", (t) => {
@@ -1299,6 +2017,7 @@ void test("a second installer in the same checkout is refused, a dead one is not
   const refused = world.run();
   assert.notEqual(refused.status, 0, refused.stdout + refused.stderr);
   assert.match(refused.stderr, new RegExp(`pid ${process.pid}`, "u"));
+  assert.match(refused.stderr, new RegExp(`kill -TERM ${process.pid}`, "u"));
   // The path is part of the answer: a pid the system has since reused is a dead end
   // without it.
   assert.match(refused.stderr, /data\/install\.lock/u);
@@ -1545,6 +2264,13 @@ void test("a pending reboot stops a first install and only warns over a configur
     join(world.install, ".env"),
     "AGENT_LANGUAGE=en\nIVA_PORT=8723\n",
   );
+  const incomplete = world.run({ env: { IVA_REBOOT_FLAG: flag } });
+  assert.notEqual(incomplete.status, 0);
+  assert.match(incomplete.stderr, /sudo reboot/u);
+  writeFileSync(
+    join(world.install, ".iva-installed"),
+    "autostart configured\n",
+  );
   const rerun = world.run({
     calls: join(world.dir, "rerun.log"),
     env: { IVA_REBOOT_FLAG: flag },
@@ -1557,36 +2283,22 @@ void test("a pending reboot stops a first install and only warns over a configur
   );
 });
 
-void test("an installation without git rebuilds instead of trusting the stamp", (t) => {
+void test("an occupied tree without git is refused with its previous build preserved", (t) => {
   const world = createWorld(t);
-  // A tree unpacked from an archive: the installer sits inside it and there is no history
-  // to compare against, so nothing can prove the output matches the code.
   cpSync(join(ROOT, "install.sh"), join(world.install, "install.sh"));
   rmSync(join(world.install, ".git"), { recursive: true, force: true });
-
-  const script = join(world.install, "install.sh");
-  const first = world.run({ calls: join(world.dir, "first.log"), script });
-  assert.equal(first.status, 0, first.stdout + first.stderr);
-  assert.match(world.calls(join(world.dir, "first.log")), /eve build/u);
-
-  const second = world.run({ calls: join(world.dir, "second.log"), script });
-  assert.equal(second.status, 0, second.stdout + second.stderr);
-  assert.match(world.calls(join(world.dir, "second.log")), /eve build/u);
-});
-
-void test("patches with nothing to apply them mean a full install, not a reuse", (t) => {
-  const world = createWorld(t);
-  assert.equal(world.run().status, 0);
-
-  // What `npm prune --production` leaves behind: the tree still matches the lockfile by
-  // npm's own record, but the tool that puts the patches on top is gone.
-  rmSync(join(world.install, "node_modules/.bin/patch-package"), {
-    force: true,
-  });
-
-  const second = world.run({ calls: join(world.dir, "second.log") });
-  assert.equal(second.status, 0, second.stdout + second.stderr);
-  assert.match(world.calls(join(world.dir, "second.log")), /^npm ci$/mu);
+  mkdirSync(join(world.install, ".output"));
+  writeFileSync(join(world.install, ".output/server.mjs"), "previous build\n");
+  const before = readFileSync(join(world.install, ".env"), "utf8");
+  const result = world.run();
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /INSTALL_DIR.*occupied.*ls -la/iu);
+  assert.equal(
+    readFileSync(join(world.install, ".output/server.mjs"), "utf8"),
+    "previous build\n",
+  );
+  assert.equal(readFileSync(join(world.install, ".env"), "utf8"), before);
+  assert.equal(world.calls(), "");
 });
 
 void test("a failure at the last stage restores the checkout and leaves nothing behind", (t) => {
@@ -1680,9 +2392,7 @@ void test("a re-run over a finished install skips the stages that are already do
   assert.doesNotMatch(secondCalls, /^npm i -g /mu);
   assert.doesNotMatch(secondCalls, /eve build/u);
   assert.doesNotMatch(secondCalls, /agent-browser install/u);
-  // Skipped, not forgotten: the dependencies are still checked against the lockfile and
-  // the patches re-applied, and the units are still written and enabled.
-  assert.match(secondCalls, /^patch-package\s*$/mu);
+  // The lockfile is still checked, and the units are still written and enabled.
   assert.match(secondCalls, /^iva _install-units$/mu);
   assert.match(secondCalls, /^iva _activate-units$/mu);
 
@@ -1873,6 +2583,11 @@ void test("a re-run over a versioned installation starts the updater it already 
     join(world.install, "bin/iva.mjs"),
     join(versioned, "current/bin/iva.mjs"),
   );
+  cpSync(join(world.install, ".env"), join(versioned, ".env"));
+  const units = join(world.home, ".config/systemd/user");
+  mkdirSync(units, { recursive: true });
+  writeFileSync(join(units, "iva.service"), "legacy unit\n");
+  writeFileSync(join(units, "iva-telegram-poll.service"), "legacy unit\n");
 
   const result = world.run({
     script: world.piped,
@@ -1886,4 +2601,289 @@ void test("a re-run over a versioned installation starts the updater it already 
   assert.match(world.calls(), /^iva update$/mu);
   // Клона в версионную раскладку не бывает: чекаута там нет и не появляется.
   assert.equal(existsSync(join(versioned, ".git")), false);
+});
+
+for (const fault of [
+  "ok",
+  "404",
+  "drop",
+  "integrity",
+  "truncated",
+] satisfies ArchiveFault[]) {
+  void test(`fresh installer fetches the locked eve archive: ${fault}`, async (t) => {
+    const world = createWorld(t, { env: false });
+    const archive = await eveArchive(t, world.dir);
+    archive.setFault(fault);
+    archive.writeManifest(world.install, "1.0.1");
+    world.git("add", "package.json", "package-lock.json", ".npmrc");
+    world.git("commit", "--quiet", "-m", "archive dependency");
+    world.git("tag", "v1.0.1");
+    world.git("push", "--quiet", "--tags", "origin", "main");
+    rmSync(world.install, { recursive: true, force: true });
+    const options = {
+      script: world.piped,
+      env: { IVA_TEST_REAL_NPM: NPM_CLI },
+    };
+    const result = await world.runAsync(options).done;
+    assert.match(world.calls(), /^npm ci$/mu);
+    assert.ok(archive.requests.includes("/asset.tgz"), result.output);
+    assert.equal(result.code, fault === "ok" ? 0 : 1, result.output);
+    if (fault === "ok") {
+      assert.equal(
+        (
+          JSON.parse(
+            readFileSync(
+              join(world.install, "node_modules/eve/package.json"),
+              "utf8",
+            ),
+          ) as { version: string }
+        ).version,
+        "0.51.1-iva.1",
+      );
+    } else {
+      assert.equal(existsSync(join(world.install, "current")), false);
+      assert.equal(
+        existsSync(join(world.install, ".output/server.mjs")),
+        false,
+      );
+      assert.match(
+        result.output,
+        fault === "404"
+          ? /E404/u
+          : fault === "integrity"
+            ? /EINTEGRITY/u
+            : /ECONNRESET|ETIMEDOUT|EIDLETIMEOUT|ERR_SOCKET_TIMEOUT/u,
+      );
+    }
+    if (fault === "truncated") {
+      archive.setFault("ok");
+      const retryLog = join(world.dir, "retry-npm.log");
+      const retry = await world.runAsync({
+        ...options,
+        calls: retryLog,
+        env: {
+          ...options.env,
+          REPO_URL: "https://github.com/smixs/iva-agent.git",
+          IVA_TEST_NPM_LOG: retryLog,
+        },
+      }).done;
+      assert.equal(retry.code, 0, retry.output);
+      assert.match(retry.output, /Continuing first installation/u);
+      assert.doesNotMatch(retry.output, /handing it to the updater/u);
+      assert.match(readFileSync(retryLog, "utf8"), /^npm ci$/mu);
+      assert.equal(
+        (
+          JSON.parse(
+            readFileSync(
+              join(world.install, "node_modules/eve/package.json"),
+              "utf8",
+            ),
+          ) as { version: string }
+        ).version,
+        "0.51.1-iva.1",
+      );
+      assert.equal(existsSync(join(world.install, ".output/server.mjs")), true);
+      assert.equal(existsSync(join(world.install, "current")), false);
+    }
+    assert.ok(
+      archive.requests.every((url) => ["/eve.tgz", "/asset.tgz"].includes(url)),
+      archive.requests.join("\n"),
+    );
+  });
+}
+
+for (const field of ["resolved", "integrity"] as const) {
+  void test(`installer runs npm ci for the same eve version with a different ${field}`, (t) => {
+    const world = createWorld(t);
+    const first = world.run({ calls: join(world.dir, "first.log") });
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    const file = join(world.install, "node_modules/.package-lock.json");
+    const lock = JSON.parse(readFileSync(file, "utf8")) as {
+      packages: Record<string, Record<string, string>>;
+    };
+    lock.packages["node_modules/eve"][field] =
+      field === "resolved"
+        ? "https://example.invalid/other.tgz"
+        : "sha512-other";
+    writeFileSync(file, JSON.stringify(lock));
+    const second = world.run({ calls: join(world.dir, "second.log") });
+    assert.equal(second.status, 0, second.stdout + second.stderr);
+    assert.match(world.calls(join(world.dir, "second.log")), /^npm ci$/mu);
+  });
+}
+
+for (const existing of [false, true]) {
+  void test(`installation repairs GLIBC gws (already installed: ${existing})`, (t) => {
+    const world = createWorld(t);
+    if (existing) {
+      mkdirSync(join(world.home, ".local/bin"), { recursive: true });
+      writeFileSync(
+        join(world.home, ".local/bin/gws"),
+        "#!/bin/sh\necho GLIBC_2.39 >&2\nexit 1\n",
+        { mode: 0o755 },
+      );
+    }
+    const result = world.run({
+      env: { IVA_TEST_GWS_ERROR: "GLIBC_2.39 not found" },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(world.calls(), /unknown-linux-musl/u);
+    assert.match(result.stdout, /gws ready/u);
+    assert.deepEqual(leftovers(world.tmp), []);
+  });
+}
+
+void test("installation continues when the musl repair fails", (t) => {
+  const world = createWorld(t);
+  const result = world.run({
+    env: {
+      IVA_TEST_GWS_ERROR: "GLIBC_2.39 not found",
+      IVA_TEST_CORRUPT_ARTIFACT: "musl",
+    },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /couldn't install gws/u);
+  assert.deepEqual(leftovers(world.tmp), []);
+});
+
+for (const arch of ["aarch64", "x86_64"]) {
+  void test(`updater GWS replaces a GLIBC failure with verified musl on ${arch}`, (t) => {
+    const world = createWorld(t);
+    const prefix = join(world.home, "prefix with spaces");
+    const result = world.run({
+      args: ["--update-gws", prefix],
+      env: {
+        IVA_TEST_GWS_ERROR: "version GLIBC_2.39 not found",
+        IVA_TEST_ARCH: arch,
+      },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /gws 0\.22\.5/u);
+    assert.ok(
+      world
+        .calls()
+        .includes(`google-workspace-cli-${arch}-unknown-linux-musl.tar.gz`),
+    );
+    assert.deepEqual(leftovers(world.tmp), []);
+  });
+}
+
+const gwsRepairFailures: Array<Record<string, string>> = [
+  { IVA_TEST_CORRUPT_ARTIFACT: "musl" },
+  { IVA_TEST_FAIL_ARTIFACT_DOWNLOAD: "musl" },
+  { IVA_TEST_MUSL_EXIT: "1" },
+  { IVA_TEST_ARCH: "riscv64" },
+];
+for (const env of gwsRepairFailures) {
+  void test(`GWS repair reports failure and cleans downloads: ${JSON.stringify(env)}`, (t) => {
+    const world = createWorld(t);
+    const result = world.run({
+      args: ["--update-gws", join(world.home, ".local")],
+      env: { IVA_TEST_GWS_ERROR: "version GLIBC_2.39 not found", ...env },
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout + result.stderr, /Google.*unavailable/u);
+    assert.deepEqual(leftovers(world.tmp), []);
+  });
+}
+
+void test("GWS errors unrelated to GLIBC do not download musl", (t) => {
+  const world = createWorld(t);
+  const result = world.run({
+    args: ["--update-gws", join(world.home, ".local")],
+    env: { IVA_TEST_GWS_ERROR: "permission denied" },
+  });
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.doesNotMatch(world.calls(), /unknown-linux-musl/u);
+  assert.match(result.stdout + result.stderr, /permission denied/u);
+});
+
+void test("updater GWS path checks the same pinned bytes and preserves credentials", (t) => {
+  const world = createWorld(t);
+  const prefix = join(world.home, "user with spaces", ".local");
+  const credentials = join(world.home, ".config/gws/credentials.json");
+  mkdirSync(join(world.home, ".config/gws"), { recursive: true });
+  writeFileSync(credentials, "fixture authorization");
+  const result = world.run({ args: ["--update-gws", prefix] });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const calls = world.calls();
+  assert.ok(calls.includes(PINNED_ARTIFACTS.gws.url));
+  assert.ok(calls.indexOf("sha256sum ") < calls.indexOf("npm i -g "));
+  assert.ok(calls.includes(`npm i -g --prefix ${prefix} `));
+  assert.doesNotMatch(calls, /latest|systemctl|git |iva |apt-get/u);
+  assert.equal(readFileSync(credentials, "utf8"), "fixture authorization");
+  assert.deepEqual(leftovers(world.tmp), []);
+});
+void test("updater GWS entry works with HOME and INSTALL_DIR unset", (t) => {
+  const world = createWorld(t);
+  const script = join(world.dir, "update-without-home.sh");
+  writeFileSync(
+    script,
+    'unset HOME INSTALL_DIR\nexec bash "$1" --update-gws "$2"\n',
+  );
+  const prefix = join(world.home, "prefix with spaces");
+  const result = world.run({
+    script,
+    args: [join(world.install, "install.sh"), prefix],
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.ok(world.calls().includes(`npm i -g --prefix ${prefix} `));
+  assert.deepEqual(leftovers(world.tmp), []);
+});
+void test("updater GWS path rejects corrupt bytes before npm and removes its download", (t) => {
+  const world = createWorld(t);
+  const result = world.run({
+    args: ["--update-gws", join(world.home, ".local")],
+    env: { IVA_TEST_CORRUPT_ARTIFACT: "gws" },
+  });
+  assert.equal(result.status, 86, result.stdout + result.stderr);
+  assert.match(result.stdout + result.stderr, /SHA-256 mismatch/u);
+  assert.doesNotMatch(world.calls(), /npm i/u);
+  assert.deepEqual(leftovers(world.tmp), []);
+});
+
+void test("Darwin installer uses brew and launchd without swap or linger", (t) => {
+  const world = createWorld(t);
+  const result = world.run({ env: { IVA_TEST_OS: "Darwin" } });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(world.calls(), /launchctl print gui\//u);
+  assert.doesNotMatch(world.calls(), /loginctl|swapon|mkswap|apt-get|dnf/u);
+  assert.match(result.stdout, /iva logs -f/u);
+  assert.match(result.stdout, /Mac is on, awake/u);
+});
+void test("Darwin installer stops without a GUI login or Homebrew", (t) => {
+  for (const env of [
+    { IVA_TEST_OS: "Darwin", IVA_TEST_GUI: "0", IVA_TEST_MISSING_COMMANDS: "" },
+    {
+      IVA_TEST_OS: "Darwin",
+      IVA_TEST_GUI: "1",
+      IVA_TEST_MISSING_COMMANDS: "brew",
+    },
+  ]) {
+    const world = createWorld(t);
+    const result = world.run({ env });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(
+      result.stdout + result.stderr,
+      /войдите в систему на экране|Install Homebrew/u,
+    );
+    assert.doesNotMatch(world.calls(), /_activate-units|loginctl|swapon/u);
+  }
+});
+
+void test("repair 8: Darwin package installs preserve piped installer stdin", (t) => {
+  const world = createWorld(t);
+  rmSync(world.install, { recursive: true, force: true });
+  const result = world.run({
+    pipedStdin: true,
+    script: world.piped,
+    env: {
+      IVA_TEST_OS: "Darwin",
+      IVA_TEST_BREW_READ_STDIN: "1",
+      IVA_TEST_MISSING_COMMANDS: "ffmpeg pandoc pdftotext gh",
+    },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(world.calls(), /brew install/);
+  assert.match(result.stdout, /Mac is on, awake/);
 });

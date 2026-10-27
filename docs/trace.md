@@ -38,7 +38,7 @@ content (`data.traceTrimmed: true`). Names, timings and sizes always survive.
 1. **Before the turn exists** — the update key `tg:<chatId>:<messageId>`. Both the Bridge
    and the core can compute it; `update_id` is invisible to the core.
 2. **After the turn starts** — the Eve `turnId` (`turn_0`, `turn_1`, …). Subagent steps
-   carry a suffix: `turn_3#planner`, the same key `data/usage.jsonl` uses.
+   carry a suffix: `turn_3#custom-node`, the same key `data/usage.jsonl` uses.
 3. **Night turns have no turn key at all.** Rollup and other cron deliveries go through
    the Eve client, which exposes only a session id, so their `gate.outbound` and
    `outbox.*` lines carry `turn: ""` with a non-empty `session` and `source` in
@@ -67,16 +67,18 @@ content (`data.traceTrimmed: true`). Names, timings and sizes always survive.
 prints and accepts, what the Insight failure list gives and what `iva diagnose --turn` takes.
 A bare `turn_N` names the newest turn with that number.
 
-Callback updates (`⏹ Stop`, `/menu` buttons) get the key `tg:<chatId>:cb:<callbackId>`,
+Callback updates (`/menu` buttons) get the key `tg:<chatId>:cb:<callbackId>`,
 and **only the Bridge produces it**: callbacks never reach `runTelegramInbound`, so those
 `bridge.*` lines stay orphans with no `turn.bound` and no `inbound.*`.
+Native draft stops (`stopped_message_generation`) use `tg:<chatId>:stop:<update_id>` at intake; `stop.*` records the verified session and turn pair.
 
 ## Event catalogue
 
 | `kind`.`name`                                                     | `data`                                                                                                                                                                                                                                                          |
 | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bridge.admitted` / `bridge.dropped`                              | `updateId`, `chatId`, `messageId`, `kind` (`message`/`callback`), `decision` (`owned`/`terminal-drop`/`unownable`/`write-failed`)                                                                                                                               |
-| `bridge.delivered` / `bridge.rejected`                            | the same fields plus `accepted` (`true`/`false`/`"handled"`), `ms`                                                                                                                                                                                              |
+| `bridge.queued`                                                   | `updateId`, `chatId`, `messageId`, `kind`, `count` (now waiting in the chat queue), `parts`; the event time is the queueing time                                                                                                                                |
+| `bridge.delivered` / `bridge.rejected`                            | the same fields plus `accepted` (`true`/`false`/`"handled"`), `ms`, `parts` (messages in the delivery: a queue batch carries several)                                                                                                                           |
 | `inbound.received`                                                | `chatId`, `chatType`, `messageId`, `userId`, `allowlisted`; content: `text`                                                                                                                                                                                     |
 | `inbound.accepted` / `inbound.dropped`                            | `chatId`, `chatKey`, `parts`, `partChars[]`; content: `context[]`                                                                                                                                                                                               |
 | `gate.inbound` / `gate.web`                                       | `surface`, `blocked`, `reason`, `flags[]`, `truncatedChars`, `chars`                                                                                                                                                                                            |
@@ -110,7 +112,7 @@ read as that object, as eve and the repeat guard read it. Lines written before t
 carry `result` as an object and no `failure`.
 
 **`gate.outbound` can appear without a matching `outbox.*`.** Every service reply the
-channel sends (a working-status message, an error explanation, a media notice) passes the
+channel sends (a draft frame, an error explanation, a media notice) passes the
 same outbound gate but not the Outbox seam, so it produces a gate line alone. Do not wait
 for a delivery event after each gate verdict.
 
@@ -173,3 +175,5 @@ not match `YYYY-MM-DD.jsonl` are left alone.
   minute) and nothing else.
 - Two processes append to one file, so line order is write order, not turn order. Sort by
   `ts`.
+
+Historical Trace entries such as `turn_3#planner` retain their original meaning.

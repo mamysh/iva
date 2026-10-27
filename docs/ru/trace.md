@@ -36,7 +36,7 @@
 1. **До появления хода** - ключ апдейта `tg:<chatId>:<messageId>`. Его умеют посчитать и
    мост, и ядро; `update_id` ядру не виден.
 2. **После старта хода** - `turnId` eve (`turn_0`, `turn_1`, ...). Шаги субагента идут с
-   суффиксом: `turn_3#planner`, тот же ключ, что в `data/usage.jsonl`.
+   суффиксом: `turn_3#custom-node`, тот же ключ, что в `data/usage.jsonl`.
 3. **У ночного хода ключа хода нет вовсе.** Свёртка и прочие cron-отправки идут через
    клиент eve, а он отдаёт только id сессии, поэтому их строки `gate.outbound` и
    `outbox.*` несут `turn: ""`, непустую `session` и `source` из {`rollup`, `cron`}.
@@ -63,16 +63,18 @@
 и принимает `iva trace show`, что даёт список сбоев Insight и что берёт `iva diagnose --turn`.
 Голый `turn_N` называет новейший ход с этим номером.
 
-Колбэки (`⏹ Стоп`, кнопки `/menu`) получают ключ `tg:<chatId>:cb:<callbackId>`, и
+Колбэки (кнопки `/menu`, прежняя `iva_cancel`) получают ключ `tg:<chatId>:cb:<callbackId>`, и
 **делает его только мост**: до `runTelegramInbound` колбэк не доходит, поэтому такие
 строки `bridge.*` остаются сиротами - ни `turn.bound`, ни `inbound.*` у них не будет.
+Нативный стоп черновика (`stopped_message_generation`) получает ключ `tg:<chatId>:stop:<update_id>` на входе; `stop.*` хранит сверенную пару сессии и хода.
 
 ## Каталог событий
 
 | `kind`.`name`                                                     | `data`                                                                                                                                                                                                                                                       |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `bridge.admitted` / `bridge.dropped`                              | `updateId`, `chatId`, `messageId`, `kind` (`message`/`callback`), `decision` (`owned`/`terminal-drop`/`unownable`/`write-failed`)                                                                                                                            |
-| `bridge.delivered` / `bridge.rejected`                            | те же поля плюс `accepted` (`true`/`false`/`"handled"`), `ms`                                                                                                                                                                                                |
+| `bridge.queued`                                                   | `updateId`, `chatId`, `messageId`, `kind`, `count` (сколько теперь ждёт в очереди чата), `parts`; время события и есть время постановки                                                                                                                      |
+| `bridge.delivered` / `bridge.rejected`                            | те же поля плюс `accepted` (`true`/`false`/`"handled"`), `ms`, `parts` (сколько сообщений в доставке: пачка из очереди несёт несколько)                                                                                                                      |
 | `inbound.received`                                                | `chatId`, `chatType`, `messageId`, `userId`, `allowlisted`; содержимое: `text`                                                                                                                                                                               |
 | `inbound.accepted` / `inbound.dropped`                            | `chatId`, `chatKey`, `parts`, `partChars[]`; содержимое: `context[]`                                                                                                                                                                                         |
 | `gate.inbound` / `gate.web`                                       | `surface`, `blocked`, `reason`, `flags[]`, `truncatedChars`, `chars`                                                                                                                                                                                         |
@@ -167,3 +169,5 @@ stderr). `rejected` и отменённый вызов - не сбой. Сбой
   в минуту) и на этом всё.
 - В один файл пишут два процесса, поэтому порядок строк - порядок записи, а не порядок
   событий хода. Сортируй по `ts`.
+
+Исторические события Trace вроде `turn_3#planner` сохраняют прежний смысл.

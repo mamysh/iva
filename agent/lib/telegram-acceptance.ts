@@ -16,6 +16,7 @@ import {
   saveJsonAtomic,
 } from "./json-store.ts";
 import { dataDir } from "./data-dir.ts";
+import { quarantineDamagedRecord } from "./damaged-record.ts";
 import { chatKeyOf, hasTelegramPendingInputRequests } from "./run-status.ts";
 import { traceInboundOutcome } from "./trace.ts";
 import { TELEGRAM_QUEUE_RECEIPT_FIELD } from "./telegram-parts.ts";
@@ -208,8 +209,7 @@ function validCompletedLedger(value: unknown): CompletedLedger {
   if (
     !isRecord(value) ||
     typeof value.botId !== "string" ||
-    !Array.isArray(value.updates) ||
-    !value.updates.every((id) => Number.isSafeInteger(id) && id >= 0)
+    !Array.isArray(value.updates)
   ) {
     throw new Error("completed Telegram update ledger has invalid schema");
   }
@@ -221,12 +221,20 @@ async function loadCompletedLedger(
   botId: string,
 ): Promise<{ ledger: CompletedLedger; recovered: boolean }> {
   try {
-    return {
-      ledger: validCompletedLedger(
-        await loadJsonStrict(file, { botId, updates: [] }),
-      ),
-      recovered: false,
-    };
+    const ledger = validCompletedLedger(
+      await loadJsonStrict(file, { botId, updates: [] }),
+    );
+    const updates = ledger.updates.filter((id) => {
+      if (Number.isSafeInteger(id) && id >= 0) return true;
+      quarantineDamagedRecord(file, {
+        reason: "invalid update id",
+        record: id,
+        label: "completed updates",
+      });
+      return false;
+    });
+    const recovered = updates.length !== ledger.updates.length;
+    return { ledger: { ...ledger, updates }, recovered };
   } catch (error) {
     const message =
       error !== null && typeof error === "object" && "message" in error

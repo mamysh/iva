@@ -17,6 +17,27 @@
 /** Пометка вырезанного. Тот же вид, что в правилах про evidence (AGENTS.md). */
 export const REDACTED = "<redacted>";
 
+/** Installation credentials: placeholders and a single repeated character are ordinary values. */
+export function isSecretValue(value: string): boolean {
+  const characters = [...value];
+  return characters.length >= 12 && new Set(characters).size > 1;
+}
+
+/** Eligible credentials selected from the shared inventory supplied by the caller. */
+export function secretEntriesFromEnv(
+  env: Record<string, string | undefined>,
+  names: readonly string[],
+): Array<{ name: string; value: string }> {
+  return names.flatMap((name) => {
+    const value = env[name];
+    return value === undefined
+      ? []
+      : secretValuesFromEnv({ [name]: value })
+          .filter(isSecretValue)
+          .map((value) => ({ name, value }));
+  });
+}
+
 /**
  * Имя ключа `.env`, значение которого НЕ секрет: каталог, модель, провайдер, зона, язык,
  * порт, хост, окно контекста, усилие, режим, ник бота. Режется значение любого другого
@@ -46,7 +67,7 @@ const URL_PASSWORD = /^(?:[A-Za-z][A-Za-z\d+.-]*:\/\/)?[^\s/@:]*:([^\s/@]+)@/u;
 /**
  * Настройки САМОГО ПРОЦЕССА, а не установки: в `.env` таких ключей нет, а в `process.env`
  * они есть всегда — и их значения не секреты. Без этого списка хвост журнала расписания
- * терял смысл: `HOME=/Users/john` вырезал начало каждого пути, `USER=john` — слог внутри
+ * терял смысл: `HOME=/Users/user` вырезал начало каждого пути, `USER=user` — слог внутри
  * слов, `SHLVL=1` — каждую единицу (слепая приёмка T20, раунды 2-3). Переменные systemd
  * (`MANAGERPID`, `SYSTEMD_EXEC_PID`, `INVOCATION_ID`, `JOURNAL_STREAM`) — той же природы:
  * их пишет systemd в окружение сервиса, и pid со stream попадают в хвост провала (T30 v2).
@@ -169,7 +190,10 @@ function formPattern(form: string): string {
     ? `(?<![\\p{L}\\p{N}])${raw}(?![\\p{L}\\p{N}])`
     : raw;
 }
-export function redact(text: string, secrets: readonly string[]): string {
+export function redactSecretValues(
+  text: string,
+  secrets: readonly string[],
+): string {
   const forms = new Set<string>();
   for (const secret of secrets)
     for (const form of secretForms(secret))
@@ -182,7 +206,11 @@ export function redact(text: string, secrets: readonly string[]): string {
       REDACTED,
     );
   }
-  return cutKeyShapes(out)
+  return out;
+}
+
+export function redact(text: string, secrets: readonly string[]): string {
+  return cutKeyShapes(redactSecretValues(text, secrets))
     .replace(TELEGRAM_ID_RE, `$1${REDACTED}`)
     .replace(EMAIL_RE, REDACTED);
 }

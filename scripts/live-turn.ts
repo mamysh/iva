@@ -7,6 +7,7 @@
 // Другой провайдер - переопределить MODEL_PROVIDER и его *_MODEL перед npm run.
 // Ключ OpenAI API для прогонов не использовать: подписка через codex - да, токены по ключу - нет.
 // Ключи и модель берутся из окружения по списку ниже; остальное окружение не передаётся.
+import { pathToFileURL } from "node:url";
 import { statSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,10 +26,40 @@ import { carryCodexLogin } from "./lib/live-codex-auth.ts";
 import { resolveDataDir } from "./lib/data-dir.ts";
 
 const PROVIDER_ENV =
-  /^(MODEL_PROVIDER|THINKING_EFFORT|(OLLAMA|OPENCODE|OPENROUTER|CODEX|CLAUDE|CUSTOM)_[A-Z_]+)$/u;
+  /^(MODEL_PROVIDER|HELPER_MODEL|THINKING_EFFORT|(OLLAMA|OPENCODE|OPENROUTER|CODEX|CLAUDE|CUSTOM)_[A-Z_]+)$/u;
 const MARK = randomBytes(3).toString("hex");
 const FACT = `кот Барсик-${MARK} любит рыбу`;
 const TURN_TIMEOUT_MS = 240_000;
+
+export const liveTurnHeaders = (helper = false): Record<string, string> =>
+  helper ? { "x-iva-turn": "helper", "x-iva-helper": `h-${MARK}` } : {};
+export function helperWireResult(
+  chat: readonly string[],
+  helper: readonly string[],
+) {
+  const first = (logs: readonly string[]) => {
+    const line = logs.find((line) => line.startsWith("LIVE_HELPER_WIRE "));
+    if (!line) throw new Error("provider wire missing");
+    return JSON.parse(line.slice(17)) as {
+      model: string;
+      tools: number;
+      hash: string;
+      helperBlock: boolean;
+    };
+  };
+  const normal = first(chat),
+    background = first(helper);
+  if (
+    !Number.isSafeInteger(normal.tools) ||
+    normal.tools <= 0 ||
+    !/^[0-9a-f]{64}$/u.test(normal.hash) ||
+    background.helperBlock !== true ||
+    normal.tools !== background.tools ||
+    normal.hash !== background.hash
+  )
+    throw new Error("helper wire differs from chat or helper block is missing");
+  return { model: background.model, tools: background.tools };
+}
 
 async function cardsWith(vault: string, needle: string): Promise<string[]> {
   const hits: string[] = [];
@@ -77,11 +108,15 @@ async function carryLogin(app: string): Promise<void> {
   if (missing !== null) throw new Error(missing);
 }
 
-async function startLiveApp(sandbox: string, note: (line: string) => void) {
+export async function prepareLiveApp(
+  sandbox: string,
+  note: (line: string) => void,
+) {
   const app = await prepareApp(sandbox);
   const port = await freePort();
   const bearer = randomBytes(24).toString("hex");
   const env = liveEnv(app, port, bearer);
+  if (process.env.LIVE_TURN_KIND === "helper") env.IVA_LIVE_WIRE = "1";
   await carryLogin(app);
   await writeFile(join(app, ".env"), `ASSISTANT_BEARER=${bearer}\n`, {
     mode: 0o600,
@@ -93,14 +128,24 @@ async function startLiveApp(sandbox: string, note: (line: string) => void) {
     env,
     note,
   );
+  return { app, env, port, bearer };
+}
+
+async function startLiveApp(sandbox: string, note: (line: string) => void) {
+  const { app, env, port, bearer } = await prepareLiveApp(sandbox, note);
   const eve = startEve(app, env, port, note);
   return { eve, port, bearer, vault: join(app, "vault") };
 }
 
-async function dayTurn(port: number, bearer: string): Promise<string> {
+async function dayTurn(
+  port: number,
+  bearer: string,
+  helper: boolean,
+): Promise<string> {
   const { Client } = await import("eve/client");
   const client = new Client({
     host: `http://127.0.0.1:${port}`,
+    headers: liveTurnHeaders(helper),
     // eslint-disable-next-line @typescript-eslint/require-await -- eve ждёт async-колбэк.
     auth: { bearer: async () => bearer },
   });
@@ -137,10 +182,17 @@ async function factCards(vault: string, since: number, reply: string) {
   );
 }
 
-async function main(): Promise<void> {
+function liveModel() {
   const provider = process.env.MODEL_PROVIDER;
   if (!provider) throw new Error("MODEL_PROVIDER is required");
-  const model = process.env[`${provider.toUpperCase()}_MODEL`] ?? "default";
+  return {
+    provider,
+    model: process.env[`${provider.toUpperCase()}_MODEL`] ?? "default",
+  };
+}
+
+async function main(): Promise<void> {
+  const { provider, model } = liveModel();
   const sandbox = await mkdtemp(join(tmpdir(), "iva-live-"));
   const logs: string[] = [];
   const note = (line: string) => logs.push(line);
@@ -150,8 +202,17 @@ async function main(): Promise<void> {
     eve = live.eve;
     await waitForHealth(live.port, eve);
     const since = Date.now();
-    const reply = await dayTurn(live.port, live.bearer);
+    const reply = await dayTurn(live.port, live.bearer, false);
     const cards = await factCards(live.vault, since, reply);
+    if (process.env.LIVE_TURN_KIND === "helper") {
+      const before = logs.length;
+      await dayTurn(live.port, live.bearer, true);
+      const wire = helperWireResult(logs.slice(0, before), logs.slice(before));
+      console.log(
+        `live turn OK: ${provider} ${wire.model}; helper tools ${wire.tools} (same as chat: yes); helper block yes`,
+      );
+      return;
+    }
     console.log(
       `live turn OK: ${provider} ${model}; Card ${cards}; reply ${JSON.stringify(reply.slice(0, 80))}`,
     );
@@ -167,4 +228,4 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) await main();

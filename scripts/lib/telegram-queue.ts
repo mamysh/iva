@@ -60,6 +60,7 @@ export type TelegramQueueUpdate = {
   update_id: number;
   message?: TelegramQueueMessage;
   callback_query?: TelegramCallbackQuery;
+  stopped_message_generation?: import("#lib/telegram-stop.ts").TelegramDraftStop;
   [key: string]: unknown;
 };
 
@@ -153,16 +154,32 @@ export function isTelegramQueueUpdate(
     "update_id" in value &&
     Number.isSafeInteger(value.update_id) &&
     optionalField(value, "message", isTelegramQueueMessage) &&
-    optionalField(value, "callback_query", isTelegramCallbackQuery)
+    optionalField(value, "callback_query", isTelegramCallbackQuery) &&
+    // Поля «стопа» сверяет handleTelegramDraftStop и непонятный стоп игнорирует. Здесь —
+    // только объект: 16.10.2026 живой стоп не прошёл строгую проверку по документации
+    // Bot API, и вход стоял, пока апдейт не подтвердили руками.
+    optionalField(value, "stopped_message_generation", isRecord)
   );
 }
 
+export type TelegramUpdateBatchItem =
+  | { update: TelegramQueueUpdate }
+  | { skipped: InvalidTelegramUpdatesDiagnostic; updateId: number | null };
+
+// Пачка разбирается по элементу: апдейт, который не прошёл проверку, пропускается со
+// сдвигом offset, остальные идут дальше. null — только когда result не массив.
 export function parseTelegramUpdates(
   value: unknown,
-): TelegramQueueUpdate[] | null {
-  return Array.isArray(value) && value.every(isTelegramQueueUpdate)
-    ? value
-    : null;
+): TelegramUpdateBatchItem[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.map((item: unknown, index) => {
+    if (isTelegramQueueUpdate(item)) return { update: item };
+    const updateId = isRecord(item) ? item.update_id : null;
+    return {
+      skipped: invalidItemDiagnostic(item, index),
+      updateId: Number.isSafeInteger(updateId) ? (updateId as number) : null,
+    };
+  });
 }
 
 export type InvalidTelegramUpdatesDiagnostic = {
@@ -171,51 +188,48 @@ export type InvalidTelegramUpdatesDiagnostic = {
   item: {
     type: string;
     keys?: string[];
-    messageKeys?: string[];
-    callbackQueryKeys?: string[];
+    // Вложенные объекты: имя поля и тип каждого ключа, без значений.
+    fields?: Record<string, string[]>;
   };
 };
 
-export function invalidTelegramUpdatesDiagnostic(
-  value: unknown,
-): InvalidTelegramUpdatesDiagnostic | null {
-  if (!Array.isArray(value))
-    return {
-      index: null,
-      updateId: null,
-      item: { type: value === null ? "null" : typeof value },
-    };
-  const index = value.findIndex((item) => !isTelegramQueueUpdate(item));
-  if (index < 0) return null;
-  const item: unknown = value[index];
+function typeLabel(value: unknown): string {
+  if (value === null) return "null";
+  return Array.isArray(value) ? "array" : typeof value;
+}
+
+function invalidItemDiagnostic(
+  item: unknown,
+  index: number,
+): InvalidTelegramUpdatesDiagnostic {
   if (!isRecord(item))
-    return {
-      index,
-      updateId: null,
-      item: {
-        type:
-          item === null ? "null" : Array.isArray(item) ? "array" : typeof item,
-      },
-    };
+    return { index, updateId: null, item: { type: typeLabel(item) } };
   const rawUpdateId = item.update_id;
   const updateId =
     typeof rawUpdateId === "string" || typeof rawUpdateId === "number"
       ? rawUpdateId
       : null;
+  const fields: Record<string, string[]> = {};
+  for (const [key, nested] of Object.entries(item)) {
+    if (!isRecord(nested)) continue;
+    fields[key] = Object.entries(nested)
+      .map(([name, field]) => `${name}:${typeLabel(field)}`)
+      .sort();
+  }
   return {
     index,
     updateId,
-    item: {
-      type: "object",
-      keys: Object.keys(item).sort(),
-      ...(isRecord(item.message)
-        ? { messageKeys: Object.keys(item.message).sort() }
-        : {}),
-      ...(isRecord(item.callback_query)
-        ? { callbackQueryKeys: Object.keys(item.callback_query).sort() }
-        : {}),
-    },
+    item: { type: "object", keys: Object.keys(item).sort(), fields },
   };
+}
+
+export function invalidTelegramUpdatesDiagnostic(
+  value: unknown,
+): InvalidTelegramUpdatesDiagnostic | null {
+  if (!Array.isArray(value))
+    return { index: null, updateId: null, item: { type: typeLabel(value) } };
+  const index = value.findIndex((item) => !isTelegramQueueUpdate(item));
+  return index < 0 ? null : invalidItemDiagnostic(value[index], index);
 }
 
 export type TelegramQueueItem = {
@@ -264,6 +278,7 @@ type QueueFileOptions = {
   quarantineNonce?: () => string;
   onLegacyQuarantine?: (path: string) => void;
   now?: () => number;
+  logImpl?: (...parts: unknown[]) => void;
 };
 
 type TelegramEntity = {
@@ -285,6 +300,14 @@ export const TELEGRAM_QUEUE_ACK_ROLLED_BACK = "ETELEGRAM_QUEUE_ACK_ROLLED_BACK";
 export const TELEGRAM_QUEUE_FATAL_DURABILITY =
   "ETELEGRAM_QUEUE_FATAL_DURABILITY";
 export const TELEGRAM_QUEUE_ACK_PENDING_SUFFIX = ".ack-pending";
+
+class NewerQueueVersionError extends Error {
+  constructor(version: number, supported: number) {
+    super(
+      `Telegram queue: записано более новой Ивой (версия ${version}, эта Ива понимает ${supported}): обновите Иву или верните файл`,
+    );
+  }
+}
 
 export function emptyQueueDocument(): TelegramQueueDocument {
   return { version: TELEGRAM_QUEUE_VERSION, queues: Object.fromEntries([]) };
@@ -316,6 +339,14 @@ function normalizeItem(
   }
   const candidate = item as Record<string, unknown>;
   if (
+    typeof candidate?.version === "number" &&
+    candidate.version > TELEGRAM_QUEUE_ITEM_VERSION
+  )
+    throw new NewerQueueVersionError(
+      candidate.version,
+      TELEGRAM_QUEUE_ITEM_VERSION,
+    );
+  if (
     typeof item !== "object" ||
     item === null ||
     Array.isArray(item) ||
@@ -339,20 +370,53 @@ function normalizeItem(
   return cloneJson(candidate) as TelegramQueueItem;
 }
 
+// Запись, которую загрузка не приняла: целиком уходит в файл карантина, остальные идут дальше.
+export type DamagedQueueRecord = {
+  chatKey: string;
+  index: number | null;
+  reason: string;
+  record: unknown;
+};
+
 function normalizeQueues(
   queues: unknown,
-  { legacy = false }: { legacy?: boolean } = {},
+  {
+    legacy = false,
+    damaged,
+  }: { legacy?: boolean; damaged?: DamagedQueueRecord[] } = {},
 ): { document: TelegramQueueDocument; migrated: boolean } {
   if (typeof queues !== "object" || queues === null || Array.isArray(queues)) {
     throw new Error("Telegram queue does not contain a queues object");
   }
+  // Без damaged любая плохая запись — ошибка (запись файла); с ним — пропуск записи.
+  const reject = (record: DamagedQueueRecord) => {
+    if (!damaged) throw new Error(record.reason);
+    damaged.push(record);
+  };
   const entries: [string, TelegramQueueItem[]][] = [];
   for (const [chatKey, items] of Object.entries(queues)) {
-    if (!Array.isArray(items))
-      throw new Error(`Telegram queue ${chatKey} is not an array`);
-    const next = items.map((item, index) =>
-      normalizeItem(item, chatKey, index),
-    );
+    if (!Array.isArray(items)) {
+      reject({
+        chatKey,
+        index: null,
+        reason: `Telegram queue ${chatKey} is not an array`,
+        record: items,
+      });
+      continue;
+    }
+    const next: TelegramQueueItem[] = [];
+    items.forEach((item: unknown, index) => {
+      try {
+        next.push(normalizeItem(item, chatKey, index));
+      } catch (error) {
+        reject({
+          chatKey,
+          index,
+          reason: (error as Error).message,
+          record: item,
+        });
+      }
+    });
     if (next.length) entries.push([chatKey, next]);
   }
   return {
@@ -365,23 +429,31 @@ function normalizeQueues(
   };
 }
 
-export function normalizeQueueDocument(value: unknown): {
+export function normalizeQueueDocument(
+  value: unknown,
+  { damaged }: { damaged?: DamagedQueueRecord[] } = {},
+): {
   document: TelegramQueueDocument;
   migrated: boolean;
 } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Telegram queue does not contain an object");
   }
+  const version = (value as Record<string, unknown>).version;
+  if (typeof version === "number" && version > TELEGRAM_QUEUE_VERSION)
+    throw new NewerQueueVersionError(version, TELEGRAM_QUEUE_VERSION);
   if (
     (value as Record<string, unknown>).version === TELEGRAM_QUEUE_VERSION &&
     Object.hasOwn(value, "queues")
   ) {
-    return normalizeQueues((value as Record<string, unknown>).queues);
+    return normalizeQueues((value as Record<string, unknown>).queues, {
+      damaged,
+    });
   }
   // Pre-IVA-008 format: { "<chat>:<topic>": ["text", ...] }.
   // Convert every string to a versioned item with a stable synthetic update id.
   // The text stays byte-for-byte present until Eve accepts the migrated head.
-  return normalizeQueues(value, { legacy: true });
+  return normalizeQueues(value, { legacy: true, damaged });
 }
 
 export function createQueueItem(
@@ -471,23 +543,33 @@ export function enqueueItem(
   };
 }
 
-export function removeQueueHead(
+// Снятие доставленной пачки: элементы после снимка остаются, id, убранные сбросом,
+// пропускаются; присутствующие id не с головы — очередь не та, снимать нечего.
+export function removeQueueItems(
   document: TelegramQueueDocument,
   chatKey: string,
-  updateId: number,
-): TelegramQueueDocument {
+  updateIds: readonly number[],
+): { document: TelegramQueueDocument; removed: number } {
+  if (updateIds.length === 0) throw new Error("Telegram queue batch is empty");
   const current = Object.hasOwn(document.queues, chatKey)
     ? document.queues[chatKey]
     : [];
-  if (!current.length || current[0].updateId !== updateId) {
+  const batch = new Set(updateIds);
+  const present = current.filter((item) => batch.has(item.updateId));
+  if (present.length === 0) return { document, removed: 0 };
+  if (present.some((item, index) => current[index] !== item)) {
     throw new Error(
-      `Telegram queue head changed for ${chatKey}; expected update ${updateId}`,
+      `Telegram queue batch changed for ${chatKey}; expected updates ${updateIds.join(",")}`,
     );
   }
   const queues = cloneQueueMap(document.queues);
-  if (current.length === 1) delete queues[chatKey];
-  else defineQueue(queues, chatKey, current.slice(1));
-  return { version: TELEGRAM_QUEUE_VERSION, queues };
+  const rest = current.slice(present.length);
+  if (rest.length === 0) delete queues[chatKey];
+  else defineQueue(queues, chatKey, rest);
+  return {
+    document: { version: TELEGRAM_QUEUE_VERSION, queues },
+    removed: present.length,
+  };
 }
 
 export function clearQueueKey(
@@ -786,18 +868,40 @@ export async function loadQueueFile(
   if (pendingRaw !== undefined) {
     // A pending document is the last fully durable pre-ack state. Restore it
     // before any caller can observe the possibly published removal.
-    const recovered = normalizeQueueDocument(JSON.parse(pendingRaw)).document;
-    const recoveryOptions = { ...options };
-    if (typeof recoveryOptions.nonce === "function")
-      delete recoveryOptions.nonce;
-    await writeQueueFileAtomic(file, recovered, recoveryOptions);
-    await removeFileDurable(pendingFile, options);
-    return {
-      document: recovered,
-      migrated: false,
-      quarantined: null,
-      recoveredPendingAcknowledgement: true,
-    };
+    const damaged: DamagedQueueRecord[] = [];
+    let recovered: TelegramQueueDocument | undefined;
+    try {
+      recovered = normalizeQueueDocument(JSON.parse(pendingRaw), {
+        damaged,
+      }).document;
+    } catch (error) {
+      if (strict || error instanceof NewerQueueVersionError) throw error;
+      const backup = `${pendingFile}.corrupt-${Date.now()}-${quarantineNonce()}`;
+      await renameImpl(pendingFile, backup);
+      (options.logImpl ?? console.error)(
+        `corrupt Telegram queue pending file moved to ${backup}`,
+      );
+    }
+    if (recovered) {
+      // Pending recovery must also preserve a newer main document.
+      try {
+        normalizeQueueDocument(JSON.parse(await readFileImpl(file, "utf8")));
+      } catch (error) {
+        if (error instanceof NewerQueueVersionError) throw error;
+      }
+      await quarantineQueueRecords(file, damaged, options);
+      const recoveryOptions = { ...options };
+      if (typeof recoveryOptions.nonce === "function")
+        delete recoveryOptions.nonce;
+      await writeQueueFileAtomic(file, recovered, recoveryOptions);
+      await removeFileDurable(pendingFile, options);
+      return {
+        document: recovered,
+        migrated: false,
+        quarantined: null,
+        recoveredPendingAcknowledgement: true,
+      };
+    }
   }
 
   let raw: string;
@@ -815,11 +919,15 @@ export async function loadQueueFile(
     }
     throw error;
   }
+  // Плохая запись не роняет файл: она копируется в карантин, остальные возвращаются.
+  // Из самого файла её убирает следующая запись этого файла (16.10.2026: одна такая
+  // запись входящих гоняла приём по кругу падений, а в очереди уносила весь файл).
+  const damaged: DamagedQueueRecord[] = [];
+  let normalized: ReturnType<typeof normalizeQueueDocument>;
   try {
-    const normalized = normalizeQueueDocument(JSON.parse(raw));
-    return { ...normalized, quarantined: null };
+    normalized = normalizeQueueDocument(JSON.parse(raw), { damaged });
   } catch (error) {
-    if (strict) throw error;
+    if (strict || error instanceof NewerQueueVersionError) throw error;
     const backup = `${file}.corrupt-${Date.now()}-${quarantineNonce()}`;
     await renameImpl(file, backup);
     return {
@@ -829,6 +937,39 @@ export async function loadQueueFile(
       error,
     };
   }
+  await quarantineQueueRecords(file, damaged, options);
+  return { ...normalized, quarantined: null };
+}
+
+// Копия записи рядом с файлом: имя от содержимого, поэтому повторная загрузка той же
+// записи не плодит копий и не пишет журнал заново. Копия надёжна до того, как запись
+// исчезнет из файла (ADR-0002). В журнале — ключи и типы полей, без значений.
+export async function quarantineQueueRecords(
+  file: string,
+  damaged: readonly DamagedQueueRecord[],
+  options: QueueFileOptions = {},
+): Promise<string[]> {
+  const logImpl = options.logImpl ?? console.error;
+  const paths: string[] = [];
+  for (const entry of damaged) {
+    const text = JSON.stringify(entry);
+    const digest = createHash("sha256").update(text).digest("hex").slice(0, 16);
+    const path = `${file}.damaged-${digest}.json`;
+    paths.push(path);
+    try {
+      await writeFileDurable(path, text, { ...options, replace: false });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === "EEXIST") continue;
+      throw error;
+    }
+    logImpl(
+      `damaged Telegram queue record ${entry.chatKey}[${entry.index ?? "*"}] moved to ${path}: ${entry.reason}`,
+      JSON.stringify(
+        invalidItemDiagnostic(entry.record, entry.index ?? -1).item,
+      ),
+    );
+  }
+  return paths;
 }
 
 async function removeFileDurable(
@@ -847,6 +988,15 @@ async function removeFileDurable(
 export async function writeQueueFileAtomic(
   file: string,
   document: unknown,
+  options: QueueFileOptions = {},
+): Promise<void> {
+  const normalized = normalizeQueueDocument(document).document;
+  await writeFileDurable(file, JSON.stringify(normalized), options);
+}
+
+async function writeFileDurable(
+  file: string,
+  text: string,
   {
     mkdirImpl = mkdir,
     writeFileImpl = writeFile,
@@ -858,14 +1008,13 @@ export async function writeQueueFileAtomic(
     replace = true,
   }: QueueFileOptions = {},
 ): Promise<void> {
-  const normalized = normalizeQueueDocument(document).document;
   const parent = dirname(file);
   await mkdirImpl(parent, { recursive: true });
   const nonceValue = typeof nonce === "function" ? nonce() : nonce;
   const tmp = `${file}.tmp-${process.pid}-${nonceValue}`;
   let replaced = false;
   try {
-    await writeFileImpl(tmp, JSON.stringify(normalized), {
+    await writeFileImpl(tmp, text, {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
@@ -995,17 +1144,19 @@ export async function enqueueQueueFile(
   };
 }
 
-export async function acknowledgeQueueHead(
+export async function acknowledgeQueueItems(
   file: string,
   chatKey: string,
-  updateId: number,
+  updateIds: readonly number[],
   options: QueueFileOptions = {},
 ): Promise<TelegramQueueDocument> {
   const loaded = await loadQueueFile(file, { ...options, strict: true });
-  const document = removeQueueHead(loaded.document, chatKey, updateId);
+  const removal = removeQueueItems(loaded.document, chatKey, updateIds);
+  if (removal.removed === 0) return loaded.document; // acknowledged before a break: no write
+  const { document } = removal;
   const pendingFile = `${file}${TELEGRAM_QUEUE_ACK_PENDING_SUFFIX}`;
 
-  // Publish the original queue durably before making head removal visible.
+  // Publish the original queue durably before making batch removal visible.
   // If SIGKILL lands anywhere after this point, loadQueueFile restores it and
   // intentionally permits one at-least-once duplicate.
   await writeQueueFileAtomic(pendingFile, loaded.document, options);
@@ -1026,7 +1177,7 @@ export async function acknowledgeQueueHead(
       throw fatal;
     }
     const rolledBack = new Error(
-      `Telegram queue acknowledgement was not durable; original head ${updateId} was restored`,
+      `Telegram queue acknowledgement was not durable; original batch ${updateIds.join(",")} was restored`,
       { cause: error },
     ) as Error & { code: string };
     rolledBack.code = TELEGRAM_QUEUE_ACK_ROLLED_BACK;

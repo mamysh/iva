@@ -1,21 +1,51 @@
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node owns test registration. */
 // Дешёвый CRAP-тест границы handleWizardCallback: шесть глаголов — что ушло в tg
 // (метод + текст/клавиатура) и что записалось в состояние. Сеть и .env подменены:
 // fetch пишет вызовы, состояние сеется напрямую во flows.
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after, mock } from "node:test";
 
-process.env.ASSISTANT_DATA_DIR = mkdtempSync(join(tmpdir(), "iva-wizard-cb-"));
+const home = mkdtempSync(join(tmpdir(), "iva-wizard-cb-"));
+process.env.ASSISTANT_DATA_DIR = home;
+after(() => rmSync(home, { recursive: true, force: true }));
 process.env.AGENT_LANGUAGE = "en";
 process.env.TELEGRAM_BOT_TOKEN = "token";
 process.env.TELEGRAM_ALLOWED_USER_IDS = "42";
 
-const { flows, handleWizardCallback } = (await import(
-  `./wizards.ts?wizards-callback=${Date.now()}`
-)) as typeof import("./wizards.ts");
+const { flows, handleWizardCallback, handleModelCmd, getWizard, showSaved } =
+  (await import(
+    `./wizards.ts?wizards-callback=${Date.now()}`
+  )) as typeof import("./wizards.ts");
+
+// Every wizard settings read uses this fixture, including the full callback path.
+const originalReadFile = fsPromises.readFile;
+const settingsRead = mock.method(
+  fsPromises,
+  "readFile",
+  (
+    path: Parameters<typeof originalReadFile>[0],
+    options?: Parameters<typeof originalReadFile>[1],
+  ) =>
+    typeof path === "string" && path.endsWith("/.env")
+      ? Promise.resolve(
+          options === "utf8"
+            ? "MODEL_PROVIDER=ollama\nOLLAMA_MODEL=deepseek-v4-pro\n"
+            : Buffer.from(
+                "MODEL_PROVIDER=ollama\nOLLAMA_MODEL=deepseek-v4-pro\n",
+              ),
+        )
+      : originalReadFile(path, options),
+);
+syncBuiltinESMExports();
+after(() => {
+  settingsRead.mock.restore();
+  syncBuiltinESMExports();
+});
 
 type TgCall = {
   method: string;
@@ -186,5 +216,80 @@ test("m: выбирает модель и рисует уровни размыш
     assert.match(last.text, /Thinking level for m1:/u);
   } finally {
     if (previousFetch) globalThis.fetch = previousFetch;
+  }
+});
+
+test("R8 helper model: full /model path, back button, saved clears helper flag", async () => {
+  spy();
+  try {
+    const { chat, user } = seed("intro");
+    // Rich-рендер: имя модели обязано стоять внутри подписи <tg-button>, не после неё.
+    writeFileSync(
+      join(home, "settings.json"),
+      JSON.stringify({ menuStyle: "rich" }),
+    );
+    await handleModelCmd(chat, user, { msgId: 11 });
+    assert.match(
+      edits().at(-1)!.text,
+      /<tg-button[^>]*data="iva_model:helper"[^>]*>Helper and background model: same as Iva<\/tg-button>/,
+    );
+    assert.match(
+      edits().at(-1)!.text,
+      /Used by helpers, Watch, Brief and Insight/,
+    );
+    assert.match(edits().at(-1)!.keyboard, /iva_model:helper/);
+    rmSync(join(home, "settings.json"), { force: true });
+    assert.equal(await tap(chat, user, "iva_model:helper"), true);
+    const st = getWizard(chat, user) as unknown as {
+      helperModel: boolean;
+      modelOptions: { id: string }[];
+    };
+    assert.equal(st.helperModel, true);
+    assert.deepEqual(
+      st.modelOptions.map((m) => m.id),
+      ["deepseek-v4-pro"],
+    );
+    assert.match(edits().at(-1)!.keyboard, /iva_model:helper-same/);
+    assert.match(edits().at(-1)!.keyboard, /iva_model:back/);
+    assert.equal(await tap(chat, user, "iva_model:back"), true);
+    assert.equal(st.helperModel, undefined);
+    assert.equal(
+      (getWizard(chat, user) as unknown as { step: string }).step,
+      "intro",
+    );
+    await tap(chat, user, "iva_model:helper");
+    const saving = getWizard(chat, user);
+    assert.ok(saving);
+    await showSaved(saving);
+    assert.equal((saving as unknown as { step: string }).step, "saved");
+    assert.equal(
+      (saving as unknown as { helperModel?: boolean }).helperModel,
+      undefined,
+    );
+  } finally {
+    if (previousFetch) globalThis.fetch = previousFetch;
+  }
+});
+
+test("R1 helper back returns to /model and clears helper flag; exit clears it too", async () => {
+  spy();
+  try {
+    const { chat, user, st } = seed("model_error", {
+      helperModel: true,
+      provider: "ollama",
+    });
+    assert.equal(await tap(chat, user, "iva_model:back"), true);
+    assert.equal(st.helperModel, undefined);
+    assert.equal(
+      (getWizard(chat, user) as unknown as { step: string }).step,
+      "intro",
+    );
+    assert.match(edits().at(-1)!.keyboard, /iva_model:helper/);
+    assert.doesNotMatch(edits().at(-1)!.text, /Pick a provider:/);
+    const exit = seed("intro", { helperModel: true });
+    await tap(exit.chat, exit.user, "iva_model:keep");
+    assert.equal(exit.st.helperModel, undefined);
+  } finally {
+    globalThis.fetch = previousFetch!;
   }
 });

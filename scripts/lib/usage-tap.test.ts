@@ -117,6 +117,69 @@ const CONFIG = {
 };
 const LABEL: UsageLabel = { sessionId: "s1", turnId: "turn_3", step: 2 };
 
+await test("fingerprint failures preserve model params and usage, with one warning per process", (t) =>
+  withDir(async (dir) => {
+    await import("./ts-esm-hooks.ts");
+    const hook = (await import("../../agent/hooks/usage.ts"))
+      .default as unknown as {
+      events: Record<string, (event: unknown, ctx: unknown) => void>;
+    };
+    const warnings: unknown[][] = [];
+    t.mock.method(console, "error", (...args: unknown[]) =>
+      warnings.push(args),
+    );
+    const received: unknown[] = [];
+    const bare = new MockLanguageModelV4({
+      doGenerate: (params) => {
+        received.push(params);
+        return Promise.resolve({
+          content: [{ type: "text", text: "ok" }],
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: usage(12, 0, 1),
+          warnings: [],
+        });
+      },
+    });
+    let model = wrapLanguageModel({
+      model: bare,
+      middleware: [compactionUsageMiddleware(LABEL)],
+    });
+    const valid = {
+      prompt: [{ role: "system", content: "Iva" }],
+    } satisfies Parameters<typeof model.doGenerate>[0];
+    // A failed retry must also discard an earlier fingerprint for this step.
+    await model.doGenerate(valid);
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    for (const broken of [cycle, { anthropic: { value: 1n } }]) {
+      model = wrapLanguageModel({
+        model: bare,
+        middleware: [compactionUsageMiddleware(LABEL)],
+      });
+      const params = {
+        prompt: [{ role: "system", content: "Iva", providerOptions: broken }],
+      } as unknown as Parameters<typeof model.doGenerate>[0];
+      const result = await model.doGenerate(params);
+      assert.equal(received.at(-1), params);
+      assert.deepEqual(result.content, [{ type: "text", text: "ok" }]);
+      hook.events["step.completed"](
+        {
+          data: {
+            turnId: LABEL.turnId,
+            stepIndex: LABEL.step,
+            usage: { inputTokens: 12, outputTokens: 1 },
+          },
+        },
+        { session: { id: LABEL.sessionId }, channel: { kind: "http" } },
+      );
+      assert.equal("request" in readEntries(dir).at(-1)!, false);
+    }
+    assert.equal(received.length, 3);
+    assert.equal(readEntries(dir).length, 2);
+    assert.equal(warnings.length, 1);
+    assert.match(String(warnings[0][0]), /fingerprint/iu);
+  }));
+
 await test("компактация eve пишет строку расхода source=compaction с usage провайдера", () =>
   withDir(async (dir) => {
     const model = wrapLanguageModel({
@@ -517,3 +580,27 @@ await test("отказ обещания usage у стрима зрения — �
     assert.equal(readEntries(dir).length, 1);
   });
 });
+
+await test("R1 compaction usage records each selected step model", () =>
+  withDir(async (dir) => {
+    for (const modelName of ["chat-model", "helper-model"]) {
+      const model = wrapLanguageModel({
+        model: mockModel(usage(5000, 1000, 300)),
+        middleware: [compactionUsageMiddleware(LABEL, modelName)],
+      });
+      await compactMessages(
+        HISTORY,
+        model,
+        CONFIG,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+    }
+    assert.deepEqual(
+      readEntries(dir).map((row) => row.model),
+      ["chat-model", "helper-model"],
+    );
+  }));

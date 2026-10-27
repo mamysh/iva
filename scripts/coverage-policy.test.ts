@@ -21,8 +21,11 @@ const BLIND_SPOT: ReadonlyArray<{
   readonly path: string;
   readonly why: string;
 }> = [
+  {
+    path: "agent/sandbox.ts",
+    why: "настройка в одну строку — выбор backend just-bash; логики нет, собирается npm run build",
+  },
   // Границы фреймворка: грузит только eve, тесты гоняют швы вокруг.
-  { path: "agent/agent.ts", why: "сборка eve; тесты держат провайдер и тулзы" },
   {
     path: "agent/channels/eve.ts",
     why: "адаптер канала eve; тесты идут через инбаунд",
@@ -43,10 +46,6 @@ const BLIND_SPOT: ReadonlyArray<{
   {
     path: "agent/lib/telegram-private-chat.ts",
     why: "прицеп канала; приватный чат в тестах канала",
-  },
-  {
-    path: "agent/transcribe.ts",
-    why: "прицеп медиа; транскрипция замокана в тестах медиа",
   },
   {
     path: "scripts/lib/cli-translate.ts",
@@ -80,10 +79,6 @@ const BLIND_SPOT: ReadonlyArray<{
   {
     path: "scripts/replica-smoke.ts",
     why: "ручной стенд; e2e идет через capture/analyze",
-  },
-  {
-    path: "scripts/live-turn.ts",
-    why: "стенд приёмки: живой ход на настоящем провайдере, сам и есть проверка",
   },
 ];
 

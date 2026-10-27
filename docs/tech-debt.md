@@ -228,7 +228,7 @@ partial guarantee at the cost of a second delivery path around the inbound pipel
 the shape ADR-0005 exists to avoid. `docs/security.md` states the limit instead, in the
 section "Telegram text: an annotation, not a filter".
 
-The fix is upstream, and the feature request to file against `vercel/eve` is small: let the
+The fix is upstream; the feature request is filed as vercel/eve#4605 (10.10.2026) and is small: let the
 inbound hook return the text the model will see, as one optional field beside `context` —
 
 ```ts
@@ -272,3 +272,46 @@ The `ai` pin is gone: Iva used to override `ai` to 7.0.39 against eve 0.51.1's p
 - **A code-free draft changed after the Insight message installs only from the owner's terminal**: `iva plugin propose` refuses a draft without `mcp.json` and `sh.iva/` (`scripts/cli/plugin-cli-proposal.ts`); allowing it there, checked against `expectDigest12`, gives that draft a button.
 - **A transitional update builds the Version twice**: the old CLI names the Version from a fingerprint with skills (`scripts/lib/version-update.ts`), the new `warnUnbuiltCustom` (`scripts/cli/services.ts`) compares a fingerprint without them, so installs with skills in `data/custom` get one extra rebuild and a false "run: iva update" on `iva restart`, once.
 - **A healthy `iva diagnose` prints 3–4 `! would …` lines**: `ensureBearer` and `ctx.repair()` in `scripts/cli/doctor.ts` print in read mode unconditionally; the fix needs the "repair needed" predicates of `scripts/cli/systemd.ts` and `scripts/lib/version-store.ts` exposed through `api()`.
+
+## 18. Update lock takeover residual windows
+
+`acquireUpdateLock` serializes two new contenders reclaiming an abandoned owner by rename and owner.json comparison. The ownerless `mkdir → owner.json` publication window has a five-second grace, checked both before and after rename: two null contents alone cannot identify an abandoned directory (`UpdateLock-ownerless.cfg`, `UpdateLock-ownerless-unsafe.cfg`). A publisher stalled beyond the grace can lose its ownerless directory. A third contender can claim the temporarily empty path before restoration, and a legacy updater still deletes a successor by path (`UpdateLock-three.cfg`, `UpdateLock-mixed.cfg`). A crash while a live successor's directory is displaced also leaves the original path available to another contender. A displaced live owner is kept in `update.lock.stale-*` and logged if restoration finds an occupied path; version sweep removes forgotten directories older than a day while retaining live owners. The mixed window lasts until old updaters are retired; the three-contender window remains part of the directory protocol.
+
+Startup recovery uses the same chat-status lock with a two-second stale threshold; ordinary chat writers retain their usual thirty-second threshold. A killed writer's fresh lock becomes reclaimable within two seconds. A live synchronous writer stalled beyond this recovery threshold can lose its lock (`FileLock-sync-slow.cfg`); normal writes must finish well within the threshold.
+
+## 19. Daily-summary conflicts across nights
+
+Closed by storing the original summary hash in the open day pass before the model
+call and the last published hash in `cache.writtenSummaryHash` before writing the
+summary. The published hash survives day completion. Subsequent passes compare
+against that publication, so a late entry preserves owner edits with absent,
+matching or mismatching `body_hash`, including description-only edits. Interrupted
+publication can finish its git commit after the raw day, model or instruction
+changes. The comparison uses the saved publication hash throughout recovery.
+
+Three-night process tests in `scripts/memory/night-process.test.ts` assert the
+preserved bytes and "день ждёт владельца" on repeated nights. The message and the
+old-queue reminder name `iva jobs skip memory-night <date>` or restoring the summary.
+An explicit owner skip takes precedence over an open pass; the CLI writes it even
+when an ordinary completion marker already exists. Other days, CORE and periods
+continue to finish. The property test runs 100 cases with seed `20261020`.
+
+`NightWriter.HumanEditWins` covers open passes and edits after day completion, before
+a late entry opens the next pass, including closed 0.5.5 caches without a publication
+hash. `PublishedSummaryResumes` covers publication,
+interruption and continuation after input changes. Mutants that reread the expected
+hash, omit the published hash or compare with recomputed output produce witnesses.
+The model retains the filesystem stability assumption between the final comparison
+and atomic publication from ADR-0016.
+
+Both `pass.summaryHash` and `writtenSummaryHash` are optional in cache version 1.
+With a closed old cache, an existing summary and a new pass, the day waits for the
+owner because its last publication hash is unknown. The summary stays intact. The
+0.5.5 reader validates only version, date and integer `through`, so it accepts the
+added fields. Its writer preserves the top-level hash, but ignores it on rollback;
+the absent/matching `body_hash` cases regain the old behavior until upgraded again.
+После отката на 0.5.5 и обратно день с поздней репликой может ждать владельца; освобождается `iva jobs skip`.
+
+## 20. Accepted empty-response limit
+
+After three recoverable empty responses, a fourth ends the eve turn with `turn.failed`; background turns retain their owner-facing outcome (#338), and the owner can start another attempt from the parked chat turn. See [ADR-0023](adr/0023-eve-is-ours-to-change.md).

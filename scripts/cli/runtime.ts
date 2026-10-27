@@ -9,6 +9,9 @@ import { resolveDataDir } from "../lib/data-dir.ts";
 import { createSystemdControl } from "../lib/systemd-control.ts";
 import { real } from "../lib/version-layout.ts";
 import { parseVersionName } from "../lib/version-store.ts";
+import { resolveUv } from "../lib/userbot-deps.ts";
+import { serviceManager } from "../lib/service-manager.ts";
+import { runLaunchd } from "../lib/launchd.ts";
 
 type CaptureOptions = Omit<SpawnSyncOptions, "encoding"> & {
   readonly encoding?: BufferEncoding;
@@ -40,7 +43,12 @@ export function createCliRuntime(root: string) {
   // installation's own file, and an atomic write would otherwise replace the link
   // with a copy that the next version never sees.
   const ENV_PATH = real(join(ROOT, ".env"));
-  const UNIT_DIR = join(homedir(), ".config/systemd/user");
+  const UNIT_DIR = join(
+    homedir(),
+    serviceManager() === "launchd"
+      ? "Library/LaunchAgents"
+      : ".config/systemd/user",
+  );
   const NODE = process.execPath;
   const NODE_BIN_DIR = dirname(NODE);
   const NPM = existsSync(join(NODE_BIN_DIR, "npm"))
@@ -125,15 +133,25 @@ export function createCliRuntime(root: string) {
     return {
       code: result.status ?? 1,
       out: (result.stdout || "").trim(),
-      err: (result.stderr || "").trim(),
+      err: (
+        result.stderr ||
+        (command === "lsof" ? result.error?.message : "") ||
+        ""
+      ).trim(),
     };
   }
 
-  const hasSystemd = (): boolean =>
-    !!cap("sh", ["-c", "command -v systemctl"]).out;
-  const scQ = (...args: string[]): CaptureResult =>
-    cap("systemctl", ["--user", ...args]);
-  const systemd = createSystemdControl({ run: (args) => scQ(...args) });
+  const hasSystemd = (): boolean => serviceManager() !== null;
+  const scQ = (...args: string[]): CaptureResult => {
+    if (serviceManager() !== "launchd")
+      return cap("systemctl", ["--user", ...args]);
+    const result = runLaunchd(args, { unitDir: UNIT_DIR });
+    return { ...result, err: result.err ?? "" };
+  };
+  const systemd = createSystemdControl({
+    run: (args) => scQ(...args),
+    manager: serviceManager() ?? "systemd",
+  });
   // On the immutable layout there is no working tree to ask: the commit a version
   // was built from is part of its directory name.
   const gitHead = (): string =>
@@ -182,6 +200,13 @@ export function createCliRuntime(root: string) {
   }
 
   function requireSystemd(): void {
+    if (serviceManager() === "launchd") {
+      const result = runLaunchd(["daemon-reload"], { unitDir: UNIT_DIR });
+      if (result.code !== 0) {
+        bad(result.out);
+        process.exit(1);
+      }
+    }
     if (!hasSystemd()) {
       bad("systemd unavailable — this command only works on a Linux server");
       process.exit(1);
@@ -225,6 +250,7 @@ export function createCliRuntime(root: string) {
     NODE_BIN_DIR,
     NPM,
     childEnv,
+    uvExecutable: () => resolveUv(childEnv.PATH, homedir()),
     SERVICES,
     BRAIN_SERVICE,
     BRAIN_TIMER,

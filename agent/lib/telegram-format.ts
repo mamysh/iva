@@ -44,7 +44,7 @@ export function htmlToPlain(html: unknown): string {
 }
 
 // ── inline markdown → html ──────────────────────────────────────────────────────
-// Protect inline code first (placeholders), escape the rest, then overlay tags.
+// Protect escaped punctuation and inline code, escape the rest, then overlay tags.
 // Метка code-span — индекс между U+E000 и U+E001 (Unicode Private Use Area).
 // Прежняя метка «два пробела, индекс, два пробела» встречается в обычной прозе:
 // «the price is  50  dollars» и строки таблиц уезжали в чат покалеченными — текст
@@ -53,22 +53,56 @@ export function htmlToPlain(html: unknown): string {
 // подделать метку не может ни модель, ни пользователь.
 function inlineHtml(text: unknown): string {
   const spans: string[] = [];
+  const restoreSpans = (value: string) =>
+    value.replace(/\uE000(\d+)\uE001/g, (_m, i) => spans[Number(i)] ?? "");
   let s = String(text)
     .replace(/[\uE000\uE001]/g, "")
-    .replace(/`([^`]+)`/g, (_m, c) => {
-      spans.push(`<code>${escHtml(c)}</code>`);
-      return `\uE000${spans.length - 1}\uE001`;
-    });
+    .replace(
+      /\\([\\*_#|`[\]()~$&])|`([^`]+)`/g,
+      (_m, escaped: string | undefined, code: string | undefined) => {
+        spans.push(
+          escaped === undefined
+            ? `<code>${escHtml(code)}</code>`
+            : escHtml(escaped),
+        );
+        return `\uE000${spans.length - 1}\uE001`;
+      },
+    );
   s = escHtml(s);
   // links [t](http(s)://url)
   // Границы квантификаторов обязательны: на строке из одних `[` жадный `[^\]]+`
   // пробегает хвост на каждой позиции и вешает однопоточный мост (200k знаков - 41 с).
   // Подпись длиннее 200 знаков и URL длиннее 2048 в сообщение Telegram не поместятся,
   // так что отсечение живого текста не теряет.
-  s = s.replace(
-    /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)\n]{1,2048})\)/g,
-    (_m, t, u) => `<a href="${escAttr(u)}">${t}</a>`,
-  );
+  const link = /\[([^\]\n]{1,200})\]\((https?:\/\/)/g;
+  let linked = "",
+    cursor = 0,
+    match;
+  while ((match = link.exec(s))) {
+    let end = link.lastIndex,
+      depth = 0,
+      firstClose = -1;
+    for (; end < s.length && end < link.lastIndex + 2048; end++) {
+      const char = s[end];
+      if (/\s/.test(char) || (char === ")" && depth === 0)) break;
+      if (char === "(") depth++;
+      if (char === ")") {
+        if (firstClose < 0) firstClose = end;
+        depth--;
+      }
+    }
+    if (s[end] !== ")" || depth !== 0) end = firstClose;
+    if (end <= link.lastIndex) continue;
+    // Открывающий тег хранится в spans, подпись проходит правила разметки.
+    spans.push(
+      `<a href="${escAttr(restoreSpans(match[2] + s.slice(link.lastIndex, end)))}">`,
+    );
+    linked +=
+      s.slice(cursor, match.index) +
+      `\uE000${spans.length - 1}\uE001${match[1]}</a>`;
+    cursor = link.lastIndex = end + 1;
+  }
+  s = linked + s.slice(cursor);
   // bold
   s = s
     .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
@@ -84,8 +118,8 @@ function inlineHtml(text: unknown): string {
   s = s
     .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<i>$1</i>")
     .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<i>$1</i>");
-  // restore inline code
-  return s.replace(/\uE000(\d+)\uE001/g, (_m, i) => spans[Number(i)] ?? "");
+  // restore protected spans
+  return restoreSpans(s);
 }
 
 // GFM table separator: |---|:--:|---|
@@ -674,6 +708,32 @@ export function shortenButtonsData(md: string): string {
 
 export function hasRichButtons(md: unknown): boolean {
   return /<tg-button[\s>]/i.test(String(md));
+}
+
+// Чужой текст одной строкой внутри rich-сообщения: цитата вопроса владельца в сообщении о
+// сбое, фраза модели в статусе хода. Пробелы и переводы строк схлопнуты, длина — не больше
+// maxChars знаков, на обрезе «…». Разметкой текст стать не может: `<` и `>` заменены
+// угловыми кавычками (тег не откроется), знаки разметки `*_#|` экранированы, как в
+// escapeRichText (scripts/lib/telegram-buttons.ts), а с ними `` ` ``, `[`, `]`, `(`, `)`,
+// `~`, `$` и обратная косая: иначе `\*` из текста стал бы экранированной косой и голой
+// звёздочкой. Экранирован и `&`: из `&lt;tg-button…&gt;` разборщик, который сначала
+// разворачивает сущности, собрал бы настоящую кнопку, а `\&lt;` при любом порядке разбора
+// остаётся текстом. Обрезанный ключ гейт уже не узнаёт: текст, который гейт ещё не видел,
+// идёт через него до этой функции.
+export function richQuoteLine(text: string, maxChars: number): string {
+  const line = text.replace(/\s+/gu, " ").trim();
+  const chars = Array.from(line);
+  const cut =
+    chars.length <= maxChars
+      ? line
+      : `${chars
+          .slice(0, maxChars - 1)
+          .join("")
+          .trimEnd()}…`;
+  return cut
+    .replace(/</gu, "‹")
+    .replace(/>/gu, "›")
+    .replace(/([\\*_#|`[\]()~$&])/gu, "\\$1");
 }
 
 export function needsRichMessage(md: unknown): boolean {

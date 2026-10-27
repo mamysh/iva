@@ -2,12 +2,11 @@
 // канал (agent/channels/telegram.ts) читают/пишут файлы data/run-status.d/*.json.
 //
 // Зачем: мост решает, доставлять сообщение в eve или буферизовать (агент занят),
-// берёт отсюда sessionId+turnId для отмены хода по кнопке ⏹ Стоп, а канал
 // пишет сюда пульс живого хода, чтобы жнец моста не снял его как протухший.
 // Отдельный файл на chatKey не даёт параллельной записи одного чата потерять статус
 // другого. Запись одного ключа защищена O_EXCL-локом и атомарна (unique tmp+rename).
 // ЛЮБАЯ успешная запись двигает generation и updatedAt — на updatedAt держится и
-// жнец, и пульс (agent/lib/telegram-turn-start.ts). Одно исключение — запись знака очереди
+// жнец, и пульс (agent/lib/telegram-turn-start.ts). Одно исключение — запись входа очереди
 // (setChatStatusIf с touch: false): она не продлевает жизнь чужому ходу.
 //
 // chatKey = `${chatId}:${threadId ?? ""}` — тот же ключ, что chatKey() Bridge.
@@ -49,7 +48,6 @@ const errorCode = (error: unknown): string | undefined =>
 
 // Путь от cwd, как в usage.ts, а НЕ от import.meta.url: канал инлайнится в кэш
 // authored-modules eve, откуда «две папки вверх» указывают в node_modules/.cache.
-// Оба процесса (iva.service и мост) стартуют из одного WorkingDirectory (корень установки Ивы).
 const DATA_DIR = dataDir();
 const LEGACY_STATUS_FILE = join(DATA_DIR, "run-status.json");
 const STATUS_DIR = join(DATA_DIR, "run-status.d");
@@ -67,15 +65,11 @@ const LOCK_TIMEOUT_MS = positiveMs(
 );
 const LOCK_RETRY_MS = 10;
 
-// Знак очереди: сообщение встало за живым ходом и уже видит лоадер. Поля живут в записи
-// чата и переезжают вместе с ней при захвате; знак забирает или удаляет следующий ход чата
-// (agent/lib/telegram-turn-start.ts), а запись, ушедшая в idle без хода-наследника, удаляет
-// его сама (specs/IdleCompaction.tla, SignOwned). Снимаются все поля разом — этим патчем.
+// Вход очереди хранит время и сессию сообщения, ожидающего живой ход.
+// Следующий ход забирает свой вход; reset и захват очищают поля одним патчем.
 export const QUEUED_STATUS_CLEARED = {
   queuedIngressId: null,
   queuedIngressAt: null,
-  queuedStatusAt: null,
-  queuedStatusMessageId: null,
   queuedSessionId: null,
 } as const;
 
@@ -163,11 +157,14 @@ function readCurrent(chatKey: string): StatusRecord | null {
 }
 
 // Статус хода — не публичные данные: и лок, и сам файл создаются под 0600.
-function acquireChatLock(file: string): FileLock {
+export function acquireChatLock(
+  file: string,
+  staleMs = LOCK_STALE_MS,
+): FileLock {
   const lock = `${file}.lock`;
   const held = acquireFileLockSync(lock, {
     timeoutMs: LOCK_TIMEOUT_MS,
-    staleMs: LOCK_STALE_MS,
+    staleMs,
     retryMs: LOCK_RETRY_MS,
     mode: 0o600,
   });
@@ -334,6 +331,20 @@ function updateChatStatus(
       updatedAt: stamp(prev),
     };
     delete next[RETIRED_SESSION_ROUTING_FIELD];
+    // Keep inherited message IDs through heartbeats until the bridge can delete
+    // them. A terminal record or a different pair must retire the old Stop key.
+    if (
+      next.status !== "running" ||
+      next.sessionId !== prev.sessionId ||
+      next.turnId !== prev.turnId
+    )
+      for (const field of [
+        "statusMessageId",
+        "statusAt",
+        "queuedStatusMessageId",
+        "queuedStatusAt",
+      ])
+        delete next[field];
     for (const key of Object.keys(next))
       if (next[key] === null) delete next[key];
     writeCurrent(file, next);
@@ -353,7 +364,7 @@ export function setChatStatus(
 
 // Atomic compare-and-set для terminal Eve events: reset может успеть удалить
 // sessionId между ранним read и записью позднего события. touch: false — запись, которая не
-// говорит «ход жив» (знак очереди), updatedAt не двигает: иначе запись мёртвого хода
+// говорит «ход жив» (вход очереди), updatedAt не двигает: иначе запись мёртвого хода
 // прожила бы ещё RUN_STALE_MS. generation растёт всегда — на нём держатся CAS.
 export function setChatStatusIf(
   chatKey: string,

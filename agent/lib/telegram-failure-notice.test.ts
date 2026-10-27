@@ -134,6 +134,30 @@ await test("обрыв посреди ответа: в чат идёт вопр�
   assert.doesNotMatch(text, /err-78|Error id/u);
 });
 
+// #284: молчание модели повторяется в длинном разговоре — в чат доезжает подсказка про /new,
+// и Gate её не режет. Ошибка дословно из provider.ts.
+await test("молчание модели: в чат доезжает подсказка про /new без кнопки", async () => {
+  const { sent, send } = collector();
+
+  await notifyTelegramFailure(
+    "s-silent",
+    "turn_14",
+    {
+      message: "Model produced no output for 90s",
+      details: { code: "MODEL_FIRST_CHUNK_TIMEOUT", attempts: 3 },
+    },
+    send,
+    { now: 1_000 },
+  );
+
+  assert.equal(sent.length, 1);
+  assert.match(
+    sent[0],
+    /(Если в этом разговоре так уже было, \/new начнёт заново: длинный разговор мог стать модели не по силам\.|If this already happened in this conversation, \/new starts over: a long conversation may have become too much for the model\.)$/u,
+  );
+  assert.doesNotMatch(sent[0], /tg-button/u);
+});
+
 // Служебная реплика канала не идёт через Outbox, но текст провайдера в ней —
 // такой же runtime-контент: Gate обязан вычистить его до транспорта.
 function muteErrors(t: { after: (fn: () => void) => void }): void {
@@ -244,4 +268,69 @@ await test("ключ провайдера настоящего формата н
 
   assert.equal(sent.length, 1);
   assert.doesNotMatch(sent[0], /sk-or-v1|4f9c1e77/u);
+});
+
+await test("expired login reply queues its originating-chat transport", async () => {
+  const { sent, send } = collector();
+  const observations: unknown[] = [];
+  const before = process.env.MODEL_PROVIDER;
+  process.env.MODEL_PROVIDER = "claude";
+  await notifyTelegramFailure(
+    "auth",
+    "turn",
+    { message: "Failed to authenticate: OAuth session expired" },
+    send,
+    {
+      now: 12345,
+      authDispatch: (observation) => {
+        const { reply, ...fact } = observation;
+        observations.push(fact);
+        void reply?.();
+        return Promise.resolve();
+      },
+    },
+  );
+  if (before === undefined) delete process.env.MODEL_PROVIDER;
+  else process.env.MODEL_PROVIDER = before;
+  assert.equal(sent.length, 1);
+  assert.deepEqual(observations, [
+    {
+      provider: "claude",
+      at: 12345,
+      failed: true,
+      answers: true,
+      ownerReply: false,
+    },
+  ]);
+  assert.match(
+    telegramFailureMessage(
+      { message: "Failed to authenticate: OAuth session expired" },
+      "claude",
+    ),
+    /claude auth login/u,
+  );
+});
+
+await test("REPAIR1: auth failure replies immediately to its chat and does not await dispatcher", async () => {
+  const { sent, send } = collector();
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const completed = notifyTelegramFailure(
+    "repair-async",
+    "turn",
+    { message: "OAuth session expired" },
+    send,
+    { authDispatch: () => pending },
+  );
+  const result = await Promise.race([
+    completed.then(() => "returned"),
+    new Promise((resolve) => setTimeout(() => resolve("blocked"), 30)),
+  ]);
+  release();
+  await completed;
+  assert.equal(result, "returned");
+  // The queue owns sending; ordinary per-turn reply is always provided to it.
+  assert.equal(sent.length, 0);
 });

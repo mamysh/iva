@@ -1,10 +1,12 @@
+import type { MessageStreamEvent } from "eve/client";
+import type { ModelFailure } from "#lib/model-response.ts";
 // One Reminder turn against the eve client: create a session, read its event stream up to a
 // turn boundary, and always reset the session. While the turn runs its owner may hand it a
 // chat to watch (TurnWatch), so the /stop path that cancels a channel turn cancels this one
 // too — the turn has no wall-clock cap, and only the silence watchdog or the owner ends it.
 // The one exception is a caller that passes a signal: the proactive tick ends its turns at
 // the run's IVA_JOB_STOP_AT, cancelling them on the server.
-// The turn posts no working-status message, so the chat has no ⏹ button of its own there.
+// The reminder turn is stopped with /stop in its originating chat.
 // It lives on the CLI half, not in `agent/`, and imports nothing from there: `iva remind`
 // has to load on an install whose authored tree is missing or half-written, and the delivery
 // child process runs the same turn.
@@ -22,6 +24,7 @@ export const REMINDER_TURN_KINDS = [
   "reminder",
   "signal",
   "alert",
+  "helper",
 ] as const;
 
 export type ReminderTurnKind = (typeof REMINDER_TURN_KINDS)[number];
@@ -82,8 +85,9 @@ export type CreateClient = (
 ) => Promise<ReminderClient>;
 
 export type ReminderTurn = {
+  readonly failureInfo?: ModelFailure;
   readonly status: "completed" | "failed" | "waiting";
-  /** Ход погашен снаружи (⏹ или /stop): текста от него не ждут. */
+  /** Ход погашен снаружи (/stop): текста от него не ждут. */
   readonly cancelled?: boolean;
   /**
    * Ход упёрся в лимит токенов сессии eve и встал на вопрос «Approve/Stop», который в фоне
@@ -105,8 +109,7 @@ const SESSION_LIMIT_CANCEL_MS = 30_000;
 
 /**
  * Присмотр чата за ходом: пока запись есть, `/stop` из этого чата гасит его сессию тем же
- * единственным путём, что и ход канала. Кнопки ⏹ у хода напоминания нет: сообщения
- * «Работаю…» он не публикует. Запись живёт в agent/lib и передаётся зависимостью: этот
+ * единственным путём, что и ход канала. Запись живёт в agent/lib и передаётся зависимостью: этот
  * модуль обязан грузиться и на установке без agent/ (`iva remind`), поэтому ни одного
  * статического импорта оттуда у него нет.
  */
@@ -119,7 +122,7 @@ export type TurnWatch = {
   release(sessionId: string): void;
 };
 
-// Three minutes without a single stream event means the turn is stuck. A turn that keeps
+// Three minutes without stream events or a pending tool means the turn is stuck. A turn that keeps
 // sending events is working: it runs as long as the work takes, and only the owner's stop
 // or that silence ends it (решение владельца 21.09.2026 — потолков длительности нет).
 export const REMINDER_TURN_INACTIVITY_MS = 180_000;
@@ -175,6 +178,7 @@ export function reminderPrompt(
 }
 
 type TurnState = {
+  readonly failureInfo?: ModelFailure;
   readonly status: "completed" | "failed" | "waiting" | undefined;
   readonly message: string | undefined;
   readonly failure: string | undefined;
@@ -223,13 +227,19 @@ function applyTurnMark(state: TurnState, event: TurnStreamEvent): TurnState {
   switch (event.type) {
     case "input.requested":
       return asksSessionLimit(event) ? { ...state, sessionLimit: true } : state;
-    // Гасят ход снаружи (⏹, /stop): eve всегда доводит такой ход до session.waiting, но
+    // Гасят ход снаружи (/stop): eve всегда доводит такой ход до session.waiting, но
     // для вызывающего это не «ход поработал и припарковался», а отмена.
     case "turn.cancelled":
       return { ...state, cancelled: true };
+    case "step.failed":
+      return { ...state, failureInfo: event.data as ModelFailure };
     case "turn.failed": {
-      const failure = eventText(event);
-      return failure === undefined ? state : { ...state, failure };
+      const failure = eventText(event) ?? state.failure ?? "";
+      return {
+        ...state,
+        failure,
+        failureInfo: { ...state.failureInfo, ...(event.data as ModelFailure) },
+      };
     }
     default:
       return state;
@@ -275,7 +285,16 @@ function stallAfter(ms: number, reason: string): Stall {
   let timer: NodeJS.Timeout | undefined;
   return {
     stalled: new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new ReminderTurnError(reason)), ms);
+      const arm = (left: number) => {
+        timer = setTimeout(
+          () =>
+            left > 2_147_483_647
+              ? arm(left - 2_147_483_647)
+              : reject(new ReminderTurnError(reason)),
+          Math.min(left, 2_147_483_647),
+        );
+      };
+      arm(ms);
     }),
     stop: () => {
       clearTimeout(timer);
@@ -290,15 +309,22 @@ async function defaultCreateClient(
   return new Client(options);
 }
 
-/** Сторож сработал: ход гасится у клиента до того, как отказ увидит вызывающий. */
-async function cancelStalled(
-  response: TurnResponse,
-  log: (...args: unknown[]) => void,
-): Promise<void> {
-  try {
-    await response.cancel();
-  } catch (cancelError) {
-    log("remind: turn cancel failed:", cancelError);
+function toolTimeout(input?: Record<string, unknown>) {
+  const ms = Number(input?.timeoutMs);
+  const valid = Number.isSafeInteger(ms) && ms > 0 && ms <= 2_147_483_647;
+  return valid ? ms : 120_000;
+}
+
+function trackTool(event: TurnStreamEvent, pending: Map<string, number>) {
+  const value = event as MessageStreamEvent;
+  if (value.type === "action.result" && value.data?.result)
+    pending.delete(value.data.result.callId);
+  if (value.type !== "actions.requested") return;
+  const actions = value.data?.actions;
+  if (!Array.isArray(actions)) return;
+  for (const action of value.data.actions) {
+    if (action.kind !== "tool-call" || pending.has(action.callId)) continue;
+    pending.set(action.callId, Date.now() + toolTimeout(action.input));
   }
 }
 
@@ -309,10 +335,12 @@ async function cancelStalled(
 async function readTurnStream(
   response: TurnResponse,
   {
+    session,
     inactivityMs,
     log,
     onEvent,
   }: {
+    readonly session: Session;
     readonly inactivityMs: number;
     readonly log: (...args: unknown[]) => void;
     readonly onEvent?: () => void;
@@ -320,14 +348,19 @@ async function readTurnStream(
 ): Promise<TurnState> {
   const stream = response[Symbol.asyncIterator]();
   let state = EMPTY_TURN;
+  const pending = new Map<string, number>();
   for (;;) {
-    const idle = stallAfter(inactivityMs, `no activity for ${inactivityMs}ms`);
+    const waitMs = Math.max(
+      inactivityMs,
+      ...[...pending.values()].map((end) => end - Date.now() + inactivityMs),
+    );
+    const idle = stallAfter(waitMs, `no activity for ${inactivityMs}ms`);
     let step: IteratorResult<TurnStreamEvent>;
     try {
       step = await Promise.race([stream.next(), idle.stalled]);
     } catch (error) {
       if (error instanceof ReminderTurnError)
-        await cancelStalled(response, log);
+        await stopParkedTurn(session, log, "inactivity");
       // Отменённый ход остаётся отменённым при любом окончании стрима: на броске признак
       // отмены терять нельзя, иначе владельцу уйдёт текст, который он остановил.
       if (state.cancelled) return state;
@@ -336,6 +369,7 @@ async function readTurnStream(
       idle.stop();
     }
     if (step.done) return state;
+    trackTool(step.value, pending);
     state = applyTurnEvent(state, step.value);
     if (onEvent) onEvent();
     // Вопрос лимита в фоне некому показать: дальше читать нечего, ход останавливает
@@ -348,29 +382,29 @@ async function readTurnStream(
 }
 
 /**
- * Ход под присмотром чата, куда вернётся ответ: запись о сессии живёт ровно столько,
- * сколько идёт ход, и снимается на любом его исходе — по ней работает стоп из чата.
- * Чат, занятый чужим живым ходом, не трогаем вовсе: ход идёт без присмотра, а стоп
- * владельца продолжает видеть его же сессию.
+ * Присмотр чата живёт до исхода хода; занятый чужим ходом чат сохраняет его сессию.
  */
 async function readWatchedTurn(
   response: TurnResponse,
   {
+    session,
     watch,
     inactivityMs,
     log,
   }: {
+    readonly session: Session;
     readonly watch?: TurnWatch;
     readonly inactivityMs: number;
     readonly log: (...args: unknown[]) => void;
   },
 ): Promise<TurnState> {
   if (watch === undefined)
-    return readTurnStream(response, { inactivityMs, log });
+    return readTurnStream(response, { session, inactivityMs, log });
   const sessionId = response.sessionId;
   const claimed = await watch.claim(sessionId);
   try {
     return await readTurnStream(response, {
+      session,
       inactivityMs,
       log,
       onEvent: claimed ? () => watch.pulse(sessionId) : undefined,
@@ -408,15 +442,11 @@ async function answeredInTime(work: Promise<unknown>, what: string) {
   }
 }
 
-/**
- * Ход встал на лимит сессии или кончился по сроку: он гасится `session.cancel` с задачами,
- * чтобы порождённая им задача не работала дальше. Отказ остановки ход не спасает, он виден в
- * журнале; `why` отличает его от отмены у клиента (cancelStalled).
- */
+/** Ограниченная отмена с задачами по пределу сессии, сроку или тишине; отказ идёт в журнал. */
 async function stopParkedTurn(
   session: { cancel(options: { readonly tasks: boolean }): Promise<unknown> },
   log: (...args: unknown[]) => void,
-  why: "session-limit" | "deadline",
+  why: "session-limit" | "deadline" | "inactivity",
 ): Promise<void> {
   try {
     await answeredInTime(session.cancel({ tasks: true }), "cancel");
@@ -562,6 +592,14 @@ async function settleTurn(
     await stopParkedTurn(session, log, "session-limit");
     return limitedTurn(feedback);
   }
+  if (state.failure !== undefined && !state.cancelled)
+    return {
+      status: "failed",
+      cancelled: false,
+      message: state.failure || "ход упал",
+      failureInfo: state.failureInfo,
+      feedback,
+    };
   const { status, cancelled } = turnBoundary(state);
   return {
     status,
@@ -598,7 +636,7 @@ export async function runReminderTurn(
   const { createClient, inactivityMs, log } = withDefaults(deps);
   const { signal, watch } = deps;
   if (isAborted(signal)) return deadlineTurn(noFeedback);
-  const aborted = abortedBy(signal);
+  let aborted = abortedBy(signal);
   const client = await createClient(options);
   let session: Session | undefined;
   try {
@@ -606,11 +644,15 @@ export async function runReminderTurn(
     if (created === null) return deadlineTurn(noFeedback);
     session = created.session;
     const state = await readBefore(created.response, aborted, signal, {
+      session: created.session,
       watch,
       inactivityMs,
       log,
     });
     return await settleTurn(state, created.session, log);
+  } catch (error) {
+    if (error instanceof ReminderTurnError) aborted = Promise.resolve(ABORTED);
+    throw error;
   } finally {
     if (session) await resetSession(session, aborted);
   }

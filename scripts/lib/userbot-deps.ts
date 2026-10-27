@@ -1,3 +1,14 @@
+import { accessSync, constants, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { delimiter, join, resolve } from "node:path";
+
+/**
+ * uv writes no bytecode, so the first import after a sync compiles every module: 4.5 s
+ * on a fast core and up to 15.6 s on a slow one. The bound is there for a hung
+ * interpreter only; a slow first import must not switch the userbot off.
+ */
+export const USERBOT_IMPORT_TIMEOUT_MS = 60_000;
+
 interface UserbotSyncOptions {
   readonly pythonPath: string;
   readonly requirementsFile: string;
@@ -25,4 +36,24 @@ export function userbotSyncArgs({
     ...(requireHashes ? ["--require-hashes", "--strict"] : []),
     requirementsFile,
   ];
+}
+
+/** Same fallback as install.sh: a non-login PATH need not contain ~/.local/bin. */
+export function resolveUv(
+  pathValue = process.env.PATH ?? "",
+  home = homedir(),
+): string | null {
+  for (const dir of [
+    ...pathValue.split(delimiter).filter(Boolean),
+    join(home, ".local/bin"),
+  ]) {
+    const file = resolve(dir, "uv");
+    try {
+      accessSync(file, constants.X_OK);
+      if (statSync(file).isFile()) return file;
+    } catch {
+      // Missing, dangling symlink or non-executable: try the next installation.
+    }
+  }
+  return null;
 }

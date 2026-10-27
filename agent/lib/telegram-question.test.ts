@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import fc from "fast-check";
 import { telegramChannel, type TelegramHandle } from "eve/channels/telegram";
 import {
   flushSettledTelegramQuestions,
@@ -7,6 +9,251 @@ import {
   settleTelegramQuestions,
   type QuestionState,
 } from "./telegram-question.ts";
+
+type QuestionApiCall = { method: string; body: Record<string, unknown> };
+
+async function questionApi(
+  respond: (
+    call: QuestionApiCall,
+  ) => Promise<{ status: number; body: unknown }>,
+) {
+  const calls: QuestionApiCall[] = [];
+  const server = createServer((request, response) => {
+    void (async () => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of request) {
+        assert.ok(chunk instanceof Uint8Array);
+        chunks.push(chunk);
+      }
+      const call = {
+        method: request.url!.slice(1),
+        body: JSON.parse(Buffer.concat(chunks).toString()) as Record<
+          string,
+          unknown
+        >,
+      };
+      calls.push(call);
+      const result = await respond(call);
+      response.writeHead(result.status, { "content-type": "application/json" });
+      response.end(JSON.stringify(result.body));
+    })();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const tg: Pick<TelegramHandle, "chatId" | "request" | "post"> = {
+    chatId: "7",
+    post: () => {
+      throw new Error("unexpected native question");
+    },
+    async request(method, body) {
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/${method}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      return {
+        ok: response.ok,
+        status: response.status,
+        body: await response.json(),
+      };
+    },
+  };
+  return {
+    tg,
+    calls,
+    close: () => {
+      server.closeAllConnections();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+void test("slow initial rich send keeps the delivered question reference on the Bot API wire", async (t) => {
+  const api = await questionApi(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 5100));
+    return { status: 200, body: { ok: true, result: { message_id: 9 } } };
+  });
+  t.after(api.close);
+  const state: QuestionState = {
+    chatId: "7",
+    chatType: "private",
+    conversationId: null,
+    messageThreadId: null,
+  };
+  await postTelegramQuestion(
+    {
+      requestId: "slow",
+      kind: "question",
+      prompt: "Confirm?",
+      allowFreeform: true,
+      action: {
+        callId: "c",
+        input: {},
+        kind: "tool-call",
+        toolName: "ask_question",
+      },
+      options: [{ id: "yes", label: "Yes" }],
+    },
+    state,
+    api.tg,
+    { rich: true },
+  );
+  assert.equal(state.questionPreviews?.slow.messageId, 9);
+  assert.equal(state.questionPreviews?.slow.rich, true);
+  assert.equal(state.pendingFreeformReplies?.["9"], "slow");
+  assert.deepEqual(
+    api.calls.map(({ method }) => method),
+    ["sendRichMessage"],
+  );
+  assert.equal(api.calls[0].body.chat_id, "7");
+  assert.match(
+    (api.calls[0].body.rich_message as { markdown: string }).markdown,
+    /tg-button/u,
+  );
+});
+
+async function assertRichSizeRecovery(prompt: string, label: string) {
+  const api = await questionApi((call) => {
+    const markdown = (call.body.rich_message as { markdown: string }).markdown;
+    const tooLong = markdown.length > 32768;
+    return Promise.resolve({
+      status: tooLong ? 400 : 200,
+      body: tooLong
+        ? { ok: false, description: "Bad Request: message is too long" }
+        : { ok: true, result: { message_id: 9 } },
+    });
+  });
+  try {
+    const preview = {
+      messageId: 9,
+      rich: true,
+      prompt,
+      labels: { yes: label },
+    };
+    const state: QuestionState = {
+      chatId: "7",
+      chatType: "private",
+      conversationId: null,
+      messageThreadId: null,
+      questionPreviews: { q: preview },
+    };
+    const resolution = {
+      requestId: "q",
+      outcome: "answered" as const,
+      response: { optionId: "yes" },
+    };
+    await settleTelegramQuestions([resolution], state, api.tg);
+    assert.equal(Object.keys(state.questionPreviews ?? {}).length, 0);
+    assert.equal(api.calls.length, 2);
+    for (const call of api.calls) {
+      assert.equal(call.method, "editMessageText");
+      assert.equal(call.body.message_id, 9);
+      assert.deepEqual(call.body.reply_markup, { inline_keyboard: [] });
+      assert.doesNotMatch(JSON.stringify(call.body), /tg-button/u);
+    }
+    const first = (api.calls[0].body.rich_message as { markdown: string })
+      .markdown;
+    const last = (api.calls[1].body.rich_message as { markdown: string })
+      .markdown;
+    assert.ok(first.length > 32768);
+    assert.ok(last.length <= 32768);
+    assert.match(last, /Selected|Выбрано/u);
+    assert.ok(last.includes(label.slice(0, 1)));
+    for (const part of last.split("\n\n")) {
+      assert.doesNotMatch(part, /(?<!\\)(?:\\\\)*\\$/u);
+      assert.doesNotMatch(part, /[\uD800-\uDBFF]$/u);
+    }
+    assert.equal(preview.labels.yes, label);
+    assert.equal(resolution.response.optionId, "yes");
+    await flushSettledTelegramQuestions(state, api.tg);
+    await flushSettledTelegramQuestions(
+      JSON.parse(JSON.stringify(state)) as QuestionState,
+      api.tg,
+    );
+    assert.equal(api.calls.length, 2);
+  } finally {
+    await api.close();
+  }
+}
+
+void test("oversized rich status settles the same Bot API message once", async () => {
+  await assertRichSizeRecovery("x".repeat(32760), "Yes");
+});
+
+void test("a transient shortened rich edit keeps the accepted choice for JSON recovery", async (t) => {
+  t.mock.method(console, "error", () => {});
+  let unavailable = true;
+  const api = await questionApi((call) => {
+    const markdown = (call.body.rich_message as { markdown: string }).markdown;
+    return Promise.resolve(
+      markdown.length > 32768
+        ? {
+            status: 400,
+            body: {
+              ok: false,
+              description: "Bad Request: message is too long",
+            },
+          }
+        : {
+            status: unavailable ? 503 : 200,
+            body: { ok: !unavailable, result: { message_id: 9 } },
+          },
+    );
+  });
+  t.after(api.close);
+  const state: QuestionState = {
+    chatId: "7",
+    chatType: "private",
+    conversationId: null,
+    messageThreadId: null,
+    questionPreviews: {
+      q: {
+        messageId: 9,
+        rich: true,
+        prompt: "x".repeat(32760),
+        labels: { yes: "Yes" },
+      },
+    },
+  };
+  await settleTelegramQuestions(
+    [{ requestId: "q", outcome: "answered", response: { optionId: "yes" } }],
+    state,
+    api.tg,
+  );
+  assert.equal(api.calls.length, 2);
+  assert.ok(state.questionPreviews?.q);
+  assert.match(state.questionPreviews.q.settledStatus!, /Yes/u);
+  const saved = JSON.parse(JSON.stringify(state)) as QuestionState;
+  unavailable = false;
+  await flushSettledTelegramQuestions(saved, api.tg);
+  assert.equal(Object.keys(saved.questionPreviews ?? {}).length, 0);
+  assert.equal(api.calls.length, 3);
+  assert.deepEqual(api.calls[2], api.calls[1]);
+  await flushSettledTelegramQuestions(saved, api.tg);
+  assert.equal(api.calls.length, 3);
+});
+
+void test("rich size recovery preserves accepted choices and valid literal text; seed 2771014", async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.constantFrom("x", "я", "\\*", "\\\\", "😀"),
+      fc.integer({ min: 32760, max: 32768 }),
+      fc.constantFrom("Yes", "Ответ", "*", "\\", "😀"),
+      fc.integer({ min: 1, max: 32768 }),
+      async (token, length, label, count) => {
+        const prompt =
+          token.repeat(Math.floor(length / token.length)) +
+          "x".repeat(length % token.length);
+        await assertRichSizeRecovery(prompt, label.repeat(count));
+      },
+    ),
+    { seed: 2771014, numRuns: 30 },
+  );
+});
 
 void test("authoritative resolution removes buttons; edit failure never loses accepted answer", async () => {
   const calls: Array<{ method: string; body: unknown }> = [];

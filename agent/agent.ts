@@ -1,8 +1,13 @@
+import { resolveContextWindow } from "./lib/context-window.ts";
+import { claudeContextWindow } from "./lib/claude-cli.ts";
+import { usesHelperModel } from "./lib/eve-auth.ts";
+import { MODEL_PROVIDERS } from "./lib/model-provider.ts";
 import { defineAgent, defineDynamic } from "eve";
 // Провайдер и его модели — единый источник в provider.ts (тот же конфиг у agent/vision.ts
-// и agent/subagents/planner/agent.ts).
+// и the selected helper model).
 // codex = подписка ChatGPT (Responses API + OAuth); ollama/opencode = OpenAI-совместимый chat.
 import {
+  providerName,
   compatibleThinkingEffort,
   providerConfig as cfg,
   withReplayableReasoning,
@@ -11,6 +16,32 @@ import {
 import { stepUsageLabel } from "./lib/usage-tap.js";
 import { compactionThresholdPercent } from "./lib/compaction.js";
 import { chatModelSeesImages } from "./vision.js";
+
+export function stepModelChoice(
+  ctx: Parameters<typeof usesHelperModel>[0] & { session: { id: string } },
+) {
+  const helperModel = usesHelperModel(ctx);
+  const model = helperModel
+    ? process.env.HELPER_MODEL === undefined
+      ? MODEL_PROVIDERS[providerName].defaultHelperModel || cfg.textModel
+      : process.env.HELPER_MODEL.trim() || cfg.textModel
+    : cfg.textModel;
+  const contextWindow =
+    helperModel && providerName === "claude"
+      ? resolveContextWindow(
+          "CLAUDE_CONTEXT_WINDOW",
+          process.env.CLAUDE_CONTEXT_WINDOW,
+          claudeContextWindow(model),
+        )
+      : cfg.contextWindow;
+  return Object.freeze({
+    provider: providerName,
+    model,
+    contextWindow,
+    seesImages: () => chatModelSeesImages(model),
+    sessionId: ctx.session.id,
+  });
+}
 
 export default defineAgent({
   // Модель строится на каждом шаге хода, а не при сборке: OpenCode Go требует ID диалога в
@@ -22,19 +53,22 @@ export default defineAgent({
   // каждом шаге, поэтому кэш промпта у провайдера не сбрасывается.
   model: defineDynamic({
     events: {
-      "step.started": (event, ctx) => ({
-        model: withReplayableReasoning(
-          makeTextModel({
-            sessionId: ctx.session.id,
-            chatModelSeesImages,
-            // Компактация eve зовёт эту же модель до шага; её расход пишется под этим ходом.
-            usage: stepUsageLabel(event, ctx.session.id),
-          }),
-        ),
-        // Кастомный провайдер не отдаёт метаданные окна через AI Gateway — задаём вручную;
-        // без явного значения eve пошёл бы за ним в Gateway, которого у self-host нет.
-        modelContextWindowTokens: cfg.contextWindow,
-      }),
+      "step.started": (event, ctx) => {
+        const choice = stepModelChoice(ctx);
+        return {
+          model: withReplayableReasoning(
+            makeTextModel({
+              ...choice,
+              chatModelSeesImages: choice.seesImages,
+              usage: stepUsageLabel(event, choice.sessionId),
+            }),
+          ),
+          modelContextWindowTokens: choice.contextWindow,
+          modelCompactionThresholdPercent: compactionThresholdPercent(
+            choice.contextWindow,
+          ),
+        };
+      },
     },
   }),
   // eve maps this provider-agnostic setting to reasoning_effort for the

@@ -15,8 +15,10 @@ import { basename, join } from "node:path";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import fc from "fast-check";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
   generateText,
+  jsonSchema,
   streamText,
   wrapLanguageModel,
   type ModelMessage,
@@ -1185,16 +1187,170 @@ void test("codex treats an id the SDK does not know as a reasoning model", async
 });
 
 // --- Рассуждение в истории: возвращается там, где вендор его принимает ---------------------
-// Решение по вендору — одна строка в MODEL_PROVIDERS. Возврат доказан живьём только у codex
-// (gpt-6-sol, 23.09.2026: второй запрос несёт reasoning-item с encrypted_content, ход без 400).
-void test("only codex replays reasoning; every other vendor keeps it stripped", () => {
+// Решение по вендору — в MODEL_PROVIDERS, по протоколу Go — в withReplayableReasoning.
+// 15.10.2026: chat/completions Go и Ollama Cloud принимают возврат; custom ждёт пробы.
+void test("proven chat vendors and codex replay reasoning", () => {
   assert.deepEqual(
     MODEL_PROVIDER_NAMES.filter(
       (name) => MODEL_PROVIDERS[name].replaysReasoning,
     ),
-    ["codex"],
+    ["ollama", "opencode", "codex"],
   );
 });
+
+async function loadReasoningProvider(
+  name: "ollama" | "opencode" | "custom" | "openrouter",
+  protocol: "chat-completions" | "responses" | undefined,
+): Promise<ProviderModule> {
+  const env = {
+    MODEL_PROVIDER: name,
+    OPENCODE_PROTOCOL: protocol,
+    CUSTOM_MODEL: "reasoning-fixture",
+    CUSTOM_BASE_URL: "https://custom.example/v1",
+  };
+  const previous = Object.fromEntries(
+    Object.keys(env).map((key) => [key, process.env[key]]),
+  );
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    const specifier = `./provider.ts?reasoning-replay=${name}-${protocol}`;
+    return (await import(specifier)) as ProviderModule;
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+for (const [name, protocol, replay, stream = false] of [
+  ["ollama", "chat-completions", true],
+  ["ollama", "chat-completions", true, true],
+  ["opencode", "chat-completions", true],
+  ["opencode", undefined, true],
+  ["custom", "chat-completions", false],
+  ["openrouter", "chat-completions", false],
+  ["opencode", "responses", false],
+] as const) {
+  void test(`${name}/${protocol ?? "default"}${stream ? "/stream" : ""} sends the previous tool step's reasoning according to its replay rule`, async () => {
+    const provider = await loadReasoningProvider(name, protocol);
+    const bodies: {
+      model: string;
+      stream?: boolean;
+      messages: {
+        role: string;
+        reasoning_content?: string;
+        tool_calls?: { id: string }[];
+        tool_call_id?: string;
+      }[];
+    }[] = [];
+    const compatible = createOpenAICompatible({
+      name: "reasoning-fixture",
+      baseURL: "https://provider.example/v1",
+      apiKey: "test-only",
+      fetch: (_input, init) => {
+        bodies.push(
+          JSON.parse(init?.body as string) as (typeof bodies)[number],
+        );
+        const streaming = stream && bodies.length === 1;
+        const response = streaming
+          ? (chunk: unknown) => sse([chunk])
+          : (body: unknown) => Response.json(body);
+        return Promise.resolve(
+          response({
+            id: `chatcmpl-${bodies.length}`,
+            object: "chat.completion",
+            created: 0,
+            model: bodies.at(-1)!.model,
+            choices: [
+              {
+                index: 0,
+                [streaming ? "delta" : "message"]:
+                  bodies.length === 1
+                    ? {
+                        role: "assistant",
+                        content: null,
+                        reasoning_content: "сначала вызову add",
+                        tool_calls: [
+                          {
+                            index: 0,
+                            id: "call_1",
+                            type: "function",
+                            function: { name: "add", arguments: "{}" },
+                          },
+                        ],
+                      }
+                    : { role: "assistant", content: "3" },
+                finish_reason: bodies.length === 1 ? "tool_calls" : "stop",
+              },
+            ],
+          }),
+        );
+      },
+    });
+    const first = await (stream ? streamText : generateText)({
+      model: provider.withReplayableReasoning(compatible("step-one")),
+      prompt: "сложи",
+      tools: { add: { inputSchema: jsonSchema({ type: "object" }) } },
+      maxRetries: 0,
+    });
+    await first.text;
+    const firstResponse = await first.response;
+    assert.equal(await first.finishReason, "tool-calls");
+    assert.equal(bodies[0].stream, stream ? true : undefined);
+    const firstReasoning = reasoningParts(firstResponse.messages).map(
+      (part) => part.text,
+    );
+    const history: ModelMessage[] = [
+      { role: "user", content: "сложи" },
+      ...firstResponse.messages,
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_1",
+            toolName: "add",
+            output: { type: "json", value: { sum: 3 } },
+          },
+        ],
+      },
+    ];
+    // История от прежнего вендора тоже проходит через правило нового вендора.
+    if (!replay) {
+      const assistant = history.find((message) => message.role === "assistant");
+      assert.ok(assistant && Array.isArray(assistant.content));
+      assistant.content.unshift({
+        type: "reasoning",
+        text: "старое рассуждение",
+      });
+    }
+    const second = await generateText({
+      model: provider.withReplayableReasoning(compatible("step-two")),
+      messages: history,
+      maxRetries: 0,
+    });
+    assert.equal(second.text, "3");
+    assert.deepEqual(
+      bodies.map((body) => body.model),
+      ["step-one", "step-two"],
+    );
+    const messages = bodies[1].messages;
+    const assistant = messages.find((message) => message.role === "assistant");
+    assert.ok(assistant);
+    if (replay) assert.equal(assistant.reasoning_content, "сначала вызову add");
+    else assert.equal("reasoning_content" in assistant, false);
+    assert.deepEqual(firstReasoning, replay ? ["сначала вызову add"] : []);
+    assert.equal(assistant.tool_calls?.[0]?.id, "call_1");
+    assert.equal(
+      messages.find((message) => message.role === "tool")?.tool_call_id,
+      "call_1",
+    );
+  });
+}
 
 const REPLAY_USAGE = {
   inputTokens: 1,
@@ -1590,6 +1746,116 @@ const OK_CHUNK = {
   model: "test",
   choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }],
 };
+
+await test("usage fingerprints follow the provider request, not the final user text (seed 101820)", async (t) => {
+  await import("../scripts/lib/ts-esm-hooks.ts");
+  const hook = (await import("./hooks/usage.ts")).default as unknown as {
+    events: Record<string, (event: unknown, ctx: unknown) => void>;
+  };
+  const { readEntries, summarize } = await import("../scripts/lib/usage.ts");
+  const dir = mkdtempSync(join(tmpdir(), "iva-usage-fingerprint-"));
+  const previous = process.env.ASSISTANT_DATA_DIR;
+  process.env.ASSISTANT_DATA_DIR = dir;
+  t.after(() => {
+    if (previous === undefined) delete process.env.ASSISTANT_DATA_DIR;
+    else process.env.ASSISTANT_DATA_DIR = previous;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const answers: (() => Response)[] = [];
+  const bodies = captureRequests(t, answers);
+  const marker = { anthropic: { cacheControl: { type: "ephemeral" } } };
+  let step = 0;
+  async function request(
+    system: string,
+    user: string,
+    cached = "stable",
+    toolName = "lookup",
+    streaming = true,
+  ) {
+    const label = { sessionId: "fingerprint", turnId: "turn_0", step: step++ };
+    answers.push(() => (streaming ? sse([OK_CHUNK]) : chatCompletion()));
+    const model = makeTextModelOllama({
+      chatModelSeesImages: blindToImages,
+      usage: label,
+    });
+    const params = {
+      prompt: [
+        { role: "system", content: system, providerOptions: marker },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: cached }],
+          providerOptions: marker,
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: user }],
+          providerOptions: marker,
+        },
+      ],
+      tools: [
+        {
+          type: "function",
+          name: toolName,
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+    } satisfies Parameters<typeof model.doStream>[0];
+    if (streaming) {
+      const { stream } = await model.doStream(params);
+      await stream.pipeTo(new WritableStream());
+    } else await model.doGenerate(params);
+    hook.events["step.completed"](
+      {
+        data: {
+          turnId: label.turnId,
+          stepIndex: label.step,
+          usage: { inputTokens: 12, outputTokens: 1 },
+        },
+      },
+      { session: { id: label.sessionId }, channel: { kind: "http" } },
+    );
+    return readEntries(dir).at(-1)!;
+  }
+  const first = await request("system A", "user A");
+  assert.equal(first.request?.toolCount, 1);
+  for (const key of ["system", "cache", "tools"] as const)
+    assert.match(first.request[key], /^[a-f0-9]{8}$/u);
+  assert.deepEqual(
+    (await request("system A", "user B")).request,
+    first.request,
+  );
+  assert.deepEqual(
+    (await request("system A", "user C", "stable", "lookup", false)).request,
+    first.request,
+  );
+  const changedSystem = await request("system B", "user A");
+  assert.notEqual(changedSystem.request?.system, first.request?.system);
+  assert.notEqual(changedSystem.request?.cache, first.request?.cache);
+  assert.equal(changedSystem.request?.tools, first.request?.tools);
+  assert.notEqual(
+    (await request("system A", "user A", "changed")).request?.cache,
+    first.request?.cache,
+  );
+  assert.notEqual(
+    (await request("system A", "user A", "stable", "other")).request?.tools,
+    first.request?.tools,
+  );
+  console.error("[usage fingerprint property] seed 101820, runs 30");
+  await fc.assert(
+    fc.asyncProperty(fc.string(), async (user) => {
+      assert.deepEqual(
+        (await request("system A", user)).request,
+        first.request,
+      );
+    }),
+    { seed: 101820, numRuns: 30 },
+  );
+  assert.equal(bodies.length, step);
+  assert.equal(
+    summarize(readEntries(dir), { window: "today" }).totals.total,
+    step * 13,
+  );
+});
 
 void test("повтор после отказа схемы тоже уходит с проводными именами", async (t) => {
   const go = await loadOpencodeProvider();

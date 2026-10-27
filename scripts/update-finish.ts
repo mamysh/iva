@@ -1,3 +1,4 @@
+import { controlFailure } from "./lib/systemd-control.ts";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -21,6 +22,9 @@ import {
   PLUGIN_ALERT_KEY,
   pluginsSwitchedOffAlert,
   type Translate,
+  USERBOT_ALERT_KEY,
+  userbotOffAlert,
+  userbotOffReason,
 } from "./lib/notice-policy.ts";
 import {
   isEntrypoint,
@@ -57,6 +61,8 @@ import type { PluginFailure } from "./lib/plugin-build.ts";
 import { tryLoadPluginCore } from "./lib/plugin-core.ts";
 import { pluginUnitNames, runningPluginUnits } from "./lib/plugin-units.ts";
 import type { createCliRuntime } from "./cli/runtime.ts";
+import type { createCliSystemd } from "./cli/systemd.ts";
+import type { reinstallUserbot } from "./cli/userbot.ts";
 
 type Say = (message: string) => void;
 type CliRuntime = ReturnType<typeof createCliRuntime>;
@@ -208,28 +214,41 @@ export function captureOptionalWriterState(
   });
 }
 
-/** Stop every present writer. Missing optional units remain a valid legacy state. */
+/** Stop every present writer, including a partially installed set of core units. */
 export function stopWriterUnits(
   runtime: WriterRuntime,
   optional = captureOptionalWriterState(runtime),
 ): void {
-  const optionalTimers = optional
-    .filter(
-      (state) => present(state.loadState) && state.unit.endsWith(".timer"),
-    )
+  const loadedOptional = optional.filter((state) => present(state.loadState));
+  const optionalTimers = loadedOptional
+    .filter((state) => state.unit.endsWith(".timer"))
     .map((state) => state.unit);
-  const optionalServices = optional
-    .filter(
-      (state) => present(state.loadState) && state.unit.endsWith(".service"),
-    )
+  const optionalServices = loadedOptional
+    .filter((state) => state.unit.endsWith(".service"))
     .map((state) => state.unit);
   for (const writers of [optionalTimers, optionalServices, runtime.SERVICES]) {
     if (writers.length === 0) continue;
-    runtime.systemd.stop(writers);
-    for (const unit of writers) {
+    for (const unit of stopPresentWriters(runtime, writers)) {
       if (unitActive(runtime, unit))
         throw new Error(`writer ${unit} remained active after stop`);
     }
+  }
+}
+
+function stopPresentWriters(
+  runtime: WriterRuntime,
+  writers: readonly string[],
+): readonly string[] {
+  try {
+    runtime.systemd.stop(writers);
+    return writers;
+  } catch (error) {
+    const loaded = writers.filter((unit) =>
+      present(unitLoadState(runtime, unit)),
+    );
+    if (loaded.length === writers.length) throw error;
+    if (loaded.length > 0) runtime.systemd.stop(loaded);
+    return loaded;
   }
 }
 
@@ -240,7 +259,9 @@ function checkedUnitAction(
 ): void {
   const result = runtime.systemd.query(action, unit);
   if (result.code !== 0)
-    throw new Error(`systemctl --user ${action} ${unit} failed: ${result.out}`);
+    throw new Error(
+      `${controlFailure([action, unit], runtime.systemd.manager ?? "systemd")}: ${result.out}`,
+    );
 }
 
 /** Restore exact optional active/enabled flags without starting a disabled unit. */
@@ -359,8 +380,15 @@ export function restoreWriterOwnership(
   phase: {
     readonly unitMigrationStarted: boolean;
     readonly legacyMemoryOwnerProven: boolean;
+    readonly userbotReady: boolean;
   },
 ): void {
+  if (phase.userbotReady !== true)
+    states = states.map((state) =>
+      state.unit === runtime.SVC_USERBOT && state.active
+        ? { ...state, active: false, enabled: false }
+        : state,
+    );
   if (!phase.unitMigrationStarted) {
     restoreOptionalWriterState(runtime, states);
     return;
@@ -685,6 +713,9 @@ export function tombstoned(
     .sort();
 }
 
+/** How long an Alert may hold the update: as long as the bridge waits for a Bot API call. */
+const ALERT_SEND_TIMEOUT_MS = 30_000;
+
 /**
  * One plain message to the owner's chat. A direct Bot API call, like the update offer
  * this Alert stands beside (scripts/check-update.ts): the marked-up sender lives in the
@@ -705,6 +736,8 @@ function sendToChat(
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chat_id: chat, text }),
+          // The update waits for this; a Telegram that does not answer is a failed send.
+          signal: AbortSignal.timeout(ALERT_SEND_TIMEOUT_MS),
         },
       );
       return response.ok;
@@ -777,6 +810,74 @@ export async function alertOwnerAboutCustom(
   );
 }
 
+/** What the update output names when an Alert about the userbot did not reach the chat. */
+const USERBOT = "the userbot";
+
+/** The one output line for an Alert the chat did not get. */
+function untold(about: string): string {
+  return `could not tell you in Telegram about ${about}`;
+}
+
+/**
+ * Tell the owner the userbot is off, if it is and there is someone to tell. Telling never
+ * fails the update it reports on: a throw is one output line.
+ */
+async function tellAboutUserbot(
+  alert: ((reason: string) => Promise<void>) | undefined,
+  reason: string | undefined,
+  notify: Say,
+): Promise<void> {
+  if (alert === undefined || reason === undefined) return;
+  try {
+    await alert(reason);
+  } catch (error) {
+    console.error("[alert] could not tell about the userbot:", error);
+    notify(untold(USERBOT));
+  }
+}
+
+/**
+ * The update switched the userbot off: its environment did not prepare or its proxy did
+ * not answer (#273). The update output already carries the reason and `iva userbot setup`
+ * (reinstallUserbot); this is the half that reaches an owner who pressed «Update» in
+ * Telegram, in plain words: the reason is only the throttle's essence. ADR-0007: once a
+ * week for the same reason, at once for another one - and at once after the fix: a userbot
+ * that answers again forgets this Alert (scripts/cli/userbot.ts).
+ */
+export async function alertOwnerAboutUserbot(
+  layout: ReturnType<typeof layoutFor>,
+  reason: string,
+  notify: Say,
+  send?: (text: string) => Promise<boolean>,
+): Promise<void> {
+  await alertOwnerOnce(
+    layout,
+    {
+      key: USERBOT_ALERT_KEY,
+      essence: userbotOffReason(reason),
+      text: userbotOffAlert,
+      about: USERBOT,
+    },
+    notify,
+    send,
+  );
+}
+
+/**
+ * The userbot Alert of a whole update: `reason` is the flip's, and it is told only once the
+ * version is served. A rollback brings the userbot back on the version it ran on, and a
+ * message that it is off would be false - and would hush the true one for a week.
+ */
+export async function alertOwnerWhenServed(
+  outcome: UpdateOutcome,
+  reason: string | undefined,
+  alert: (reason: string) => Promise<void>,
+  notify: Say,
+): Promise<void> {
+  if (outcome.status !== "updated") return;
+  await tellAboutUserbot(alert, reason, notify);
+}
+
 /** What the owner's files contain; an Alert must not fail the update it reports on. */
 function customEssence(dataDir: string): string {
   try {
@@ -810,8 +911,7 @@ async function alertOwnerOnce(
   const outcome = await alertOnce(layout.data, alert.key, alert.essence, () =>
     deliver(text),
   );
-  if (outcome === "failed")
-    notify(`could not tell you in Telegram about ${alert.about}`);
+  if (outcome === "failed") notify(untold(alert.about));
 }
 
 /**
@@ -850,6 +950,83 @@ export async function restartPluginUnits(
       `some plugin units did not restart: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+/**
+ * The flip's restart: the version `current` now names starts its services, and every
+ * optional writer quiesce stopped is handed back as it was found - except a userbot that
+ * was running. That one comes back only when its environment was rebuilt and its proxy
+ * answered; a failed recovery, or a restart that threw before recovery ran, leaves it
+ * stopped and disabled, so systemd cannot loop it on a broken environment (#273).
+ *
+ * A userbot this step switched off is handed to `alertUserbot` with its reason, once the
+ * writers are restored. Telling the owner is never a reason for the step to fail: a throw
+ * there is one line in the output.
+ */
+export async function startCandidateServices(
+  runtime: CliRuntime,
+  services: Pick<
+    ReturnType<typeof createCliSystemd>,
+    "restartServices" | "retireDeferredBrainUnits" | "writeUnits"
+  >,
+  {
+    states,
+    dataDir,
+    log,
+    notify,
+    migration,
+    reinstall,
+    alertUserbot,
+  }: {
+    readonly states: readonly OptionalWriterState[] | undefined;
+    readonly dataDir: string;
+    readonly log: Say;
+    readonly notify: Say;
+    /** Shared with the rollback: it must know whether units were rewritten. */
+    readonly migration: { started: boolean };
+    readonly reinstall: typeof reinstallUserbot;
+    /** The userbot was running and is off now; `reason` is the recovery's. */
+    readonly alertUserbot?: (reason: string) => Promise<void>;
+  },
+): Promise<void> {
+  const capturedUserbot = states?.find(
+    (state) => state.unit === runtime.SVC_USERBOT,
+  );
+  let userbotReady = capturedUserbot?.active !== true;
+  let userbotOff: string | undefined;
+  try {
+    services.restartServices({
+      afterUnitWrite: () => {
+        migration.started = true;
+      },
+      ...(capturedUserbot?.loadState === "not-found"
+        ? { skipUnits: [runtime.SVC_USERBOT] }
+        : {}),
+      deferBrainMigration: true,
+      deferMemoryMigration: true,
+    });
+    runtime.systemd.activate([runtime.UPDATE_TIMER]);
+    // The code of every plugin proxy is in the version this flip just made
+    // current; nothing else brings them onto it.
+    await restartPluginUnits(runtime, dataDir, log);
+    if (capturedUserbot?.active === true) {
+      const recovery = await reinstall(runtime, services, notify, {
+        knownActive: true,
+      });
+      userbotReady = recovery.status === "ready";
+      if (recovery.status === "failed") userbotOff = recovery.reason;
+    }
+  } finally {
+    if (states) {
+      restoreWriterOwnership(runtime, states, {
+        unitMigrationStarted: migration.started,
+        legacyMemoryOwnerProven: false,
+        userbotReady,
+      });
+      if (migration.started) services.retireDeferredBrainUnits();
+    }
+  }
+  await tellAboutUserbot(alertUserbot, userbotOff, notify);
 }
 
 /**
@@ -892,7 +1069,9 @@ export async function main(argv: readonly string[]): Promise<number> {
   const log: Say = (message) => console.log(`  ${message}`);
   const notify: Say = (message) => console.log(`! ${message}`);
   let optionalWriterState: OptionalWriterState[] | undefined;
-  let unitMigrationStarted = false;
+  // The flip's reason for switching the userbot off; told once the version is served.
+  let userbotOff: string | undefined;
+  const migration = { started: false };
   let quarantinedState: UpdateQuarantine[] = [];
   let outcome: UpdateOutcome;
   try {
@@ -946,8 +1125,9 @@ export async function main(argv: readonly string[]): Promise<number> {
         } finally {
           if (stateReady && optionalWriterState)
             restoreWriterOwnership(runtime, optionalWriterState, {
-              unitMigrationStarted,
+              unitMigrationStarted: migration.started,
               legacyMemoryOwnerProven: false,
+              userbotReady: true,
             });
         }
         await Promise.resolve();
@@ -958,39 +1138,18 @@ export async function main(argv: readonly string[]): Promise<number> {
         const { reinstallUserbot } = await import("./cli/userbot.ts");
         // Units name `current`: they survive every later flip unrewritten.
         const runtime = createCliRuntime(root);
-        const services = createCliSystemd(runtime);
-        const capturedUserbot = optionalWriterState?.find(
-          (state) => state.unit === runtime.SVC_USERBOT,
-        );
-        try {
-          services.restartServices({
-            afterUnitWrite: () => {
-              unitMigrationStarted = true;
-            },
-            ...(capturedUserbot?.loadState === "not-found"
-              ? { skipUnits: [runtime.SVC_USERBOT] }
-              : {}),
-            deferBrainMigration: true,
-            deferMemoryMigration: true,
-          });
-          runtime.systemd.activate([runtime.UPDATE_TIMER]);
-          // The code of every plugin proxy is in the version this flip just made
-          // current; nothing else brings them onto it.
-          await restartPluginUnits(runtime, layout.data, log);
-          if (capturedUserbot?.active === true)
-            reinstallUserbot(runtime, services, notify, {
-              knownActive: true,
-            });
-        } finally {
-          if (optionalWriterState) {
-            restoreWriterOwnership(runtime, optionalWriterState, {
-              unitMigrationStarted,
-              legacyMemoryOwnerProven: false,
-            });
-            if (unitMigrationStarted) services.retireDeferredBrainUnits();
-          }
-        }
-        await Promise.resolve();
+        await startCandidateServices(runtime, createCliSystemd(runtime), {
+          states: optionalWriterState,
+          dataDir: layout.data,
+          log,
+          notify,
+          migration,
+          reinstall: reinstallUserbot,
+          alertUserbot: (reason) => {
+            userbotOff = reason;
+            return Promise.resolve();
+          },
+        });
       },
       retireCommittedWriters: async (root) => {
         const { createCliRuntime } = await import("./cli/runtime.ts");
@@ -1027,6 +1186,12 @@ export async function main(argv: readonly string[]): Promise<number> {
   } finally {
     lock.release();
   }
+  await alertOwnerWhenServed(
+    outcome,
+    userbotOff,
+    (reason) => alertOwnerAboutUserbot(layout, reason, notify),
+    notify,
+  );
   const report = process.env.IVA_UPDATE_OUTCOME;
   if (report) writeFileSync(report, JSON.stringify(outcome));
   else console.log(JSON.stringify(outcome));

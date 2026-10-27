@@ -35,6 +35,34 @@ const MIDNIGHT = Date.UTC(2026, 9, 4, 19, 0);
 const at = (hh: number, mm = 0) => MIDNIGHT + hh * HOUR + mm * MIN;
 const DAY = "2026-10-05";
 
+for (const english of [false, true])
+  test(`empty-response turn.failed gives a readable Brief failure, English=${english}`, async () => {
+    const { reminderFromEvents } =
+      await import("../fixtures/reminder-events.test-fixture.ts");
+    const h = harness();
+    h.english = english;
+    h.reply = await reminderFromEvents([
+      {
+        type: "turn.failed",
+        data: {
+          message: "The model did not return a response",
+          details: { semanticErrorId: "empty-model-response" },
+        },
+      },
+      { type: "session.waiting" },
+    ]);
+    assert.equal(await runProactiveTick(at(8, 30), h.deps), 1);
+    assert.deepEqual(h.sent, [
+      {
+        source: "brief",
+        part: english
+          ? "The model gave no response. The review was not prepared; I'll try next time."
+          : "Модель не дала ответа — обзор не собран, попробую в следующий раз.",
+      },
+    ]);
+    assert.ok(h.logs.some((l) => l.includes("brief turn failed:")));
+  });
+
 type Sent = { readonly part: string; readonly source: string };
 
 type Harness = {
@@ -128,6 +156,7 @@ test("08:30 in the owner's zone: the morning Brief, QUIET forbidden, parts go ou
   assert.match(h.prompts[0] ?? "", /^Brief: slot 0 .*Follow the brief skill/u);
   assert.match(h.prompts[0] ?? "", /QUIET is not allowed/u);
   assert.match(h.prompts[0] ?? "", /written in Russian/u);
+  assert.match(h.prompts[0] ?? "", /^Previous Brief: yesterday 14:00\.$/mu);
   assert.deepEqual(h.sent, [
     { part: "Обзор дня.", source: "brief" },
     { part: "Ответь Ивану до 12:00.", source: "brief" },
@@ -185,6 +214,7 @@ test("14:00: QUIET allowed and sends nothing; a text goes out", async () => {
   assert.equal(await runProactiveTick(at(14), h.deps), 0);
   assert.match(h.prompts[0] ?? "", /^Brief: slot 1 /u);
   assert.match(h.prompts[0] ?? "", /Return QUIET if there is nothing/u);
+  assert.match(h.prompts[0] ?? "", /^Previous Brief: today 08:30\.$/mu);
   assert.deepEqual(h.sent, []);
   assert.deepEqual(readState(h).briefDone, { day: DAY, slots: [0, 1] });
 
@@ -195,6 +225,34 @@ test("14:00: QUIET allowed and sends nothing; a text goes out", async () => {
   assert.deepEqual(said.sent, [
     { part: "Встреча в 15:00 перенесена.", source: "brief" },
   ]);
+});
+
+test("Brief uses configured previous slots and falls back to daily when no earlier claim exists", async () => {
+  const morning = harness();
+  morning.config = { ...PROACTIVE_DEFAULTS, briefTimes: ["09:00", "17:30"] };
+  await seed(morning);
+  await runProactiveTick(at(9), morning.deps);
+  assert.match(
+    briefPrompts(morning)[0] ?? "",
+    /^Previous Brief: yesterday 17:30\.$/mu,
+  );
+
+  const later = harness();
+  later.config = {
+    ...PROACTIVE_DEFAULTS,
+    briefTimes: ["09:00", "17:30"],
+  };
+  await seed(later, { briefDone: { day: DAY, slots: [0] } });
+  await runProactiveTick(at(17, 30), later.deps);
+  assert.match(
+    briefPrompts(later)[0] ?? "",
+    /^Previous Brief: today 09:00\.$/mu,
+  );
+
+  const missing = harness();
+  await seed(missing, { briefDone: { day: "2026-10-04", slots: [0] } });
+  await runProactiveTick(at(14), missing.deps);
+  assert.doesNotMatch(briefPrompts(missing)[0] ?? "", /Previous Brief:/u);
 });
 
 test("briefDone claim: two runs of one slot give one Brief; the next day the slot is new again", async () => {
@@ -508,3 +566,21 @@ test(`Brief: one per slot on any sequence of late, skipped and failing ticks (se
     { seed: SEED, numRuns: 60 },
   );
 });
+
+for (const english of [false, true])
+  test(`r339 brief step ceiling reaches the owner, English=${english}`, async () => {
+    const { failedModelEvents, reminderFromEvents } =
+      await import("../fixtures/reminder-events.test-fixture.ts");
+    const h = harness();
+    h.english = english;
+    h.reply = await reminderFromEvents(failedModelEvents());
+    assert.equal(await runProactiveTick(at(8, 30), h.deps), 1);
+    assert.deepEqual(
+      h.sent.map((s) => s.part),
+      [
+        english
+          ? "The review was not prepared. Stopped after 40 steps without a final summary."
+          : "Обзор не собран. Остановилась на 40 шагах и не успела подвести итог.",
+      ],
+    );
+  });

@@ -71,6 +71,18 @@ test("default language is ru without settings or env", () => {
   assert.equal(r.word, "RU");
 });
 
+test("the bot command menu describes /stop through the native draft control", () => {
+  const r = probe();
+  assert.equal(
+    r.botEn.find((command) => command.command === "stop")?.description,
+    "interrupt the current turn (same as ■ in the draft)",
+  );
+  assert.equal(
+    r.botRu.find((command) => command.command === "stop")?.description,
+    "прервать текущий ход (как ■ в черновике)",
+  );
+});
+
 test("AGENT_LANGUAGE=en selects English when settings are absent", () => {
   const r = probe({ agentLanguage: "en" });
   assert.equal(r.lang, "en");
@@ -94,7 +106,7 @@ test("unknown settings.language falls through to env then default", () => {
   assert.equal(probe({ language: "de" }).lang, "ru");
 });
 
-test("COMMANDS is the single source: menu first, all control commands present", () => {
+test("COMMANDS is the single source: menu first, advertised commands present", () => {
   const { commands } = probe();
   assert.equal(commands[0], "menu");
   const expected = [
@@ -124,6 +136,8 @@ test("helpText renders /menu and respects the language", () => {
   assert.match(ru, /^Команды Iva:/);
   assert.match(ru, /\/menu — меню настроек/);
   assert.match(ru, /\/help — этот список/);
+  assert.doesNotMatch(ru, /\/compact/);
+  assert.doesNotMatch(en, /\/compact/);
 });
 
 test("helpText keeps the argument hints from the original help", () => {

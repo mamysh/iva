@@ -15,6 +15,8 @@ import {
   sdkUsageTokens,
 } from "./lib/usage-tap.ts";
 
+const VISION_TIMEOUT_MS = 120_000;
+
 const PROMPT =
   "Опиши изображение детально и по делу: что на нём, дословный текст (OCR), важные детали и цифры. " +
   "Без преамбул и воды — только содержимое.";
@@ -77,43 +79,54 @@ async function describeWithCompatible(
   prompt: string,
   target: { baseURL: string; apiKey: string; visionModel: string },
 ): Promise<string> {
-  const res = await fetch(`${target.baseURL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${target.apiKey}`,
-      "Content-Type": "application/json",
-      // Go без ID диалога и User-Agent отвечает 4xx; у остальных провайдеров тут пусто.
-      ...(providerRequestHeaders() ?? {}),
-    },
-    body: JSON.stringify({
-      model: target.visionModel,
-      max_tokens: 700,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: prompt },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${mimeType || "image/jpeg"};base64,${Buffer.from(bytes).toString("base64")}`,
+  const signal = AbortSignal.timeout(VISION_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${target.baseURL}/chat/completions`, {
+      signal,
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${target.apiKey}`,
+        "Content-Type": "application/json",
+        // Go без ID диалога и User-Agent отвечает 4xx; у остальных провайдеров тут пусто.
+        ...(providerRequestHeaders() ?? {}),
+      },
+      body: JSON.stringify({
+        model: target.visionModel,
+        max_tokens: 700,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:${mimeType || "image/jpeg"};base64,${Buffer.from(bytes).toString("base64")}`,
+                },
               },
-            },
-          ],
-        },
-      ],
-    }),
-  });
-  if (!res.ok)
-    throw new Error(
-      `vision HTTP ${res.status}: ${(await res.text()).slice(0, 200)}${providerName === "opencode" ? "; set OPENCODE_VISION_PROTOCOL to the model’s documented wire; Go /messages is unsupported" : ""}`,
-    );
-  const json = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  // Зрение тратит токены того же провайдера мимо шага хода — пишем их в usage.jsonl.
-  recordVisionUsage(target.visionModel, chatCompletionsUsageTokens(json));
-  return (json.choices?.[0]?.message?.content ?? "").trim();
+            ],
+          },
+        ],
+      }),
+    });
+    if (!res.ok)
+      throw new Error(
+        `vision HTTP ${res.status}: ${(await res.text()).slice(0, 200)}${providerName === "opencode" ? "; set OPENCODE_VISION_PROTOCOL to the model’s documented wire; Go /messages is unsupported" : ""}`,
+      );
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    // Зрение тратит токены того же провайдера мимо шага хода — пишем их в usage.jsonl.
+    recordVisionUsage(target.visionModel, chatCompletionsUsageTokens(json));
+    return (json.choices?.[0]?.message?.content ?? "").trim();
+  } catch (error) {
+    if (signal.aborted)
+      throw new Error(
+        `Сервис описания картинок не ответил за ${VISION_TIMEOUT_MS / 1000} с`,
+        { cause: error },
+      );
+    throw error;
+  }
 }
 
 /**
@@ -254,37 +267,50 @@ export function makeVisionProbe(
   };
 }
 
-const probe = makeVisionProbe(
-  async () => {
-    const result = await generateText({
-      model: makeTextModel({ chatModelSeesImages }),
-      // Ответ в одно слово, но потолок высокий: думающая модель тратит на reasoning
-      // сотни токенов ДО первого слова ответа, и на десятке их ответ пуст.
-      maxOutputTokens: 1024,
-      // Ретраи тут только тянут время: сбой сети мы и так не кэшируем.
-      maxRetries: 0,
-      // Молчащий провайдер не должен держать первую картинку владельца бесконечно.
-      abortSignal: AbortSignal.timeout(30_000),
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: PROBE_PROMPT },
-            { type: "file", data: RED_SQUARE_PNG, mediaType: "image/png" },
-          ],
-        },
-      ],
-    });
-    // Пробник — тоже вызов модели чата: его токены идут в учёт как зрение.
-    recordVisionUsage(providerConfig.textModel, sdkUsageTokens(result.usage));
-    return { text: result.text, finishReason: result.finishReason };
-  },
-  () => providerConfig.textModel,
-);
+const probes = new Map<string, () => Promise<boolean>>();
+function modelProbe(model: string) {
+  const key = JSON.stringify([providerName, model]);
+  const cached = probes.get(key);
+  if (cached) return cached;
+  const probe = makeVisionProbe(
+    async () => {
+      const result = await generateText({
+        model: makeTextModel({
+          model,
+          chatModelSeesImages: () => chatModelSeesImages(model),
+        }),
+        // Ответ в одно слово, но потолок высокий: думающая модель тратит на reasoning
+        // сотни токенов ДО первого слова ответа, и на десятке их ответ пуст.
+        maxOutputTokens: 1024,
+        // Ретраи тут только тянут время: сбой сети мы и так не кэшируем.
+        maxRetries: 0,
+        // Молчащий провайдер не должен держать первую картинку владельца бесконечно.
+        abortSignal: AbortSignal.timeout(30_000),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: PROBE_PROMPT },
+              { type: "file", data: RED_SQUARE_PNG, mediaType: "image/png" },
+            ],
+          },
+        ],
+      });
+      // Пробник — тоже вызов модели чата: его токены идут в учёт как зрение.
+      recordVisionUsage(model, sdkUsageTokens(result.usage));
+      return { text: result.text, finishReason: result.finishReason };
+    },
+    () => model,
+  );
+  probes.set(key, probe);
+  return probe;
+}
 
 /** Принимает ли текстовая модель картинки. codex и claude — да без сети: подписки мультимодальны. */
-export function chatModelSeesImages(): Promise<boolean> {
+export function chatModelSeesImages(
+  model = providerConfig.textModel,
+): Promise<boolean> {
   if (providerName === "codex" || providerName === "claude")
     return Promise.resolve(true);
-  return probe();
+  return modelProbe(model)();
 }

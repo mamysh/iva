@@ -1,6 +1,6 @@
 ---
 name: brief
-description: "Brief — the owner's day in review: tasks, calendar, mail, Telegram, every Connection and plugin, goals from CORE, weather. Load in a scheduled Brief turn (08:30 and 14:00 by default), on /digest, and when the owner asks for a day plan, a review of the day or their open tasks."
+description: "Brief — the owner's day in review: tasks, calendar, mail, Telegram, every Connection and plugin, goals from CORE, weather. Load in a scheduled Brief turn, on /digest, and when the owner asks for a day plan, a review of the day or their open tasks."
 ---
 
 # Brief — the owner's day in review
@@ -9,10 +9,20 @@ A Brief comes twice a day by schedule (`iva proactive show` → `briefTimes`) an
 `/digest` or a request in chat. Your job is the judgement: what of the day matters
 and what the next step is.
 
+Read current times with `iva proactive show`; `briefTimes` comes from settings.
+For a time change, follow Watch's Settings section and verify with `show` again.
+
 ## Gather
 
 In a group chat (`/digest` there) other people read the answer: show only the open
 tasks (step 1), nothing from mail, calendar, personal Telegram or Connections.
+
+Load `watch` and follow its shared procedure for each substantial item; apply
+it only to the sources allowed here. For chat links, follow `watch` and retain
+the message id and forum topic from the Telegram item you read.
+
+For changes, cover the time since the previous Brief, whose time is in the prompt
+(`Previous Brief`). Without that line, find the previous overview in the daily file.
 
 Walk everything the owner has connected, with your own tools, read only:
 
@@ -24,15 +34,18 @@ Walk everything the owner has connected, with your own tools, read only:
    today's meetings, letters and chats that wait for the owner.
 3. Every Connection and plugin: `connection_search` lists them; look at each one for
    what is new or due today.
-4. Goals from CORE: one concrete step towards a goal today, if one fits.
+4. CORE goals: the shared procedure chooses a concrete step for today.
+   Call `goal list`; if any goal is proposed, paused or has an untold Outcome, add one line "goal: N идут, K ждут ответа", counting current statuses yourself.
 5. Weather for the owner's city (from memory, `memory_search`). No city known — ask
    once and save the answer with `write_card`.
 6. Habits — only the ones the owner named; never invent a routine.
 7. Mail, calendar or Telegram not connected — offer to connect it once and save the
    fact that you offered with `write_card`; next time check memory and do not repeat.
-   Do not suggest anything a Card tagged `insight` marks as declined.
 
 ## Write
+
+Keep the shared procedure's source, why now and prepared next step inside the
+existing overview or action message.
 
 - Unfixed failures from the prompt open the overview, before anything else: one
   point each, in plain words, what broke and the cause. Each then gets its own
@@ -44,12 +57,17 @@ Walk everything the owner has connected, with your own tools, read only:
 - The first message is the overview: greeting in one line, the day in 5–7 points,
   one sentence with the focus of the day. Too many tasks — the important ones and
   how many more there are.
+- An item already reported in a previous Brief (read its answer in the daily file)
+  that still waits for the owner gets one line in the overview with the day of waiting. Leave
+  completed items out; do not repeat the earlier item in full.
 - After it, one message per item that needs an action from the owner (an answer, a
   decision, a payment), each with its next step and buttons (see `rich-replies`).
   Such a message ends with an empty line and one question line the buttons
   answer, naming the person or the thing: «Оплатить счёт Билайна сегодня?»,
   «Взять ответ Максиму в задачи?». Then an empty line and the buttons.
   Items without an action stay in the overview.
+- An eligible waiting item gets the «Следить» button from `goal` in its own action message,
+  following Watch's shared procedure and the same single-item rule in chat.
 - A message with more than one item — the overview first of all — has no action
   buttons. Every item with an action is its own message, and the button `data`
   names the subject, who and what about: «Ответить: Иван, смета», «Черновик
@@ -66,13 +84,20 @@ Walk everything the owner has connected, with your own tools, read only:
   dispatcher, no counts of what fired, no ids, codes or service names, no table
   for a list of things.
 - The morning Brief (slot 0) always has an answer. A later Brief may return exactly
-  `QUIET` when nothing changed since the morning that is worth a message.
+  `QUIET` when nothing changed since the previous Brief that is worth a message.
+- If mail, Telegram, calendar, tasks or a Connection could not be read, end the
+  Brief with one plain line naming the unread sources, for example «Почту прочитать
+  не удалось». Treat that source as unknown; silence gives no evidence of an empty
+  inbox. Keep error codes in your own reading.
 
 Never send anything yourself in a scheduled turn: no Telegram tools, no `iva post`,
 no mail. Code sends your final text to the owner's private chat. Never write to
 anyone on the owner's behalf.
 
 ## Bad → Good
+
+Bad: repeat yesterday's whole item about Maxim and the estimate.
+Good: «Максим ждёт ответа, 3-й день». A completed item leaves the overview.
 
 Bad (real lines of a reminders list in the chat, 06.10.2026 — a Brief must not
 read like this): «Активных пять, диспетчер работает ✅», a table «Когда · Что ·

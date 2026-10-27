@@ -1,5 +1,8 @@
+import { observeModelAuth } from "#lib/model-auth-alert.ts";
+import { modelAuthText } from "#lib/model-auth.ts";
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 import "../fixtures/no-host-anthropic.ts";
+import "../fixtures/systemd-env.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -8,6 +11,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -110,6 +114,35 @@ async function doctorOutput(root: string): Promise<{
   })();
   return { events, summaryLogs };
 }
+
+test("doctor explains a Google CLI GLIBC failure and prints the pinned repair command", async (t) => {
+  const root = await sandbox(t);
+  const warnings: string[] = [];
+  const runtime = createCliRuntime(root);
+  await createDoctorCommand(
+    {
+      ...runtime,
+      readEnv: completeEnv,
+      hasSystemd: () => false,
+      ok: () => undefined,
+      bad: () => undefined,
+      warn: (message) => warnings.push(message),
+      cap: (command, args, options) =>
+        command.endsWith("gws")
+          ? { code: 1, out: "", err: "version GLIBC_2.39 not found" }
+          : runtime.cap(command, args, options),
+    },
+    lifecycle(),
+    { nodeVersion: "24.21.0", log: () => undefined, exit: () => undefined },
+  )();
+  assert.ok(
+    warnings.some(
+      (line) =>
+        line.includes("Google CLI requires a newer glibc") &&
+        line.includes('bash install.sh --update-gws "$HOME/.local"'),
+    ),
+  );
+});
 
 /** Доктор с подменённым каталогом данных: правила владельца читаются из своего sandbox. */
 async function ownerRulesEvents(
@@ -477,6 +510,28 @@ test("doctor читает битую таблицу, не унося файл в
     readdirSync(data).filter((name) => name.includes(".corrupt-")),
     [],
     "карантин создан",
+  );
+});
+
+test("doctor reports a damaged reminder row and preserves data files", async (t) => {
+  const root = await sandbox(t);
+  const raw = JSON.stringify({ schemaVersion: 2, rows: [null] });
+  const events = await remindersEvents(root, {
+    now: 1000000,
+    pulseAgoMs: 30000,
+    brokenTable: raw,
+  });
+  const data = join(root, "data");
+  assert.deepEqual(readdirSync(data).sort(), [
+    "reminders.json",
+    "reminders.tick",
+  ]);
+  assert.equal(readFileSync(join(data, "reminders.json"), "utf8"), raw);
+  assert.ok(
+    events.some(
+      ([kind, message]) =>
+        kind === "warn" && message.startsWith("reminders: table unreadable"),
+    ),
   );
 });
 
@@ -887,6 +942,8 @@ test("doctor keeps the initial env snapshot but reads the migrated listener port
       return join(root, "data-initial");
     },
     cap: (command, args) => {
+      if (command.endsWith("gws"))
+        return { code: 0, out: "gws 0.22.5", err: "" };
       if (command === "ss") {
         calls.push("inspect-listener");
         listenerArgs.push(args);
@@ -2032,9 +2089,11 @@ function fakeClaude(t: TestContext, body: string): string {
 async function diagnoseClaude(
   t: TestContext,
   env: Record<string, string>,
+  prepare?: (root: string) => void,
 ): Promise<{ bad: string[]; ok: string[] }> {
   const root = await sandbox(t);
   writeFileSync(join(root, ".env"), "MODEL_PROVIDER=claude\n");
+  prepare?.(root);
   const bad: string[] = [];
   const ok: string[] = [];
   const runtime: CliRuntime = {
@@ -2127,5 +2186,79 @@ test("doctor names a foreign auth variable instead of reporting claude as health
     joined.includes("sk-ant-not-printed"),
     false,
     "значение утекло в отчёт",
+  );
+});
+
+test("repair 13/15: missing lsof is unknown and macOS doctor names Iva jobs", async (t) => {
+  const root = await sandbox(t);
+  writeFileSync(join(root, ".env"), "IVA_PORT=8723\n");
+  const unitDir = join(root, "LaunchAgents");
+  mkdirSync(unitDir);
+  writeFileSync(join(unitDir, "app.iva.iva.plist"), "fixture");
+  const events: string[] = [];
+  const base = createCliRuntime(root);
+  const runtime: CliRuntime = {
+    ...base,
+    UNIT_DIR: unitDir,
+    SERVICES: [],
+    TIMERS: [],
+    C: NO_COLOR,
+    hasSystemd: () => true,
+    readEnv: completeEnv,
+    systemd: createSystemdControl({
+      manager: "launchd",
+      run: () => ({ code: 0, out: "active" }),
+    }),
+    cap: (command) =>
+      command === "lsof"
+        ? base.cap("lsof", [], {
+            env: { ...base.childEnv, PATH: "/iva-test-empty-path" },
+          })
+        : { code: 0, out: "", err: "" },
+    ok: (m) => events.push(m),
+    warn: (m) => events.push(m),
+    bad: (m) => events.push(m),
+  };
+  await createDoctorCommand(runtime, lifecycle(), {
+    nodeVersion: "24.21.0",
+    log: () => {},
+    exit: () => {},
+  })();
+  assert.ok(
+    events.some((m) => m.includes("lsof unavailable")),
+    events.join("\n"),
+  );
+  assert.ok(
+    events.some((m) => m.includes("задания Ивы installed")),
+    events.join("\n"),
+  );
+});
+
+test("doctor fails on last-call authentication evidence even with a signed-in Claude CLI", async (t) => {
+  const at = Date.parse("2026-10-21T01:33:00Z");
+  const ready = await diagnoseClaude(
+    t,
+    {
+      CLAUDE_COMMAND: fakeClaude(
+        t,
+        '{"loggedIn":true,"subscriptionType":"max"}',
+      ),
+    },
+    (root) =>
+      observeModelAuth(join(root, "data"), {
+        provider: "claude",
+        at,
+        failed: true,
+        answers: true,
+      }),
+  );
+  assert.ok(
+    ready.bad.includes(
+      modelAuthText("claude", "ru", { since: at, answers: true }),
+    ),
+  );
+  assert.equal(
+    ready.ok.some((message) => message.includes("signed in")),
+    false,
   );
 });

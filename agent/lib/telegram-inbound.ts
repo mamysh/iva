@@ -20,6 +20,7 @@ import {
   contentKeyNames,
   mediaFromRaw,
   messageParts,
+  TELEGRAM_MESSAGE_ENVELOPE_KEYS as envelope,
   type TelegramRawMessage,
 } from "./telegram-parts.ts";
 import { traceInboundReceived } from "./trace.ts";
@@ -81,6 +82,8 @@ export type TelegramInboundEffects = TelegramMediaEffects & {
   readonly onAbandoned: () => Promise<void>;
   // Прошлый ход прервали кнопкой «Стоп»: читает пометку и гасит её.
   readonly consumeCancelledMark: () => boolean;
+  // Снимок до занятия чата этим сообщением, сохраняется при завершении прошлого хода.
+  readonly receivedDuringTurn?: boolean;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -414,6 +417,9 @@ async function unreadableNote(
 ): Promise<void> {
   if (message.chat.type !== "private" || message.from?.isBot === true) return;
   if (!nothingReadable(partsRaw, readings)) return;
+  const keys = partsRaw.flatMap((raw) => Object.keys(raw));
+  const topic = keys.some((key) => key.includes("forum_topic_"));
+  if (topic && keys.every((key) => envelope.has(key))) return;
   const names = contentKeyNames(partsRaw);
   const shown = names.slice(0, UNREADABLE_FIELD_LIMIT).join(", ");
   const list = names.length > UNREADABLE_FIELD_LIMIT ? `${shown}, …` : shown;
@@ -430,6 +436,19 @@ async function unreadableNote(
       `[telegram] не смог отправить «не могу прочитать сообщение»: ${String(error)}`,
     );
   }
+}
+
+// Пачка — те же сообщения по одному: строка о нечитаемом на каждую такую часть.
+async function unreadableNotes(
+  message: TelegramInboundMessage,
+  effects: TelegramInboundEffects,
+  partsRaw: readonly TelegramRawMessage[],
+  readings: readonly TelegramMessageTextReading[],
+): Promise<void> {
+  if (partsRaw.length < 2)
+    return unreadableNote(message, effects, partsRaw, readings);
+  for (const [index, partRaw] of partsRaw.entries())
+    await unreadableNote(message, effects, [partRaw], [readings[index]]);
 }
 
 // Текстовая часть после гейта: помеченный вход едет с предупреждением, усечённый —
@@ -485,7 +504,7 @@ function carrierTextEntries(
   const flagged = logInboundFindings(sanitized);
   return {
     entries: gatedTextEntries(sanitized, dailyPath),
-    flagged,
+    flagged: flagged && (sanitized.blocked || sanitized.text !== labelled),
   };
 }
 
@@ -577,6 +596,8 @@ export async function runTelegramInbound(
               effects.botUsername,
             )
       : partsRaw.some((partRaw, partIndex) => {
+          // Нечитаемая часть и одна хода не начала бы: в пачке тоже не начинает.
+          if (nothingReadable([partRaw], [readings[partIndex]])) return false;
           const partMessage = messageViewForRaw(
             message,
             partRaw,
@@ -587,7 +608,7 @@ export async function runTelegramInbound(
             : shouldDispatch(partMessage, effects.botUsername);
         });
   if (!shouldDispatchAny) {
-    await unreadableNote(message, effects, partsRaw, readings);
+    await unreadableNotes(message, effects, partsRaw, readings);
     return null;
   }
   await effects.onAccepted();
@@ -604,6 +625,13 @@ export async function runTelegramInbound(
         "[Предыдущий ход был прерван пользователем кнопкой «Стоп» — часть работы могла не завершиться. Не повторяй её без явной просьбы.]",
       ),
     );
+  } else if (effects.receivedDuringTurn) {
+    operationalPreContext.push(
+      tr(
+        "[This message arrived while the previous turn was running. Check the history to see whether the previous request was completed before repeating any work.]",
+        "[Это сообщение пришло, пока шёл прошлый ход. Проверь по истории, доведена ли прошлая просьба, прежде чем повторять сделанное.]",
+      ),
+    );
   }
   const rawBuffered = raw.iva_buffered;
   if (Array.isArray(rawBuffered) && rawBuffered.length) {
@@ -611,9 +639,9 @@ export async function runTelegramInbound(
     const rawItems = rawBuffered.filter(
       (s: unknown): s is string => typeof s === "string" && s.trim().length > 0,
     );
-    const dailyPath = rawItems.length
-      ? appendDaily("[queued]", rawItems.join("\n"))
-      : undefined;
+    const dailyPath = rawItems
+      .map((text) => appendDaily("[queued]", text))
+      .at(-1);
     const items = rawItems.map((text) => {
       const sanitized = sanitizeInbound(text);
       // Порядок и состав — как у свежей реплики (gatedTextEntries): предупреждение,
@@ -790,7 +818,10 @@ export async function runTelegramInbound(
     }
 
     const userText = reading.text.trim();
-    if (!userText) continue;
+    if (!userText) {
+      await unreadableNote(message, effects, [partRaw], [reading]); // как у одиночного
+      continue;
+    }
     const carrier = carrierTextEntries(userText, label);
     const carrierText = carrierReading.text.trim();
     // Пересланная часть не «чистый носитель»: eve донесёт её текст без метки,

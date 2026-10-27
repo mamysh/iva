@@ -1,7 +1,9 @@
+import { modelAuthSuccessLine, modelAuthProvider } from "#lib/model-auth.ts";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
+import { setTimeout as pause } from "node:timers/promises";
 import { resolveVaultDir } from "@iva/vault-dir";
 import { resolveDataDir } from "#lib/data-dir.ts";
 import { resolveTimeZone } from "#lib/timezone.ts";
@@ -100,8 +102,12 @@ type Truth = { pre: string; answer?: TruthCard; post?: string; done?: boolean };
 interface Pass {
   readonly from: number;
   readonly upto: number;
+  /** Хеш выжимки при открытии прохода; null — файла ещё нет. */
+  readonly summaryHash?: string | null;
   /** Ответы A по частям дня; выжимка — из последнего. */
   a?: DayAnswer[];
+  /** Частичный A отдельно: читатель 0.5.5 видит только полный pass.a. */
+  progress?: { inputHash: string; answers: DayAnswer[] };
   /** Имя новой Card → путь: пишется до создания файла, повтор берёт ту же Card. */
   created: Record<string, string>;
   applied?: boolean;
@@ -115,10 +121,11 @@ interface DayCache {
   prefixHash: string;
   touched: string[];
   core: Candidate[];
-  coreDone?: boolean;
   /** Факты неписуемых Card: дописываются, когда Card поправили. */
   pending?: Record<string, string[]>;
   pass?: Pass;
+  /** Хеш последней выжимки, записанной ночью; сохраняется и после закрытия дня. */
+  writtenSummaryHash?: string;
   completedAt?: string;
 }
 
@@ -137,7 +144,11 @@ function readCache(date: string): DayCache | null {
   try {
     const value = JSON.parse(readFileSync(file, "utf8")) as DayCache | null;
     const valid = value?.v === 1 && value.date === date;
-    if (valid && Number.isSafeInteger(value.through)) return value;
+    if (valid && Number.isSafeInteger(value.through)) {
+      // 0.5.6 оставлял применённых кандидатов рядом с отдельным флагом.
+      const { coreDone, ...cache } = value as DayCache & { coreDone?: boolean };
+      return { ...cache, core: coreDone ? [] : cache.core };
+    }
   } catch (error) {
     throw new Error(`${broken}: ${String(error)}`, { cause: error });
   }
@@ -253,14 +264,17 @@ async function applyCachePending(cache: DayCache): Promise<void> {
       ]);
       continue;
     }
-    writeAtomic(
-      found.file,
-      fm.renderCardDocument(
-        found.parsed,
-        found.fields,
-        withFacts(found.body, rows),
-      ),
+    const next = fm.renderCardDocument(
+      found.parsed,
+      found.fields,
+      withFacts(found.body, rows),
     );
+    if (readIf(found.file) !== found.raw) {
+      deferred.add(cache.date);
+      jobs.push(`${card}: Card changed after read; pending facts stay cached`);
+      continue;
+    }
+    writeAtomic(found.file, next);
     if (!(await commit(`${card}: pending facts`, [found.file])))
       throw new Error(`${card}: отложенные факты не закоммичены`);
     delete cache.pending![card];
@@ -346,9 +360,16 @@ function usable(raw: DayAnswer, entries: DayEntry[], cards: Card[]) {
   const keep = <T extends Item>(
     items: T[],
     ok: (item: T) => boolean = () => true,
+    ownerOnly = false,
   ) =>
     items.flatMap((item) => {
-      const found = { ...item, src: item.src.filter((id) => byId.has(id)) };
+      const found = {
+        ...item,
+        src: item.src.filter(
+          (id) =>
+            byId.has(id) && (!ownerOnly || byId.get(id)?.origin === "owner"),
+        ),
+      };
       if (found.src.length > 0 && ok(found)) return [found];
       jobs.push(`отброшено: ${JSON.stringify(item)}`);
       return [];
@@ -368,7 +389,7 @@ function usable(raw: DayAnswer, entries: DayEntry[], cards: Card[]) {
       (a) => names.has(a.card) && said(a.src, a.alias) !== undefined,
     ),
     links: keep(answer.links, (l) => names.has(l.a) && names.has(l.b)),
-    core: keep(answer.core),
+    core: keep(answer.core, undefined, true),
   };
 }
 
@@ -380,13 +401,23 @@ function summarized(answer: DayAnswer): void {
 
 /** A по частям дня; часть видит выжимку предыдущих и пишет выжимку всего дня. */
 async function askDay(
-  date: string,
+  cache: DayCache,
   day: DayEntry[],
   cards: Card[],
   context: string[],
 ) {
-  const answers: DayAnswer[] = [];
-  for (const entries of input.splitEntries(day, limits.PART_SIZE)) {
+  const { date, pass } = { date: cache.date, pass: cache.pass! };
+  const inputHash = input.canonicalHash(day);
+  pass.progress ??= { inputHash, answers: [] };
+  if (pass.progress.inputHash !== inputHash)
+    throw new OwnerEditConflict(
+      `день ${date} изменён во время разбора; прогресс сохранён, день ждёт восстановления входа`,
+    );
+  const answers = pass.progress.answers;
+  const remaining = input
+    .splitEntries(day, limits.PART_SIZE)
+    .slice(answers.length);
+  for (const entries of remaining) {
     const text = [...entries.map((entry) => entry.text), ...context].join("\n");
     const known = knownFor(cards, text, date);
     const earlier_parts = answers.map((answer) => answer.gist);
@@ -397,6 +428,7 @@ async function askDay(
       summarized((kept = usable(raw, day, cards)));
     await call.callBySchema({ ...ask, validate });
     answers.push(kept);
+    writeCache(cache);
   }
   return answers;
 }
@@ -419,6 +451,9 @@ type Draft = {
   before: string;
   parsed: fm.ParsedFrontmatter;
 };
+
+class OwnerEditConflict extends Error {}
+const deferred = new Set<string>();
 
 /** Card дня в памяти до записи: читается раз, пишется одним коммитом шага. */
 class Day {
@@ -448,7 +483,12 @@ class Day {
         : "";
       if (!draft || next === draft.before) return [];
       mkdirSync(dirname(draft.file), { recursive: true });
+      if ((readIf(draft.file) ?? "") !== draft.before)
+        throw new OwnerEditConflict(
+          `${draft.file}: Card changed after read; cached facts wait for the next night`,
+        );
       writeAtomic(draft.file, next);
+      draft.before = next;
       return [draft.file];
     });
   }
@@ -711,7 +751,10 @@ function applyTruthCard(run: TruthRun, card: string, entry: Truth) {
   entry.post = textHash(next);
   run.save();
   if (next === current!.raw) return null;
-  writeAtomic(current!.file, next);
+  const latest = readCard(card);
+  if (!latest || textHash(latest.raw) !== hash)
+    return giveUp(run, card, entry, latest);
+  writeAtomic(latest.file, next);
   return current!.file;
 }
 
@@ -731,14 +774,15 @@ function giveUp(
   delete entry.answer;
   entry.done = true;
   run.save();
-  const pending = str(current?.fields, "truth_pending");
-  if (!current || (pending && pending <= run.date)) return null;
-  const fields = { ...current.fields, truth_pending: run.date };
+  const latest = readCard(card);
+  const pending = str(latest?.fields, "truth_pending");
+  if (!latest || (pending && pending <= run.date)) return null;
+  const fields = { ...latest.fields, truth_pending: run.date };
   writeAtomic(
-    current.file,
-    fm.renderCardDocument(current.parsed, fields, current.body),
+    latest.file,
+    fm.renderCardDocument(latest.parsed, fields, latest.body),
   );
-  return current.file;
+  return latest.file;
 }
 
 /** B, затем CAS и запись под замком дневных писателей. */
@@ -806,19 +850,39 @@ function summaryOf(cache: DayCache, entries: DayEntry[], raw: string): string {
     description: last?.gist || `Нет своих реплик за ${date}`,
     topics,
     tags: topics.length ? topics : ["daily"],
-    source: "night",
     input_hash: input.stepHash("A", call.nightModelName, skill("day"), inputs),
-    through: String(pass.upto),
   };
   const text = [...body, ...listed, ...attached, ""].join("\n");
   return input.summaryText(fields, text);
 }
 
-async function finishDay(cache: DayCache, entries: DayEntry[], raw: string) {
+async function finishDay(
+  cache: DayCache,
+  entries: DayEntry[],
+  raw: string,
+  expectedSummary: string | null,
+) {
   const { date, pass } = { date: cache.date, pass: cache.pass! };
   const [summary, daily] = [summaryFile(date), dailyFile(date)];
   mkdirSync(dirname(summary), { recursive: true });
-  writeAtomic(summary, summaryOf(cache, entries, raw));
+  const nextSummary = summaryOf(cache, entries, raw);
+  const currentSummary = readIf(summary);
+  // Сверяем с опубликованной выжимкой, даже если вход или модель ночи сменились.
+  if (
+    currentSummary !== nextSummary &&
+    (summaryHashOf(currentSummary) !==
+      (cache.writtenSummaryHash ?? expectedSummary) ||
+      (cache.writtenSummaryHash === undefined &&
+        currentSummary !== null &&
+        (cache.completedAt !== undefined ||
+          input.summaryEdited(currentSummary))))
+  )
+    throw new OwnerEditConflict(
+      `выжимка ${date} изменена вручную; день ждёт владельца: верни выжимку или выполни iva jobs skip memory-night ${date}`,
+    );
+  writeAtomic(summary, nextSummary);
+  cache.writtenSummaryHash = textHash(nextSummary);
+  writeCache(cache);
   // Совместимая отметка конца дня: старая ночь после отката не переразбирает день.
   const shim = `\n<!-- processed: memory-night ${date} -->\n`;
   if (!input.markedDone(readFileSync(daily, "utf8")))
@@ -832,7 +896,6 @@ async function finishDay(cache: DayCache, entries: DayEntry[], raw: string) {
       const id = `${date}:${pass.from}:${index + 1}`;
       const source = `[[daily/${date}]] ${time.get(item.src[0])}`;
       cache.core.push({ id, text: item.text, source });
-      cache.coreDone = false;
     });
   cache.through = pass.upto;
   cache.prefixHash = input.prefixHash(entries, pass.upto);
@@ -844,7 +907,11 @@ async function finishDay(cache: DayCache, entries: DayEntry[], raw: string) {
 }
 
 // ── День целиком ─────────────────────────────────────────────────────────────────────
-function openPass(date: string, entries: DayEntry[]): DayCache | null {
+function openPass(
+  date: string,
+  entries: DayEntry[],
+  summaryHash: string | null,
+): DayCache | null {
   const cache = readCache(date);
   if (cache?.pass) return cache;
   if (cache && entries.length <= cache.through) return null;
@@ -853,9 +920,8 @@ function openPass(date: string, entries: DayEntry[]): DayCache | null {
     prefixHash: input.prefixHash(entries, 0),
   };
   const from = base.through;
-  const pass = { from, upto: entries.length, created: {}, b: {} };
-  const core = base.coreDone ? [] : base.core;
-  const next: DayCache = { ...base, core, coreDone: undefined, pass };
+  const pass = { from, upto: entries.length, summaryHash, created: {}, b: {} };
+  const next: DayCache = { ...base, pass };
   // Кэш пишется до вызова: не пишется — вызова нет (иначе обрыв дал бы второй вызов).
   writeCache(next);
   return next;
@@ -868,6 +934,9 @@ function fail(row: string): false {
 
 const readIf = (file: string) =>
   existsSync(file) ? readFileSync(file, "utf8") : null;
+
+const summaryHashOf = (summary: string | null) =>
+  summary === null ? null : textHash(summary);
 
 function gistOf(date: string): string {
   const text = readIf(summaryFile(date));
@@ -882,23 +951,26 @@ function gistOf(date: string): string {
 async function askPass(cache: DayCache, entries: DayEntry[]) {
   const pass = cache.pass!;
   const part = entries.slice(pass.from, pass.upto);
-  if (!part.some((entry) => entry.origin === "owner")) return [];
+  if (!pass.progress && !part.some((entry) => entry.origin === "owner"))
+    return [];
   const cards = readCards();
   const seen = cards.filter((card) => cache.touched.includes(card.card));
   const context = [
     pass.from ? gistOf(cache.date) : "",
     ...seen.map((c) => c.name),
   ];
-  return await askDay(cache.date, part, cards, context);
+  return await askDay(cache, part, cards, context);
 }
 
 async function processDay(date: string): Promise<boolean> {
   const raw = readIf(dailyFile(date));
   if (raw === null) return !fail(`${date}: нет данных`);
+  const summaryHash = summaryHashOf(readIf(summaryFile(date)));
   const entries = input.parseDay(raw);
-  const cache = openPass(date, entries);
+  const cache = openPass(date, entries, summaryHash);
   if (!cache?.pass) return true;
   cache.pass.a ??= await askPass(cache, entries);
+  delete cache.pass.progress;
   writeCache(cache);
   const cards = () => applyCards(cache, entries);
   if (!cache.pass.applied && !(await underCardLock(cards)))
@@ -908,7 +980,9 @@ async function processDay(date: string): Promise<boolean> {
   const save = () => writeCache(cache);
   if (!(await applyTruth({ date, pass: cache.pass, save })))
     return fail(`${date}: правда не закоммичена`);
-  if (await finishDay(cache, entries, raw)) return true;
+  const expectedSummary =
+    cache.pass.summaryHash === undefined ? summaryHash : cache.pass.summaryHash;
+  if (await finishDay(cache, entries, raw, expectedSummary)) return true;
   return fail(`${date}: выжимка не закоммичена`);
 }
 
@@ -918,6 +992,8 @@ function dayTodo(date: string): boolean {
   const raw = readFileSync(dailyFile(date), "utf8");
   const cache = readCache(date);
   const entries = input.parseDay(raw);
+  if (/<!-- processed: skipped by owner\b[^\r\n]*-->\s*$/u.test(raw))
+    return false;
   if (cache?.pass) return true;
   if (cache && input.prefixHash(entries, cache.through) !== cache.prefixHash)
     return fail(
@@ -925,7 +1001,9 @@ function dayTodo(date: string): boolean {
     );
   const summary = readIf(summaryFile(date));
   if (summary !== null && input.summaryEdited(summary))
-    return fail(`выжимка ${date} изменена вручную; день не разбирается`);
+    return fail(
+      `выжимка ${date} изменена вручную; день не разбирается: верни body_hash или выполни iva jobs skip memory-night ${date}`,
+    );
   if (cache) return entries.length > cache.through;
   return summary === null && !input.markedDone(raw);
 }
@@ -1011,7 +1089,7 @@ async function askCore(before: string, candidates: Candidate[]) {
 const coreWaiting = () =>
   cacheDates()
     .flatMap((date) => readCache(date) ?? [])
-    .filter((cache) => !cache.pass && !cache.coreDone && cache.core.length);
+    .filter((cache) => !cache.pass && cache.core.length);
 
 async function runCore(lastDay: string | undefined): Promise<void> {
   const waiting = coreWaiting();
@@ -1021,7 +1099,7 @@ async function runCore(lastDay: string | undefined): Promise<void> {
   const asked = candidates.length ? await askCore(base, candidates) : null;
   const written = await writeNightCore(before, asked ?? base, lastDay);
   if (!written || asked === null) return;
-  for (const cache of waiting) writeCache({ ...cache, coreDone: true });
+  for (const cache of waiting) writeCache({ ...cache, core: [] });
 }
 
 /** CORE ночи с указателем «Последний день»; пустой шаблон без правок не создаётся. */
@@ -1126,8 +1204,8 @@ async function alertsAtEnd(today: string, left: string[], fallbacks: string[]) {
     [
       "night-tail",
       old.length,
-      `The night queue holds days older than 7 days: ${old.join(", ")}. Check iva jobs.`,
-      `Очередь ночи старше 7 дней: ${old.join(", ")}. Проверь iva jobs.`,
+      `The night queue holds days older than 7 days: ${old.join(", ")}. Check iva jobs. To release a day, run iva jobs skip memory-night <date> or restore its summary.`,
+      `Очередь ночи старше 7 дней: ${old.join(", ")}. Проверь iva jobs. Чтобы освободить день, выполни iva jobs skip memory-night <дата> или верни выжимку.`,
     ],
     [
       "night-transcript",
@@ -1144,8 +1222,7 @@ function cleanupCaches(): void {
   for (const cache of cacheDates().flatMap((date) => readCache(date) ?? [])) {
     const age = Date.now() - Date.parse(cache.completedAt ?? "");
     const pending = Object.keys(cache.pending ?? {}).length;
-    const waiting =
-      cache.pass || pending || (cache.core.length && !cache.coreDone);
+    const waiting = cache.pass || pending || cache.core.length;
     if (waiting || !(age >= limits.CACHE_DAYS * DAY_MS)) continue;
     try {
       rmSync(cacheFile(cache.date));
@@ -1155,25 +1232,49 @@ function cleanupCaches(): void {
   }
 }
 
+const attemptDay = (date: string, reason: attempts.AttemptReason) =>
+  attempts.addAttempt(ATTEMPTS, date, reason, new Date().toISOString());
+
+async function processDayWithAttempts(date: string): Promise<boolean> {
+  for (let reconnect = 0; ; reconnect++) {
+    try {
+      const complete = await processDay(date);
+      if (!complete) attemptDay(date, "day-unfinished");
+      return complete;
+    } catch (error) {
+      if (!(error instanceof call.NightTransientError)) throw error;
+      const delay = [5_000, 30_000, 120_000][Math.min(reconnect, 2)];
+      jobs.push(
+        `${date}: связь с моделью оборвалась; продолжаю через ${delay / 1_000} с`,
+      );
+      await pause(delay, undefined, { signal });
+    }
+  }
+}
+
 async function runDays(dates: readonly string[]) {
   const done: string[] = [];
-  const attempt = (date: string, reason: attempts.AttemptReason) =>
-    attempts.addAttempt(ATTEMPTS, date, reason, new Date().toISOString());
-  for (const date of dates)
+  let code = 0;
+  for (const date of dates.filter((date) => !deferred.has(date))) {
     try {
-      if (!(await processDay(date)))
-        return { done, code: 1, stop: attempt(date, "day-unfinished") };
+      if (!(await processDayWithAttempts(date))) return { done, code: 1 };
       done.push(date);
     } catch (error) {
+      if (error instanceof OwnerEditConflict) {
+        jobs.push(`${date}: ${error.message}`);
+        continue;
+      }
       if (error instanceof call.NightCeilingError) {
         console.error(`memory-night: обрез пределом ночи на ${date}`);
-        return { done, code: 1, stop: attempt(date, "cut") };
+        return { done, code: 1 };
       }
       if (!(error instanceof call.NightSchemaError)) throw error;
-      attempt(date, "no-report");
+      code = 1;
+      attemptDay(date, "no-report");
       jobs.push(`${date}: ответ A не по форме после повтора: ${error.message}`);
     }
-  return { done, code: done.length === dates.length ? 0 : 1 };
+  }
+  return { done, code };
 }
 
 async function night(manual: string | undefined): Promise<number> {
@@ -1234,6 +1335,13 @@ async function night(manual: string | undefined): Promise<number> {
   return code;
 }
 
+function reportModelAuthSuccess(): void {
+  if (call?.modelSuccessAt !== undefined)
+    console.error(
+      modelAuthSuccessLine(modelAuthProvider(), call.modelSuccessAt),
+    );
+}
+
 async function main(): Promise<number> {
   const manual = process.argv[2];
   const date = /^\d{4}-\d{2}-\d{2}$/u.test(manual ?? "") ? manual : "";
@@ -1255,6 +1363,7 @@ async function main(): Promise<number> {
   } finally {
     clearTimeout(timer);
     for (const row of jobs) console.error(`memory-night: ${row}`);
+    reportModelAuthSuccess();
   }
 }
 

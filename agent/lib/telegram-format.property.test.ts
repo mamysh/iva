@@ -23,6 +23,73 @@ import {
 const SEED = 20_260_818;
 const RUNS = 500;
 
+await test("link URLs preserve Markdown punctuation and balanced parentheses (seed 2881014)", () => {
+  const piece = fc.string({
+    unit: fc.constantFrom(..."abc_*,~"),
+    maxLength: 16,
+  });
+  const segment = fc.oneof(
+    piece,
+    piece.map((text) => `(${text})`),
+    piece.map((text) => `((a)${text})`),
+  );
+  fc.assert(
+    fc.property(fc.array(segment, { minLength: 1, maxLength: 8 }), (parts) => {
+      const url = `https://x.test/a_${parts.join("")}_*~~`;
+      const markdown = `_до_ [**ссылка**](${url}) [вторая](${url}) *после*`;
+      assert.equal(
+        mdToTelegramHtml(markdown),
+        `<i>до</i> <a href="${url}"><b>ссылка</b></a> <a href="${url}">вторая</a> <i>после</i>`,
+      );
+    }),
+    { seed: 2881014, numRuns: RUNS },
+  );
+});
+
+await test("link URLs with unmatched parentheses remain safe anchors (seed 501015)", () => {
+  const part = fc.string({
+    unit: fc.constantFrom(...'abc_/&<>"*~', "я", "😀"),
+    maxLength: 40,
+  });
+  const escape = (text: string) =>
+    text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  fc.assert(
+    fc.property(
+      part,
+      part,
+      fc.integer({ min: 1, max: 5 }),
+      (before, after, depth) => {
+        const url = `https://x.test/${before}${"(".repeat(depth)}${after}`;
+        const html = mdToTelegramHtml(`[q](${url})`);
+        assert.equal(html, `<a href="${escape(url)}">q</a>`);
+        assert.equal((html.match(/<a\b/g) ?? []).length, 1);
+        assert.equal((html.match(/<\/a>/g) ?? []).length, 1);
+      },
+    ),
+    { seed: 501015, numRuns: RUNS },
+  );
+});
+
+await test("arbitrary URL punctuation keeps balanced anchors and safe hrefs (seed 501016)", () => {
+  const url = fc.string({
+    unit: fc.constantFrom(...'abc_:/?#[]@!$&\x27()*+,;=%~"<>', "я", "😀"),
+    maxLength: 120,
+  });
+  fc.assert(
+    fc.property(url, (tail) => {
+      const html = mdToTelegramHtml(`[q](https://x.test/${tail})`);
+      assert.match(html, /^<a href="https:\/\/x\.test\/[^"<>]*">q<\/a>/);
+      assert.equal((html.match(/<a\b/g) ?? []).length, 1);
+      assert.equal((html.match(/<\/a>/g) ?? []).length, 1);
+    }),
+    { seed: 501016, numRuns: RUNS },
+  );
+});
+
 // Алфавит прозы: буквы, цифры и пробелы пачками по 1–4 — ровно то, из чего
 // складывалась прежняя метка. Управляющих символов разметки в нём нет, поэтому строка
 // гарантированно идёт по ветке обычной строки в convert(): ни фенсом, ни таблицей, ни

@@ -58,11 +58,12 @@ export interface ModelProviderSelection {
 export const MODEL_PROVIDERS = {
   ollama: {
     modelVar: "OLLAMA_MODEL",
+    defaultHelperModel: null,
     defaultModel: "deepseek-v4-pro",
     compatibleReasoning: true,
-    // Рассуждение прошлых шагов обратно не шлём, как и у остальных OpenAI-совместимых:
-    // вернулось бы полем reasoning_content, а принимает ли его бэкенд, живьём не доказано.
-    replaysReasoning: false,
+    // 15.10.2026, Ollama Cloud: deepseek-v4-pro/v4.1-flash принимают reasoning_content
+    // после инструмента (200 с полем и без); ответное reasoning SDK возвращает этим полем.
+    replaysReasoning: true,
     toolNameMax: TOOL_NAME_MAX,
     // Дешёвая мультимодалка того же провайдера (проверено на проде: принимает image_url,
     // http 200). Ollama Cloud снимает теги с раздачи: gemma3:12b отвечает
@@ -74,9 +75,12 @@ export const MODEL_PROVIDERS = {
   },
   opencode: {
     modelVar: "OPENCODE_MODEL",
+    defaultHelperModel: null,
     defaultModel: "deepseek-v4-pro",
     compatibleReasoning: true,
-    replaysReasoning: false,
+    // 15.10.2026, Go chat/completions: все 16 проверенных моделей принимают возврат (200).
+    // DeepSeek в thinking mode требует его (#296); Responses исключён в provider.ts.
+    replaysReasoning: true,
     toolNameMax: TOOL_NAME_MAX,
     // Живая проверка 2026-08-18, картинка через POST /chat/completions: qwen3.7-plus
     // отвечает 200 и кладёт в message.content чистое описание с OCR (4-6 с) — он и дефолт.
@@ -90,6 +94,7 @@ export const MODEL_PROVIDERS = {
   },
   codex: {
     modelVar: "CODEX_MODEL",
+    defaultHelperModel: null,
     defaultModel: "gpt-5.5",
     compatibleReasoning: false,
     // Бэкенд подписки принимает рассуждение прошлых шагов обратно (reasoning-item с
@@ -108,6 +113,7 @@ export const MODEL_PROVIDERS = {
     // (scripts/lib/model-catalog.ts просит его рукопожатием CLI), поэтому здесь кандидаты, а
     // не единственно верное имя: fable, opus, sonnet, Haiku 5.5 — 1M контекста, Haiku 4.5 — 200k.
     modelVar: "CLAUDE_MODEL",
+    defaultHelperModel: "claude-sonnet-5-5",
     defaultModel: "claude-fable-5-1",
     compatibleReasoning: false,
     // Подписка отвергает рассуждение без подписи, а сборка промпта CLI его и так пропускает.
@@ -122,8 +128,10 @@ export const MODEL_PROVIDERS = {
     // Слаг модели вида vendor/model (напр. anthropic/claude-sonnet-5.5) — задаётся мастером.
     // Дефолт — лишь заглушка на случай ручного .env; мастер всегда перезапишет живой проверкой.
     modelVar: "OPENROUTER_MODEL",
+    defaultHelperModel: null,
     defaultModel: "openai/gpt-5.1",
     compatibleReasoning: false,
+    // Приём reasoning_content на OpenRouter живьём ещё не проверен, 15.10.2026.
     replaysReasoning: false,
     toolNameMax: TOOL_NAME_MAX,
     // Дешёвая гарантированно-мультимодальная модель для картинок: vision работает независимо
@@ -138,10 +146,13 @@ export const MODEL_PROVIDERS = {
     modelVar: "CUSTOM_MODEL",
     // Дефолту взяться неоткуда: что за модели у чужого эндпоинта, знает только его владелец.
     // null — «обязательна»: пустая переменная валит старт, а не подставляет чужое имя.
+    defaultHelperModel: null,
     defaultModel: null,
     // reasoning_effort незнакомому эндпоинту не шлём: OpenAI-совместимость этого поля не
     // обещает, а лишний параметр — HTTP 400 на каждом ходу.
     compatibleReasoning: false,
+    // 15.10.2026: возврат custom ждёт пробы эндпоинта, который реально отдаёт рассуждение
+    // и принимает reasoning_content; проба Meta проверила лишь приём лишнего поля.
     replaysReasoning: false,
     toolNameMax: TOOL_NAME_MAX,
     // Vision-модель необязательна: с 0.3.34 картинку сначала предлагают самой модели чата
@@ -154,10 +165,11 @@ export const MODEL_PROVIDERS = {
   {
     modelVar: string;
     // null = обязательная переменная: у провайдера нет модели, которую можно подставить молча.
+    defaultHelperModel: string | null;
     defaultModel: string | null;
     compatibleReasoning: boolean;
-    // Рассуждение прошлых шагов возвращается модели в истории хода. false — вырезается и из
-    // вывода, и из промпта: вендор его не принимает или это не доказано живьём.
+    // Рассуждение прошлых шагов возвращается модели в истории хода. У Go это только
+    // chat/completions (выбор в provider.ts); false чистит и вывод, и старую историю.
     replaysReasoning: boolean;
     // Максимальная длина имени до обращения к провайдеру; у claude зарезервирован префикс.
     toolNameMax: number;

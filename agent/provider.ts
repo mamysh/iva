@@ -2,7 +2,7 @@ import {
   resolveOpenCodeProtocol,
   type OpenCodeProtocol,
 } from "@iva/opencode-protocol";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -360,7 +360,7 @@ export const codexFetch: typeof fetch = async (input, init) => {
 // ведёт шаги одного диалога к одному кэшу, и префикс прошлого шага читается из кэша. Без
 // ключа соседние шаги попадали в кэш через раз. Без сессии ключ — ID процесса (wireSessionId).
 // wrapGenerate: бэкенд подписки принимает только stream:true, на запрос без стрима отвечает
-// 400. generateText (пересказ истории eve между ходами и страховка внутри хода, planner)
+// 400. generateText (пересказ истории eve между ходами и страховка внутри хода, declared nodes)
 // поэтому идёт стримом, ответ собирается в результат doGenerate (generateViaStream).
 // doGenerate у codex не вызывается никогда. Внутренний doStream идёт мимо
 // modelFirstChunkDeadlineMiddleware из makeTextModel, поэтому срок первой части тот же,
@@ -553,7 +553,7 @@ export function attachVaultImages(
  * Прикладывает картинки Vault к промпту. Предикат «текстовая модель видит картинки»
  * приходит параметром, а не импортом `vision.ts`: vision сам зовёт `makeTextModel()`
  * для пробника, и этот импорт замыкал цикл provider ↔ vision. Форма — как у эффектов
- * telegram-media: потребитель (agent.ts, planner, vision) отдаёт свою реализацию.
+ * telegram-media: потребитель (agent.ts, declared nodes, vision) отдаёт свою реализацию.
  */
 export type ImageCapability = () => Promise<boolean>;
 
@@ -811,18 +811,29 @@ const adjacentUserMessagesMiddleware: LanguageModelMiddleware = {
   },
 };
 
+// prettier-ignore
+const liveWireObserver = (model: string): LanguageModelMiddleware => ({
+  specificationVersion: "v4", transformParams({ params, type }) {
+    if (type === "stream") console.log("LIVE_HELPER_WIRE " + JSON.stringify({ model, tools: params.tools?.length ?? 0, hash: createHash("sha256").update(JSON.stringify(params.tools ?? [])).digest("hex"), helperBlock: params.prompt.some(m => m.role === "system" && m.content.includes("You are a background helper of Iva;")) }));
+    return Promise.resolve(params);
+  },
+});
 /**
  * Текстовая модель активного провайдера. Общая для КАЖДОГО узла графа: корень и субагенты
  * обязаны говорить с одним провайдером, свои createOpenAICompatible/env в субагентах не заводим.
  */
 export function makeTextModel(options: {
+  model?: string;
   sessionId?: string;
   chatModelSeesImages: ImageCapability;
   // Чей шаг ведёт модель: расход компактации eve уходит в usage.jsonl под этим ходом.
   usage?: UsageLabel;
 }) {
   return wrapLanguageModel({
-    model: makeBareTextModel(options.sessionId),
+    model: makeBareTextModel(
+      options.model ?? providerConfig.textModel,
+      options.sessionId,
+    ),
     middleware: [
       repeatGuardMiddleware,
       attachImagesMiddleware(options.chatModelSeesImages),
@@ -831,7 +842,12 @@ export function makeTextModel(options: {
       adjacentUserMessagesMiddleware,
       // Порядок свободен: кодирование идемпотентно, других читателей toolName в цепочке нет.
       toolNameWireMiddleware(MODEL_PROVIDERS[providerName].toolNameMax),
-      compactionUsageMiddleware(options.usage),
+      compactionUsageMiddleware(
+        options.usage,
+        options.model ?? providerConfig.textModel,
+      ),
+      // prettier-ignore
+      ...(process.env.IVA_LIVE_WIRE === "1" ? [liveWireObserver(options.model ?? providerConfig.textModel)] : []),
     ],
   });
 }
@@ -861,18 +877,17 @@ export function makeOpenCodeModel(
       })(model);
 }
 
-function makeBareTextModel(sessionId?: string) {
+function makeBareTextModel(model: string, sessionId?: string) {
   // Codex-подписка говорит на Responses API — отдельная модель-фабрика (@ai-sdk/openai).
   // Claude-подписка — тоже своя модель: рукописная LanguageModelV4 поверх Claude Code CLI
   // (stream-json), потому что API-адреса у неё нет вовсе.
   // Go выбирает провод явно; остальные API-ключи говорят chat/completions.
-  if (providerName === "codex")
-    return makeCodexModel(providerConfig.textModel, sessionId);
+  if (providerName === "codex") return makeCodexModel(model, sessionId);
   if (providerName === "claude")
-    return makeClaudeCliModel(providerConfig.textModel, { sessionId });
+    return makeClaudeCliModel(model, { sessionId });
   if (providerName === "opencode")
     return makeOpenCodeModel(
-      providerConfig.textModel,
+      model,
       providerConfig.opencodeProtocol!,
       sessionId,
     );
@@ -884,17 +899,18 @@ function makeBareTextModel(sessionId?: string) {
     // {include_usage:true}) → событие step.completed приходит без поля usage, и учёт токенов
     // (agent/hooks/usage.ts) пуст. Включаем, чтобы провайдер отдавал расход в финальном чанке.
     includeUsage: true,
-  })(providerConfig.textModel);
+  })(model);
 }
 
 // --- Рассуждение в истории хода: возвращаем там, где вендор его принимает ---------------------
 // eve хранит вывод модели в истории и реплеит его на каждом следующем шаге и ходе. Правило одно
-// на всех вендоров, решение по вендору — одна строка replaysReasoning в MODEL_PROVIDERS
-// (agent/lib/model-provider.ts):
-//  - вендор принимает рассуждение обратно (codex: reasoning-item с encrypted_content) — оно
-//    остаётся в выводе и едет в следующий запрос, модель не теряет ход мысли между шагами;
-//  - не принимает или это не доказано — рассуждение вырезается из вывода (в историю не попадает)
-//    и из промпта (история, записанная до смены вендора в той же сессии).
+// на всех вендоров: replaysReasoning в MODEL_PROVIDERS (agent/lib/model-provider.ts) и протокол
+// Go выбираются вместе в withReplayableReasoning. 15.10.2026: Go chat/completions (16 моделей),
+// Ollama Cloud (оба DeepSeek) приняли второй запрос с reasoning_content и без.
+// SDK openai-compatible сам возвращает полученное рассуждение этим полем; DeepSeek в thinking
+// mode требует возврат после инструмента (#296). Codex сохраняет encrypted_content, как прежде.
+// custom и OpenRouter ждут пробы возврата; Go Responses и Claude тоже чистят вывод
+// и промпт, включая историю, записанную до смены вендора в той же сессии.
 // Исходный дефект закрыт у всех: deepseek (openai-compatible) отдавал reasoning-часть без поля
 // `text`, а ai@7 ModelMessage-схема требует у reasoning string `text` → AI_InvalidPromptError в
 // standardizePrompt ещё до модели, и сессия отравлена навсегда (Iva молчит в треде до сброса).
@@ -923,6 +939,7 @@ function unreplayableOutput(part: StreamPart | ContentPart, replays: boolean) {
   return false;
 }
 
+// Принято: рассуждение прошлых ходов едет в запросы до свёртки, увеличивая входные токены; свёртка его вырезает.
 export function reasoningReplayMiddleware(
   replays: boolean,
 ): LanguageModelMiddleware {
@@ -971,7 +988,9 @@ export function reasoningReplayMiddleware(
 /** Оборачивает текстовую модель правилом возврата рассуждения активного вендора. */
 export function withReplayableReasoning(
   model: WrappableModel,
-  replays: boolean = MODEL_PROVIDERS[providerName].replaysReasoning,
+  replays: boolean = MODEL_PROVIDERS[providerName].replaysReasoning &&
+    (providerName !== "opencode" ||
+      providerConfig.opencodeProtocol === "chat-completions"),
 ): WrappableModel {
   return wrapLanguageModel({
     model,

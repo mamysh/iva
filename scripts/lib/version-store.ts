@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import {
   existsSync,
@@ -29,7 +30,10 @@ const LIVE_FAILURES = "live-failures.json";
 /** Enough for the versions on disk and the releases a box works through. */
 const FAILURES_KEPT = 8;
 const LOCK = "update.lock";
+const STALE_LOCK_PREFIX = `${LOCK}.stale-`;
+const STALE_LOCK_RETENTION_MS = 24 * 60 * 60 * 1000;
 const STALE_MS = 60 * 60 * 1000;
+const OWNER_PUBLICATION_MS = 5_000;
 const FLIP_PREFIX = ".current.iva-flip-";
 /** Names in `home` that only an interrupted update can leave behind. */
 const LEFTOVER = [FLIP_PREFIX, ".probe-"];
@@ -603,6 +607,18 @@ export function createVersionStore(
       rmSync(join(home, name), { recursive: true, force: true });
       stale.push(name);
     }
+    for (const entry of readdirSync(layout.data, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith(STALE_LOCK_PREFIX))
+        continue;
+      const path = join(layout.data, entry.name);
+      if (
+        Date.now() - statSync(path).mtimeMs <= STALE_LOCK_RETENTION_MS ||
+        held(path)
+      )
+        continue;
+      rmSync(path, { recursive: true, force: true });
+      stale.push(entry.name);
+    }
     return stale;
   }
 
@@ -797,11 +813,11 @@ function sameCommand(owner: LockOwner & { readonly command: string }): boolean {
 }
 
 /** Возраст замка: по времени его взятия, а если его нет - по mtime каталога. */
-function fresh(path: string, owner: LockOwner): boolean {
+function fresh(path: string, owner: LockOwner, staleMs = STALE_MS): boolean {
   const takenAt = owner.startedAt ? Date.parse(owner.startedAt) : Number.NaN;
-  if (!Number.isNaN(takenAt)) return Date.now() - takenAt < STALE_MS;
+  if (!Number.isNaN(takenAt)) return Date.now() - takenAt < staleMs;
   try {
-    return Date.now() - statSync(path).mtimeMs < STALE_MS;
+    return Date.now() - statSync(path).mtimeMs < staleMs;
   } catch {
     return true; // A lock that cannot be read is not one to walk over.
   }
@@ -861,7 +877,22 @@ export function updateRunning(dataDir: string): boolean {
   return existsSync(path) && held(path);
 }
 
-/** Serialize updates with one atomic mkdir. */
+function ownerContents(path: string): string | null {
+  try {
+    return readFileSync(join(path, "owner.json"), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+/**
+ * Serialize updates with mkdir; reclaim an abandoned owner by rename and compare.
+ * An ownerless mkdir has a short publication grace, checked again after rename.
+ * A third contender can claim the empty path before a fresh owner's directory is
+ * restored; a legacy contender still removes by path. These residual windows are
+ * witnesses in UpdateLock.tla and tracked in docs/tech-debt.md.
+ */
 export function acquireUpdateLock(dataDir: string): UpdateLock | null {
   mkdirSync(dataDir, { recursive: true });
   const path = join(dataDir, LOCK);
@@ -874,11 +905,43 @@ export function acquireUpdateLock(dataDir: string): UpdateLock | null {
   } catch (caught) {
     if ((caught as NodeJS.ErrnoException).code !== "EEXIST") throw caught;
   }
-  if (held(path)) return null;
-  rmSync(path, { recursive: true, force: true });
+  let expected: string | null;
+  try {
+    expected = ownerContents(path);
+  } catch {
+    return null;
+  }
+  if (expected === null ? fresh(path, {}, OWNER_PUBLICATION_MS) : held(path))
+    return null;
+  const stale = join(dataDir, `${STALE_LOCK_PREFIX}${randomUUID()}`);
+  try {
+    renameSync(path, stale);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  let unchanged = false;
+  try {
+    unchanged =
+      ownerContents(stale) === expected &&
+      (expected !== null || !fresh(stale, {}, OWNER_PUBLICATION_MS));
+  } catch (error) {
+    console.error(`cannot verify moved update lock ${stale}: ${String(error)}`);
+  }
+  if (!unchanged) {
+    try {
+      renameSync(stale, path);
+    } catch (error) {
+      console.error(
+        `update lock owner changed; kept ${stale}: ${String(error)}`,
+      );
+    }
+    return null;
+  }
+  rmSync(stale, { recursive: true, force: true });
   try {
     return claim();
   } catch {
-    return null; // Another retry won the race for the same abandoned lock.
+    return null;
   }
 }

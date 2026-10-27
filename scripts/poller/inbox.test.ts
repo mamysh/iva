@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import fc from "fast-check";
 import {
+  acknowledgeQueueItems,
   createQueueItem,
   enqueueItem,
-  removeQueueHead,
+  loadQueueFile,
+  quarantineQueueRecords,
+  removeQueueItems,
   type TelegramQueueDocument,
   type TelegramQueueUpdate,
 } from "../lib/telegram-queue.ts";
@@ -239,15 +249,17 @@ void test("promotion publishes the delivery item before removing raw ownership",
       events.push(`route:${candidate.update_id}`);
       return Promise.resolve("queued");
     },
-    acknowledgeImpl: (key, updateId) => {
-      events.push(`ack:${updateId}`);
-      document = removeQueueHead(document, key, updateId);
+    acknowledgeImpl: (key, updateIds) => {
+      events.push(`ack:${updateIds.join(",")}`);
+      document = removeQueueItems(document, key, updateIds).document;
       return Promise.resolve();
     },
   });
 
   assert.equal(remaining, 0);
-  assert.deepEqual(events, ["route:102", "ack:101", "ack:102"]);
+  // Пачка inbox снимается одной записью: обрыв между частями не оставит остаток
+  // с тем же update_id, который ушёл бы прямой доставкой мимо полной копии.
+  assert.deepEqual(events, ["route:102", "ack:101,102"]);
 });
 
 void test("failed promotion keeps every raw part for retry", async () => {
@@ -309,8 +321,8 @@ void test("successful inbox promotion clears prior backoff state", async () => {
       collectorOptions: { quietMs: 0 },
       loadImpl: () => Promise.resolve(document),
       routeImpl: () => Promise.resolve("delivered"),
-      acknowledgeImpl: (key, updateId) => {
-        document = removeQueueHead(document, key, updateId);
+      acknowledgeImpl: (key, updateIds) => {
+        document = removeQueueItems(document, key, updateIds).document;
         return Promise.resolve();
       },
     }),
@@ -319,8 +331,8 @@ void test("successful inbox promotion clears prior backoff state", async () => {
   assert.equal(backoff.has("1::42"), false);
 });
 
-void test("callback rejection, downstream drop, and enqueue failure all retain inbox ownership", async () => {
-  for (const result of ["rejected", "dropped", "enqueue-failed"] as const) {
+void test("callback rejection and enqueue failure retain inbox ownership", async () => {
+  for (const result of ["rejected", "enqueue-failed"] as const) {
     const document = inboxDocument(callback(101));
     let acknowledgements = 0;
     assert.equal(
@@ -352,8 +364,8 @@ void test("a terminally dropped update leaves the inbox instead of looping forev
       routed.push(candidate.update_id);
       return Promise.resolve("terminal-drop");
     },
-    acknowledgeImpl: (key, updateId) => {
-      document = removeQueueHead(document, key, updateId);
+    acknowledgeImpl: (key, updateIds) => {
+      document = removeQueueItems(document, key, updateIds).document;
       return Promise.resolve();
     },
   });
@@ -408,8 +420,8 @@ void test("property: terminal results never loop while transient results never l
               if (verdict === "delivered") deliveries.push(candidate.update_id);
               return Promise.resolve(verdict);
             },
-            acknowledgeImpl: (key, updateId) => {
-              document = removeQueueHead(document, key, updateId);
+            acknowledgeImpl: (key, updateIds) => {
+              document = removeQueueItems(document, key, updateIds).document;
               return Promise.resolve();
             },
           });
@@ -724,4 +736,106 @@ void test("the drop line prints at most twelve field names", () => {
 
   assert.equal(keys.length, 12);
   assert.deepEqual(keys, [...keys].sort());
+});
+
+// 16.10.2026: одна плохая запись входящих роняла мост, а на старте падала снова — приём
+// вставал по кругу падений. Теперь она уходит в карантин, остальные доставляются.
+for (const [name, damaged] of [
+  ["a record the loader rejects", { version: 1, updateId: "202" }],
+  [
+    "a record the inbox cannot deliver",
+    {
+      version: 1,
+      updateId: 202,
+      enqueuedAt: 0,
+      update: {
+        ...update(202, "x"),
+        message: { ...update(202, "x").message, text: 42 },
+      },
+    },
+  ],
+] as const)
+  void test(`inbox promotion quarantines ${name} and delivers the rest`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "iva-inbox-damaged-"));
+    try {
+      const file = join(dir, "telegram-inbox.json");
+      const good = update(203, "hello");
+      const key = inboxKeyFor(good);
+      assert.ok(key);
+      writeFileSync(
+        file,
+        JSON.stringify({
+          version: 1,
+          queues: { [key]: [damaged, createQueueItem(good, 0)] },
+        }),
+      );
+      const logs: unknown[][] = [];
+      const logImpl = (...parts: unknown[]) => logs.push(parts);
+      const routed: number[] = [];
+      const remaining = await promoteReadyInbox({
+        backoff: promotionBackoff(),
+        now: () => 1_000,
+        collectorOptions: { quietMs: 800 },
+        loadImpl: async () =>
+          (await loadQueueFile(file, { strict: true, logImpl })).document,
+        routeImpl: (candidate) => {
+          routed.push(candidate.update_id);
+          return Promise.resolve("queued");
+        },
+        acknowledgeImpl: (ackKey, ids) =>
+          acknowledgeQueueItems(file, ackKey, ids, { strict: true }),
+        quarantineImpl: (records) =>
+          quarantineQueueRecords(file, records, { logImpl }),
+      });
+
+      assert.equal(remaining, 0);
+      assert.deepEqual(routed, [203]);
+      assert.deepEqual(
+        (JSON.parse(readFileSync(file, "utf8")) as TelegramQueueDocument)
+          .queues,
+        {},
+      );
+      const copies = readdirSync(dir).filter((entry) =>
+        entry.startsWith("telegram-inbox.json.damaged-"),
+      );
+      assert.equal(copies.length, 1);
+      assert.deepEqual(
+        (
+          JSON.parse(readFileSync(join(dir, copies[0]), "utf8")) as {
+            record: unknown;
+          }
+        ).record,
+        damaged,
+      );
+      assert.equal(logs.length, 1);
+      assert.equal(JSON.stringify(logs).includes("hello"), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+void test("POISON dropped routing result is acknowledged once and the next inbox item proceeds", async () => {
+  let document = inboxDocument(update(101, "dropped"));
+  const routed: number[] = [];
+  const options = {
+    backoff: promotionBackoff(),
+    now: () => 1000,
+    collectorOptions: { quietMs: 800 },
+    loadImpl: () => Promise.resolve(document),
+    routeImpl: (candidate: TelegramQueueUpdate) => {
+      routed.push(candidate.update_id);
+      return Promise.resolve("dropped" as const);
+    },
+    acknowledgeImpl: (key: string, ids: readonly number[]) => {
+      document = removeQueueItems(document, key, ids).document;
+      return Promise.resolve();
+    },
+  };
+  assert.equal(await promoteReadyInbox(options), 0);
+  assert.deepEqual(document.queues, {});
+  assert.equal(await promoteReadyInbox(options), 0);
+  assert.deepEqual(routed, [101]);
+  document = inboxDocument(update(102, "next"));
+  assert.equal(await promoteReadyInbox(options), 0);
+  assert.deepEqual(routed, [101, 102]);
 });

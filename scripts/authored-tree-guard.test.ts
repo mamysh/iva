@@ -12,10 +12,12 @@
 // each side is deliberately self-contained and a test pins the copies together, the way
 // `usage` shares only its log path (docs/tech-debt.md §3).
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 import { RUNTIME_SOURCE_TREES } from "./lib/custom-layer.ts";
 
@@ -104,12 +106,14 @@ function productionTypeScriptFiles(tree: string): string[] {
     })) {
       const relativePath = posix.join(relativeDirectory, entry.name);
       if (entry.isDirectory()) visit(relativePath);
-      // Tests are not shipped in the bundle eve rebuilds, so they cannot drag `scripts/`
-      // into it; the guard judges the production surface only.
+      // Tests and their fixtures (`*.test-fixture.ts`, imported by tests only) are not shipped
+      // in the bundle eve rebuilds, so they cannot drag `scripts/` into it; the guard judges
+      // the production surface only.
       else if (
         entry.isFile() &&
         entry.name.endsWith(".ts") &&
-        !entry.name.endsWith(".test.ts")
+        !entry.name.endsWith(".test.ts") &&
+        !entry.name.endsWith(".test-fixture.ts")
       )
         files.push(relativePath);
     }
@@ -149,7 +153,9 @@ test("the authored tree has only its explicit shared-package edges", () => {
       "agent/lib/context-window.ts -> ../../packages/context-window/index.ts",
       "agent/lib/data-dir.ts -> ../../packages/data-dir/index.ts",
       "agent/lib/job-facts.ts -> ../../packages/secret-redaction/index.ts",
+      "agent/lib/model-auth-alert.ts -> ../../packages/alert-state/index.ts",
       "agent/lib/model-provider.ts -> @iva/opencode-protocol",
+      "agent/lib/security-gate.ts -> ../../packages/secret-redaction/index.ts",
       "agent/lib/telegram-media-cache.ts -> @iva/vault-dir",
       "agent/lib/telegram-media.ts -> @iva/vault-dir",
       "agent/lib/telegram-turn-start.ts -> @iva/vault-dir",
@@ -159,6 +165,7 @@ test("the authored tree has only its explicit shared-package edges", () => {
       "agent/lib/vault-file-search.ts -> @iva/vault-dir",
       "agent/provider.ts -> @iva/opencode-protocol",
       "agent/tools/memory_search.ts -> @iva/vault-dir",
+      "agent/tools/send_file.ts -> ../../packages/secret-redaction/index.ts",
       "agent/tools/write_card.ts -> @iva/vault-dir",
       "agent/tools/write_file.ts -> @iva/vault-dir",
     ],
@@ -214,6 +221,60 @@ test("the cross-tree scan reads the edges it judges", () => {
   // Both halves are pinned: a scan that stopped matching would pass the guard above
   // vacuously, and a new tree in the topology has to be seen by a human.
   assert.deepEqual(treesTheRuntimeImports(), ["agent", "packages"]);
+});
+
+// eve bundles every authored module as one chunk (`buildSingleRolldownChunk` in
+// node_modules/eve/dist/src/internal/authored-module-loader.js, code splitting off), and a
+// dynamic `import()` in the authored tree does not survive it: 49c69eb3 put one inside the
+// status module, and `eve build` failed with "Failed to evaluate authored module" on the
+// Telegram channel. scripts/ keeps its dynamic imports — eve does not bundle it. Read by
+// the TypeScript parser rather than a regex: a type-position `import("…")` (`typeof
+// import("node:sqlite")`, `import("node:sqlite").DatabaseSync`) is erased and stays allowed,
+// and an `import()` named in a comment or a string is not code.
+function dynamicImports(file: string, source: string): string[] {
+  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest);
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      const { line } = tree.getLineAndCharacterOfPosition(node.getStart(tree));
+      found.push(`${file}:${line + 1}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  return found;
+}
+
+test("the authored tree has no dynamic import()", () => {
+  assert.deepEqual(
+    productionTypeScriptFiles("agent").flatMap((file) =>
+      dynamicImports(file, readFileSync(join(ROOT, file), "utf8")),
+    ),
+    [],
+    "eve bundles every authored module as one chunk, so a dynamic import() in agent/ breaks `eve build` (Failed to evaluate authored module) — import the module statically; a process that must load without it gets its own module without that import",
+  );
+});
+
+test("the dynamic import() scan sees value imports and lets erased type imports pass", () => {
+  // Both halves are pinned: a scan that stopped seeing import() would pass the guard above
+  // vacuously. The first line is statusPhrase as 49c69eb3 wrote it.
+  assert.deepEqual(
+    dynamicImports(
+      "probe.ts",
+      [
+        'const { redactNotice } = await import("./outbox.ts");',
+        'const later = () => import("#lib/outbox.ts");',
+        'type Sqlite = typeof import("node:sqlite");',
+        'let db: import("node:sqlite").DatabaseSync;',
+        '// await import("./outbox.ts") named in a comment',
+        "const prose = \"await import('./outbox.ts')\";",
+      ].join("\n"),
+    ),
+    ["probe.ts:1", "probe.ts:2"],
+  );
 });
 
 // Only `from "..."` clauses: a dynamic import() is exactly the escape hatch a CLI module
@@ -391,4 +452,35 @@ test("a missing @iva package is a named error, not a silent null", () => {
     () => targetOf("@iva/несуществующий", "agent/agent.ts"),
     /@iva\/несуществующий/u,
   );
+});
+
+// The literal username "user" is the portable fixture, never a machine identity.
+const MACHINE_HOME =
+  /\/(?:home|Users)\/(?!user(?=[^A-Za-z0-9._-]|$))[A-Za-z][A-Za-z0-9._-]*(?=[^A-Za-z0-9._-]|$)/u;
+test("tracked product files use portable home paths", () => {
+  const tracked = execFileSync("git", ["ls-files", "-z"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  })
+    .split("\0")
+    .filter(Boolean);
+  const offenders = tracked.filter(
+    (file) =>
+      !file.startsWith("eve/") &&
+      MACHINE_HOME.test(readFileSync(join(ROOT, file), "utf8")),
+  );
+  assert.deepEqual(offenders, [], "machine home path in tracked file");
+});
+test("home-path guard catches Linux and macOS names and allows portable fixtures", () => {
+  for (const prefix of ["/home/", "/Users/"]) {
+    assert.equal(MACHINE_HOME.test(`${prefix}fixture-owner/iva`), true);
+    assert.equal(MACHINE_HOME.test(`${prefix}fixture.owner`), true);
+    assert.equal(
+      MACHINE_HOME.test(`HOME=${prefix}alice and "${prefix}bob"`),
+      true,
+    );
+    assert.equal(MACHINE_HOME.test(`${prefix}user/iva`), false);
+    assert.equal(MACHINE_HOME.test(`${prefix}user`), false);
+    assert.equal(MACHINE_HOME.test(`${prefix}username`), true);
+  }
 });

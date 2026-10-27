@@ -49,6 +49,7 @@ import {
   PortChecker,
   PortSelector,
   procProbe,
+  lsofProbe,
 } from "./ports.ts";
 import {
   acquireUpdateLock,
@@ -552,7 +553,12 @@ async function settleCustom(
 async function probeCandidate(run: UpdateRun): Promise<Health> {
   const { store, name, check, dir, log } = run;
   const scratch = store.sandboxState(name);
-  const selector = new PortSelector(new PortChecker([bindProbe, procProbe]));
+  const selector = new PortSelector(
+    new PortChecker([
+      bindProbe,
+      process.platform === "darwin" ? lsofProbe : procProbe,
+    ]),
+  );
   try {
     let from = DEFAULT_PORT + 100 + (process.pid % 100);
     for (let left = PROBE_PORTS; left > 0; left--) {
@@ -963,14 +969,12 @@ async function runPostHealthCleanup({
     !(await errand(run, log, {
       what: "the Google CLI update",
       failure: "cleanup remains pending",
-      command: "npm",
-      // Same user prefix as install.sh; never write the system npm prefix.
+      command: "bash",
+      // Reuse install.sh's pinned archive and SHA-256 check under the service user's prefix.
       args: [
-        "i",
-        "-g",
-        "--prefix",
+        join(store.layout.versions, name, "install.sh"),
+        "--update-gws",
         join(homedir(), ".local"),
-        "@googleworkspace/cli@latest",
       ],
       cwd: join(store.layout.versions, name),
     }))

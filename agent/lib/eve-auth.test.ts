@@ -4,7 +4,13 @@ import { randomBytes } from "node:crypto";
 import test, { type TestContext } from "node:test";
 import { routeAuth } from "eve/channels/auth";
 import fc from "fast-check";
-import { assistantBearerAuth, createEveAuth, TURN_KINDS } from "./eve-auth.ts";
+import {
+  assistantBearerAuth,
+  createEveAuth,
+  isHelperTurn,
+  usesHelperModel,
+  TURN_KINDS,
+} from "./eve-auth.ts";
 
 const SEED = Number(process.env.FC_SEED ?? Date.now() % 2 ** 31);
 
@@ -13,6 +19,27 @@ const request = (host: string, token?: string) =>
   new Request(`http://${host}/eve/v1/session`, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
+
+test("helper detection tolerates missing context, session, auth and attributes", () => {
+  for (const ctx of [
+    {},
+    { session: {} },
+    undefined,
+    null,
+    { session: null },
+    { session: { auth: null } },
+    { session: { auth: { initiator: null, current: null } } },
+    { session: { auth: { initiator: { authenticator: "iva-bearer" } } } },
+    {
+      session: {
+        auth: { current: { authenticator: "iva-bearer", attributes: null } },
+      },
+    },
+  ]) {
+    assert.equal(isHelperTurn(ctx), false);
+    assert.equal(usesHelperModel(ctx), false);
+  }
+});
 
 test("bearer auth accepts only the configured secret", async () => {
   const auth = assistantBearerAuth(TOKEN);
@@ -31,7 +58,7 @@ const turnRequest = (token: string, turn: string) =>
     headers: { authorization: `Bearer ${token}`, "x-iva-turn": turn },
   });
 
-test("a turn names its kind: the bearer puts each of the six kinds into the iva_turn attribute", async () => {
+test("every background kind carries its step and cumulative input ceilings", async () => {
   const auth = assistantBearerAuth(TOKEN);
   for (const turn of [
     "watch",
@@ -42,7 +69,11 @@ test("a turn names its kind: the bearer puts each of the six kinds into the iva_
     "alert",
   ]) {
     assert.deepEqual(await auth(turnRequest(TOKEN, turn)), {
-      attributes: { iva_turn: turn },
+      attributes: {
+        iva_turn: turn,
+        iva_max_steps: turn === "brief" ? "60" : "40",
+        iva_max_input_tokens: "4000000",
+      },
       authenticator: "iva-bearer",
       principalId: "iva-internal-client",
       principalType: "service",
@@ -77,10 +108,18 @@ test(`a kind outside the list gets no attribute (PBT, seed ${SEED})`, async () =
         return; // строку, которая не годится в заголовок, Headers не пропустит и так
       }
       const sent = request.headers.get("x-iva-turn") ?? "";
+      if (sent === "helper") {
+        await assert.rejects(async () => auth(request));
+        return;
+      }
       const result = await auth(request);
       assert.ok(result);
       if (TURN_KINDS.has(sent))
-        assert.deepEqual(result.attributes, { iva_turn: sent });
+        assert.deepEqual(result.attributes, {
+          iva_turn: sent,
+          iva_max_steps: sent === "brief" ? "60" : "40",
+          iva_max_input_tokens: "4000000",
+        });
       else assert.deepEqual(result.attributes, {});
     }),
     { seed: SEED, numRuns: 300 },
@@ -135,4 +174,90 @@ test("our own gate drops localDev even on a dev-server process", async (t) => {
   );
   assert.ok(result instanceof Response);
   assert.equal(result.status, 401);
+});
+
+test(`helper ids are strict and invalid requests return 401 (PBT, seed ${SEED})`, async (t) => {
+  runningEveDev(t);
+  const hex = fc.stringMatching(/^[0-9a-f]{6}$/);
+  await fc.assert(
+    fc.asyncProperty(hex, async (suffix) => {
+      const good = "h-" + suffix;
+      for (const value of [
+        good,
+        null,
+        "",
+        "h-A" + suffix.slice(1),
+        good.slice(0, -1),
+        good + "0",
+        good + "/../..",
+        [good, good],
+      ]) {
+        const headers = new Headers({
+          authorization: `Bearer ${TOKEN}`,
+          "x-iva-turn": "helper",
+        });
+        for (const id of value === null
+          ? []
+          : Array.isArray(value)
+            ? value
+            : [value])
+          headers.append("x-iva-helper", id);
+        for (const dev of [undefined, "1"]) {
+          const req = new Request("http://127.0.0.1:8723", { headers });
+          const result = await routeAuth(
+            req,
+            createEveAuth({ ASSISTANT_BEARER: TOKEN, EVE_DEV: dev }),
+          );
+          if (value === good) {
+            assert.ok(!(result instanceof Response));
+            assert.deepEqual(result.attributes, {
+              iva_turn: "helper",
+              iva_helper: good,
+              iva_max_steps: "80",
+              iva_max_input_tokens: "4000000",
+            });
+          } else {
+            assert.ok(result instanceof Response);
+            assert.equal(result.status, 401);
+          }
+        }
+      }
+    }),
+    { seed: SEED, numRuns: 150 },
+  );
+  await assert.rejects(async () =>
+    assistantBearerAuth(TOKEN)(turnRequest(TOKEN, "helper")),
+  );
+});
+
+test("background model choice preserves helper-only rights and requires an exact kind", () => {
+  for (const kind of [
+    "helper",
+    "watch",
+    "brief",
+    "insight",
+    "reminder",
+    "signal",
+    "alert",
+    null,
+    ["watch"],
+    { toString: () => "watch" },
+  ]) {
+    const ctx = {
+      session: {
+        auth: {
+          current: {
+            authenticator: "iva-bearer",
+            attributes: { iva_turn: kind },
+          },
+        },
+      },
+    };
+    assert.equal(isHelperTurn(ctx), kind === "helper");
+    assert.equal(
+      usesHelperModel(ctx),
+      typeof kind === "string" &&
+        ["helper", "watch", "brief", "insight"].includes(kind),
+    );
+  }
 });

@@ -1,13 +1,11 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { execFileSync, spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { Worker } from "node:worker_threads";
-import { selfRestartViolation } from "../lib/self-restart-guard.ts";
-import { schedulerBypassViolation } from "../lib/scheduler-bypass-guard.ts";
 
 // Host-native bash. Переопределяет встроенный sandbox-bash eve: команда выполняется
 // напрямую на реальной файловой системе VPS через node:child_process (без sandbox).
@@ -20,6 +18,12 @@ const TERM_GRACE_MS = 400;
 const KILL_GRACE_MS = 400;
 const REAP_POLL_MS = 20;
 const PIPE_DRAIN_GRACE_MS = 100;
+export function selectCommandShell(
+  fileExists: (path: string) => boolean = existsSync,
+): string | true {
+  return ["/bin/bash", "/usr/bin/bash"].find(fileExists) ?? true;
+}
+const COMMAND_SHELL = selectCommandShell();
 // A per-call Worker must have enough time to start and observe the root process.
 // Shorter deadlines are rejected instead of pretending they can be enforced reliably.
 export const MIN_TIMEOUT_MS = 100;
@@ -622,10 +626,9 @@ function createCommandRun(input: {
 
 export default defineTool({
   description:
-    "Shell-команда на хосте (без sandbox): возвращает { stdout, stderr, exitCode }, " +
-    "вывод обрезается до последних ~30000 символов каждого потока. Блокируются команды, " +
-    "останавливающие сервис Ивы: iva restart/stop/update, " +
-    "systemctl … restart iva, pkill node.",
+    "Shell-команда на хосте (без sandbox), в bash (/bin/sh, если bash нет): " +
+    "возвращает { stdout, stderr, exitCode }, " +
+    "вывод обрезается до последних ~30000 символов каждого потока.",
   inputSchema: z.object({
     command: z.string().min(1).describe("Shell-команда"),
     cwd: z
@@ -649,16 +652,6 @@ export default defineTool({
       ),
   }),
   async execute({ command, cwd, timeoutMs }, ctx) {
-    // Самоубийственные команды режем ДО запуска: рестарт собственного сервиса посреди
-    // хода оставляет ход в running навсегда, сервис уходит в цикл переигрываний, а бот
-    // немеет с HookConflictError (issue #68). Промпт-запрета мало — модели его игнорируют.
-    const lethal = selfRestartViolation(command);
-    if (lethal) return { stdout: "", stderr: lethal, exitCode: 1 };
-    // Свои таймеры и свои отправки в Telegram агент строил мимо штатных инструментов
-    // (curl с токеном, systemd-run, crontab, sleep-цепочки): такой путь не виден ни в
-    // напоминаниях, ни в расписаниях. Режем до запуска тем же видом возврата.
-    const bypass = schedulerBypassViolation(command);
-    if (bypass) return { stdout: "", stderr: bypass, exitCode: 1 };
     const timeout = timeoutMs ?? 120_000;
     if (
       !Number.isSafeInteger(timeout) ||
@@ -689,7 +682,8 @@ export default defineTool({
       try {
         child = spawn(command, {
           cwd: runCwd,
-          shell: true,
+          env: { ...process.env, IVA_AGENT_TURN: "1" },
+          shell: COMMAND_SHELL,
           detached: true,
           stdio: ["ignore", "pipe", "pipe"],
         });

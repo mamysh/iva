@@ -1,3 +1,5 @@
+import * as deferred from "../lib/deferred-command.ts";
+import { serviceManager } from "../lib/service-manager.ts";
 import { createAccountCommands } from "./account.ts";
 import { createConfigCommand } from "./config.ts";
 import { createDiagnoseCommand } from "./diagnose.ts";
@@ -14,7 +16,7 @@ import { createServiceCommands } from "./services.ts";
 import { createCliSystemd } from "./systemd.ts";
 import { createTraceCommands } from "./trace.ts";
 import { createTreeRenderer } from "./tree.ts";
-import { createUserbotCommands } from "./userbot.ts";
+import { createUserbotCommands, reinstallUserbot } from "./userbot.ts";
 import { createVersionUpdateCommand } from "./version-update-command.ts";
 import { setBeta } from "../lib/update-channel.ts";
 
@@ -117,7 +119,7 @@ ${C.b}Commands:${C.x}
   ${C.c}iva jobs skip memory-night${C.x} <date>  close a night-memory day without processing it
   ${C.c}iva remind${C.x} <text>    let the agent judge one Reminder, then send it to Telegram
   ${C.c}iva proactive${C.x} show|on|off|set <key> <value>  Watch, Brief and Insight settings
-  ${C.c}iva signal${C.x} <source> <text>  pass a plugin's Signal to Iva (a one-off Reminder now)
+  ${C.c}iva signal${C.x} <source> <text> [--key <k>]  pass a plugin's Signal to Iva; the same key is skipped while pending
   ${C.c}iva post${C.x} --md-file <p>  rich Telegram post to the digest chat or an allowlisted --chat
   ${C.c}iva userbot${C.x} [creds|setup|status|diagnose --json|off]  personal-account userbot proxy
   ${C.c}iva logs${C.x} [poll]     agent logs (or the Telegram bridge) -f
@@ -136,9 +138,16 @@ export function createCliMain(root: string) {
   const tree = createTreeRenderer(root);
   const userbot = createUserbotCommands(runtime, systemdLifecycle);
   const account = createAccountCommands(runtime, systemdLifecycle);
-  const services = createServiceCommands(runtime, systemdLifecycle);
+  const services = createServiceCommands(runtime, systemdLifecycle, {
+    recoverUserbot: () =>
+      reinstallUserbot(runtime, systemdLifecycle, runtime.warn, {
+        keepHealthy: true,
+      }),
+  });
   const cmdConfig = createConfigCommand(runtime, systemdLifecycle);
-  const cmdDoctor = createDoctorCommand(runtime, systemdLifecycle);
+  const cmdDoctor = createDoctorCommand(runtime, systemdLifecycle, {
+    readOnly: process.env.IVA_AGENT_TURN === "1",
+  });
   const cmdDiagnose = createDiagnoseCommand(runtime, systemdLifecycle);
   const trace = createTraceCommands(runtime);
   const cmdNotify = createNotifyCommand(runtime);
@@ -188,11 +197,13 @@ export function createCliMain(root: string) {
     "--help": cmdHelp,
     "-h": cmdHelp,
     "_install-units": () =>
-      ok(`systemd units written: ${systemdLifecycle.writeUnits().length}`),
+      ok(
+        `${serviceManager() === "launchd" ? "задания Ивы" : "systemd units"} written: ${systemdLifecycle.writeUnits().length}`,
+      ),
     "_activate-units": () => {
       systemdLifecycle.activateUnits();
       ok(
-        `systemd units enabled and active: ${SERVICES.length + TIMERS.length}`,
+        `${serviceManager() === "launchd" ? "задания Ивы" : "systemd units"} enabled and active: ${SERVICES.length + TIMERS.length}`,
       );
     },
     "_await-healthy": services.cmdAwaitHealthy,
@@ -202,6 +213,7 @@ export function createCliMain(root: string) {
     commands,
     cmdHelp,
     dispatch: (argv: readonly string[]) =>
+      deferred.fromTurn(runtime.dataDirAbs(), argv) ??
       dispatchCli(argv, commands, { bad, help: cmdHelp }),
   };
 }
@@ -210,5 +222,9 @@ export function main(
   root: string,
   argv: readonly string[] = process.argv.slice(2),
 ): Promise<unknown> {
+  if (argv[0] === "_deferred") {
+    const dir = createCliRuntime(root).dataDirAbs();
+    return deferred.executeDeferred(dir, root, argv[1]);
+  }
   return createCliMain(root).dispatch(argv);
 }

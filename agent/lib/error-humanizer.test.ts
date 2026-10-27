@@ -1,8 +1,15 @@
+import "../../scripts/fixtures/no-host-anthropic.ts";
+import { modelAuthText, modelAuthProvider } from "./model-auth.ts";
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import fc from "fast-check";
-import { humanizeProviderError } from "./error-humanizer.ts";
+import {
+  humanizeProviderError,
+  isBreakNotice,
+  isRetryTap,
+  isInterruptedTap,
+} from "./error-humanizer.ts";
 
 const REAL_LIMIT_ERROR =
   "AI_RetryError: Failed after 3 attempts. Last error: AI_APICallError: 5-hour usage limit reached. Resets in 3hr 59min. To continue using this model now, enable usage from your available balance: https://opencode.ai/workspace/wrk_.../go";
@@ -57,20 +64,25 @@ test("refused credentials say who refused and where to fix it, without repeats",
   for (const input of [
     { message: "Invalid API key" },
     { message: "Unauthorized" },
-    { message: "Request rejected", details: '{"statusCode":403}' },
+    {
+      message: "Request rejected",
+      details: '{"statusCode":403,"apiErrorMessage":"invalid key"}',
+    },
     {
       message: "api.anthropic.com did not finish the response (HTTP 401)",
       details: { attempts: 1 },
     },
   ]) {
     assert.deepEqual(humanizeProviderError({ ...input, provider: "claude" }), {
-      en: "Anthropic did not accept the key or login. Check it in /menu and write again.",
-      ru: "Anthropic не принял ключ или вход. Проверь его в /menu и напиши ещё раз.",
+      en: modelAuthText("claude", "en", { answers: true }),
+      ru: modelAuthText("claude", "ru", { answers: true }),
     });
   }
   assert.equal(
     humanizeProviderError({ message: "Unauthorized" }).ru,
-    "Провайдер не принял ключ или вход. Проверь его в /menu и напиши ещё раз.",
+    modelAuthText(modelAuthProvider(), "ru", {
+      answers: true,
+    }),
   );
 });
 
@@ -257,7 +269,7 @@ test("the quote cannot open a tag or markup in the rich message", () => {
       assert.equal((text.match(/<\/tg-button>/gu) ?? []).length, 1);
       assert.equal((text.match(/</gu) ?? []).length, 4);
       const quote = /на «([\s\S]*)»\. Повторить/u.exec(text)?.[1] ?? "";
-      assert.doesNotMatch(quote.replace(/\\./gu, ""), /[\\*_#|`[\]()~$]/u);
+      assert.doesNotMatch(quote.replace(/\\./gu, ""), /[\\*_#|`[\]()~$&]/u);
       assert.doesNotMatch(quote, /\n/u);
     }),
   );
@@ -312,10 +324,86 @@ test("a silent model gets its own text, not a provider failure", () => {
     });
     assert.equal(
       text.ru,
-      "Anthropic долго не отвечает, повторила 2 раза, не получилось. Напиши ещё раз через пару минут или смени модель: /model.",
+      "Anthropic долго не отвечает, повторила 2 раза, не получилось. Напиши ещё раз через пару минут или смени модель: /model. Если в этом разговоре так уже было, /new начнёт заново: длинный разговор мог стать модели не по силам.",
     );
-    assert.match(text.en, /^Anthropic takes too long to answer\./u);
+    assert.equal(
+      text.en,
+      "Anthropic takes too long to answer. I tried again 2 times, it did not work. Write again in a couple of minutes or switch models: /model. If this already happened in this conversation, /new starts over: a long conversation may have become too much for the model.",
+    );
   }
+});
+
+// #284: OpenCode Go в длинной сессии молчит 90 с из хода в ход, помогает только /new.
+// Ошибка дословно из provider.ts (MODEL_FIRST_CHUNK_TIMEOUT), повторов не было.
+test("a first-chunk timeout without repeats names /new for a long conversation", () => {
+  for (const details of [
+    { code: "MODEL_FIRST_CHUNK_TIMEOUT", attempts: 1 },
+    { code: "MODEL_FIRST_CHUNK_TIMEOUT" },
+    '{"code":"MODEL_FIRST_CHUNK_TIMEOUT"}',
+  ]) {
+    assert.deepEqual(
+      humanizeProviderError({
+        message: "Model produced no output for 90s",
+        details,
+        provider: "opencode",
+      }),
+      {
+        en: "OpenCode takes too long to answer. Write again in a couple of minutes or switch models: /model. If this already happened in this conversation, /new starts over: a long conversation may have become too much for the model.",
+        ru: "OpenCode долго не отвечает. Напиши ещё раз через пару минут или смени модель: /model. Если в этом разговоре так уже было, /new начнёт заново: длинный разговор мог стать модели не по силам.",
+      },
+    );
+  }
+});
+
+// Подсказка про /new — только текст: кнопки «Повторить» нет, мост не примет это сообщение
+// за обрыв посреди ответа и не подставит вопрос (scripts/poller/control.ts, turn-question.ts).
+test("every silent-model notice ends with the /new hint and never looks like a break", () => {
+  const RU_HINT =
+    " Если в этом разговоре так уже было, /new начнёт заново: длинный разговор мог стать модели не по силам.";
+  const EN_HINT =
+    " If this already happened in this conversation, /new starts over: a long conversation may have become too much for the model.";
+  fc.assert(
+    fc.property(
+      fc.constantFrom(
+        "Model produced no output for 90s",
+        "Claude CLI produced nothing for 180s",
+        "AI_RetryError: Failed after 3 attempts. Last error: Model produced no output for 90s",
+      ),
+      fc.option(
+        fc.oneof(
+          fc.constantFrom(
+            "claude",
+            "codex",
+            "ollama",
+            "opencode",
+            "openrouter",
+          ),
+          fc.string(),
+        ),
+        { nil: undefined },
+      ),
+      fc.oneof(fc.integer(), fc.double(), fc.string(), fc.constant(undefined)),
+      fc.string({ maxLength: 300 }),
+      fc.boolean(),
+      (message, provider, attempts, question, group) => {
+        const text = humanizeProviderError({
+          message,
+          details: { code: "MODEL_FIRST_CHUNK_TIMEOUT", attempts },
+          provider,
+          question,
+          group,
+        });
+        assert.ok(text.ru.endsWith(RU_HINT), text.ru);
+        assert.ok(text.en.endsWith(EN_HINT), text.en);
+        for (const said of [text.ru, text.en]) {
+          assert.equal(isBreakNotice(said), false);
+          assert.equal(isRetryTap(said), false);
+          assert.doesNotMatch(said, /tg-button/u);
+          assert.equal(said.split("/new").length, 2);
+        }
+      },
+    ),
+  );
 });
 
 test("a provider wait over a minute says to come back in a couple of minutes", () => {
@@ -368,9 +456,9 @@ test("the quote escapes every rich markup character", () => {
   const text = humanizeProviderError({
     message: "terminated",
     details: { answerStarted: true },
-    question: "a`b[c](d)~e$f",
+    question: "a`b[c](d)~e$f&lt;g",
   }).ru;
-  assert.match(text, /«a\\`b\\\[c\\\]\\\(d\\\)\\~e\\\$f»/u);
+  assert.match(text, /«a\\`b\\\[c\\\]\\\(d\\\)\\~e\\\$f\\&lt;g»/u);
 });
 
 // Обрыв посреди ответа eve теперь повторяет сама; кнопка — исход после трёх попыток, и
@@ -389,5 +477,58 @@ test("after three mid-answer breaks the notice says how many times Iva tried", (
   assert.equal(
     text.en.split("\n")[0],
     "The connection to Anthropic broke off in the middle of the answer to «Какая погода?». I tried again 2 times, it did not work. Try again?",
+  );
+});
+
+// MODEL_PROVIDER с именем метода Object доставал метод вместо имени, и сообщение о сбое
+// падало на capital(): владелец не узнавал о сбое вовсе.
+test("a provider named like an Object method is told as «провайдер», the notice does not throw", () => {
+  for (const provider of [
+    "valueOf",
+    "__proto__",
+    "constructor",
+    "toString",
+    "hasOwnProperty",
+  ]) {
+    assert.deepEqual(
+      humanizeProviderError({ message: "Unauthorized", provider }),
+      {
+        en: modelAuthText("custom", "en", { answers: true }),
+        ru: modelAuthText("custom", "ru", { answers: true }),
+      },
+    );
+  }
+});
+
+test("interrupted-button data accepts only the localized label and bounded token (seed 211021)", () => {
+  fc.assert(
+    fc.property(
+      fc.uuid(),
+      fc.constantFrom("Try again", "Повторить"),
+      (token, label) => {
+        const data = `${label}:${token}`;
+        assert.equal(isInterruptedTap(data), true);
+        assert.equal(isRetryTap(data), true);
+        assert.ok(Buffer.byteLength(data) <= 64);
+        assert.equal(isInterruptedTap(`${data}x`), false);
+        assert.equal(isInterruptedTap(`other:${token}`), false);
+      },
+    ),
+    { seed: 211021, numRuns: 100 },
+  );
+});
+
+test("REPAIR1: the reply keeps strong auth evidence ahead of incidental status and limit prose", () => {
+  assert.deepEqual(
+    humanizeProviderError({
+      message:
+        "ClaudeCliError: Failed to authenticate: OAuth session expired; 429 requests tried",
+      details: { statusCode: 503 },
+      provider: "claude",
+    }),
+    {
+      en: modelAuthText("claude", "en", { answers: true }),
+      ru: modelAuthText("claude", "ru", { answers: true }),
+    },
   );
 });

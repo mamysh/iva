@@ -45,6 +45,31 @@ const HOUR = 60 * MIN;
 const NOON = Date.UTC(2026, 9, 5, 12, 0);
 const DAY = "2026-10-05";
 
+test("empty-response turn.failed stays quiet in Watch and logs the cause", async () => {
+  const { reminderFromEvents } =
+    await import("../fixtures/reminder-events.test-fixture.ts");
+  const h = harness();
+  writeState(h, staleSeen(chat(1, 1)));
+  h.tg = { items: [chat(1, 1)], error: null };
+  h.reply = await reminderFromEvents([
+    {
+      type: "turn.failed",
+      data: {
+        message: "The model did not return a response",
+        details: { semanticErrorId: "empty-model-response" },
+      },
+    },
+    { type: "session.waiting" },
+  ]);
+  assert.equal(await runProactiveTick(NOON, h.deps), 1);
+  assert.deepEqual(h.sent, []);
+  assert.ok(
+    h.logs.includes(
+      "proactive: watch turn failed: The model did not return a response",
+    ),
+  );
+});
+
 type Harness = {
   readonly deps: TickDeps;
   readonly statePath: string;
@@ -152,6 +177,139 @@ function staleSeen(...items: WatchItem[]): Partial<ProactiveState> {
     ),
   };
 }
+
+test("Watch skips the recheck for QUIET, empty replies and parts without item markers", async () => {
+  for (const reply of ["QUIET", "", "<!-- iva:next -->", "Иван ждёт ответа."]) {
+    const h = harness();
+    Object.assign(h.deps, { sources: h.deps.sources.slice(0, 1) });
+    h.tg = { items: [chat(1, 1)], error: null };
+    h.reply = turn(reply);
+    writeState(h, staleSeen(chat(1, 1)));
+    assert.equal(await runProactiveTick(NOON, h.deps), 0);
+    assert.equal(h.prompts.length, 1);
+    assert.equal(h.checks, 1, "only the initial source check");
+    assert.deepEqual(h.sent, reply === "Иван ждёт ответа." ? [reply] : []);
+  }
+});
+
+test("Watch rechecks unread items after the turn, drops read parts and keeps their claim", async () => {
+  const h = harness();
+  const mail = { key: "mail:m1", unread: 1, from: {} };
+  writeState(h, staleSeen(chat(1, 1), chat(2, 1), mail));
+  h.tg = { items: [chat(1, 1), chat(2, 1)], error: null };
+  h.mail = { items: [mail], error: null };
+  Object.assign(h.deps, {
+    runTurn: (prompt: string) => {
+      assert.match(prompt, /<!-- iva:item <key> -->/u);
+      h.tg = { items: [chat(2, 1)], error: null };
+      h.mail = { items: [{ ...mail, unread: 0 }], error: null };
+      return Promise.resolve(
+        turn(
+          "<!-- iva:item tg:1 -->\nПрочитанный чат.\n<!-- iva:next -->\n" +
+            "<!-- iva:item mail:m1 -->\nПрочитанное письмо.\n<!-- iva:next -->\n" +
+            "<!-- iva:item tg:2 -->\nВторой чат ждёт.",
+        ),
+      );
+    },
+  });
+  assert.equal(await runProactiveTick(NOON, h.deps), 0);
+  assert.deepEqual(h.sent, ["Второй чат ждёт."]);
+  assert.equal(
+    h.checks,
+    4,
+    "each candidate source checked before and after the turn",
+  );
+  assert.equal(readState(h).seen["tg:1"]?.reported, true);
+  assert.equal(readState(h).seen["mail:m1"]?.reported, true);
+  assert.ok(
+    h.logs.some((line) => line.includes("tg:1") && line.includes("read")),
+  );
+  assert.ok(
+    h.logs.some((line) => line.includes("mail:m1") && line.includes("read")),
+  );
+  assert.equal(await runProactiveTick(NOON + HOUR, h.deps), 0);
+  assert.deepEqual(h.sent, ["Второй чат ждёт."], "no repeated notice");
+});
+
+test("Watch sends the part when the recheck returns an error or throws", async () => {
+  for (const throws of [false, true]) {
+    const h = harness();
+    let checks = 0;
+    Object.assign(h.deps, {
+      sources: [
+        {
+          name: "telegram",
+          prefix: "tg:",
+          check: () => {
+            checks++;
+            if (checks === 1)
+              return Promise.resolve({ items: [chat(1, 1)], error: null });
+            if (throws) throw new Error("offline");
+            return Promise.resolve({ items: [], error: "offline" });
+          },
+        },
+      ],
+    });
+    writeState(h, staleSeen(chat(1, 1)));
+    h.reply = turn("<!-- iva:item tg:1 -->\nИван ждёт ответа.");
+    assert.equal(await runProactiveTick(NOON, h.deps), 0);
+    assert.deepEqual(h.sent, ["Иван ждёт ответа."]);
+    assert.equal(checks, 2);
+    assert.ok(h.logs.some((line) => line.includes("offline")));
+  }
+});
+
+test("Watch keeps unmarked, unknown and check parts, strips markers and still tells every failure", async () => {
+  const h = harness();
+  const failure: WatchItem = {
+    key: "failure:backup.service",
+    unread: 1,
+    from: {},
+    note: "backup failed",
+    failure: { essence: "1", at: NOON },
+  };
+  let failureChecks = 0;
+  Object.assign(h.deps, {
+    sources: [
+      ...h.deps.sources,
+      {
+        name: "timers",
+        prefix: "failure:",
+        always: true,
+        check: () => {
+          failureChecks++;
+          return Promise.resolve({ items: [failure], error: null });
+        },
+      },
+    ],
+    runTurn: () => {
+      h.tg = { items: [], error: null };
+      return Promise.resolve(
+        turn(
+          "<!-- iva:item tg:1 -->\nbackup failed\n<!-- iva:next -->\n" +
+            "Без метки.\n<!-- iva:next -->\n<!-- iva:item tg:999 -->\nЧужой ключ.\n<!-- iva:next -->\n" +
+            "<!-- iva:item check:mail -->\nПочта недоступна.",
+        ),
+      );
+    },
+  });
+  h.tg = { items: [chat(1, 1)], error: null };
+  writeState(h, staleSeen(chat(1, 1)));
+  assert.equal(await runProactiveTick(NOON, h.deps), 0);
+  assert.deepEqual(h.sent, [
+    "Без метки.",
+    "Чужой ключ.",
+    "Почта недоступна.",
+    "backup failed",
+  ]);
+  assert.equal(
+    h.checks,
+    3,
+    "mail has no candidates and gets only the initial check",
+  );
+  assert.equal(failureChecks, 1, "failures are never rechecked");
+  assert.equal(readState(h).seen[failure.key]?.reported, true);
+});
 
 test("first run: everything already unread counts as reported, the model is not woken", async () => {
   const h = harness();
@@ -1164,4 +1322,114 @@ test(`spentToday equals a hand filter: today in the owner's zone and a kind of w
     ),
     { seed: SEED, numRuns: 300 },
   );
+});
+
+for (const english of [false, true])
+  test(`r339 watch step ceiling reaches the owner, English=${english}`, async () => {
+    const { failedModelEvents, reminderFromEvents } =
+      await import("../fixtures/reminder-events.test-fixture.ts");
+    const h = harness({
+      translate: () =>
+        Promise.resolve((en: string, ru: string) => (english ? en : ru)),
+    });
+    writeState(h, staleSeen(chat(1, 1)));
+    h.tg = { items: [chat(1, 1)], error: null };
+    h.reply = await reminderFromEvents(failedModelEvents());
+    assert.equal(await runProactiveTick(NOON, h.deps), 1);
+    assert.deepEqual(h.sent, [
+      english
+        ? "The review was not prepared. Stopped after 40 steps without a final summary."
+        : "Обзор не собран. Остановилась на 40 шагах и не успела подвести итог.",
+    ]);
+  });
+
+test("Watch prompt carries the group message, topic and username from the source", async () => {
+  const h = harness();
+  const item = {
+    ...chat(-1004398169447, 1, "Team"),
+    from: { name: "Team", username: "public_team" },
+    message_id: 40,
+    topic_id: 12,
+  };
+  h.tg = { items: [item], error: null };
+  writeState(h, staleSeen(item));
+  await runProactiveTick(NOON, h.deps);
+  assert.match(h.prompts[0] ?? "", /tg:-1004398169447 from Team @public_team/u);
+  assert.match(h.prompts[0] ?? "", /message_id=40, topic_id=12/u);
+});
+
+test("Telegram metadata reaches the Watch turn through precheck and candidate selection", async () => {
+  const { telegramSource } = await import("./precheck.ts");
+  for (const forum of [false, true]) {
+    const h = harness();
+    const item = chat(-1004398169447, 1, "Team");
+    writeState(h, staleSeen(item));
+    const source = telegramSource({}, "", (name, args) =>
+      Promise.resolve().then(() => {
+        if (name === "list_chats")
+          return JSON.stringify({
+            results:
+              args.chat_type === "group"
+                ? [
+                    {
+                      chat_id: -1004398169447,
+                      title: "Team",
+                      type: "Supergroup",
+                      unread_mentions: 1,
+                    },
+                  ]
+                : [],
+          });
+        if (name === "list_messages")
+          return JSON.stringify({ results: [{ id: 40, reply_to: 7 }] });
+        return `Link: https://t.me/c/4398169447/${forum ? "12/" : ""}40`;
+      }),
+    );
+    await runProactiveTick(NOON, { ...h.deps, sources: [source] });
+    assert.match(h.prompts[0] ?? "", /message_id=40/u);
+    if (forum) assert.match(h.prompts[0] ?? "", /topic_id=12/u);
+    else assert.doesNotMatch(h.prompts[0] ?? "", /topic_id=/u);
+  }
+});
+
+test("REPAIR1: Watch and Brief omit obsolete login status from their prompts", async () => {
+  const { modelAuthText } = await import("#lib/model-auth.ts");
+  const wording = modelAuthText("claude", "en", { answers: true });
+  for (const kind of ["watch", "brief"]) {
+    let alerts = 0;
+    const h = harness({
+      ...{ authContext: () => Promise.resolve(`\n${wording}`) },
+      recordAlert: () => {
+        alerts++;
+        return true;
+      },
+    });
+    if (kind === "brief") h.config = { ...h.config, briefTimes: ["12:00"] };
+    else
+      h.tg = {
+        items: [{ key: "tg:1", unread: 1, from: { name: "Test" } }],
+        error: null,
+      };
+    // A new install seeds unread state; put a prior run on disk for Watch.
+    if (kind === "watch")
+      writeFileSync(
+        h.statePath,
+        JSON.stringify({
+          ...initialState(NOON - 2 * HOUR),
+          seen: {
+            "tg:1": {
+              firstSeenMs: NOON - 2 * HOUR,
+              unread: 1,
+              reported: false,
+            },
+          },
+        }),
+      );
+    await runProactiveTick(NOON, h.deps);
+    assert.ok(
+      h.prompts.every((prompt) => !prompt.includes(wording)),
+      kind,
+    );
+    assert.equal(alerts, 0);
+  }
 });

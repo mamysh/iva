@@ -40,6 +40,83 @@ await test("markdown conversion retains current Telegram HTML fixtures", () => {
   );
 });
 
+await test("Markdown links preserve plain and escaped query separators", () => {
+  for (const markdown of [
+    "[link](https://example.org/?q=hello&page=2)",
+    "[link](https://example.org/?q=hello\\&page=2)",
+  ]) {
+    const html = toTelegramHtmlChunks(markdown).join("\n");
+    assert.equal(
+      html,
+      '<a href="https://example.org/?q=hello&amp;page=2">link</a>',
+    );
+    assert.doesNotMatch(html, /[\uE000\uE001]/u);
+    const link = html.match(/href="([^"]+)"/u);
+    assert.ok(link);
+    assert.equal(new URL(htmlToPlain(link[1])).searchParams.get("page"), "2");
+  }
+  assert.deepEqual(toTelegramHtmlChunks("[link](https://example.org/path)"), [
+    '<a href="https://example.org/path">link</a>',
+  ]);
+});
+
+await test("HTML fallback retains escaped quotes and button labels beside a query link", () => {
+  const markdown =
+    "> Вопрос: \\*\\*так\\*\\* \\`код\\` \\& ответ?\n\n" +
+    "[link](https://example.org/?q=hello\\&page=2)\n\n" +
+    '<tg-button-row><tg-button type="callback_data" data="retry">Повторить & проверить</tg-button><tg-button type="url" url="https://example.org">Сайт</tg-button></tg-button-row>';
+  assert.deepEqual(toTelegramHtmlChunks(markdown), [
+    '<blockquote>Вопрос: **так** `код` &amp; ответ?</blockquote>\n\n<a href="https://example.org/?q=hello&amp;page=2">link</a>\n\n <b>Повторить &amp; проверить</b> <a href="https://example.org">Сайт</a>',
+  ]);
+});
+
+await test("Wikipedia links retain underscores and balanced parentheses", () => {
+  assert.equal(
+    mdToTelegramHtml(
+      "Источники: [название](https://ru.wikipedia.org/wiki/Крауч,_Блейк), [сюжет](https://en.wikipedia.org/wiki/Recursion_(Crouch_novel)).",
+    ),
+    'Источники: <a href="https://ru.wikipedia.org/wiki/Крауч,_Блейк">название</a>, <a href="https://en.wikipedia.org/wiki/Recursion_(Crouch_novel)">сюжет</a>.',
+  );
+  assert.equal(
+    mdToTelegramHtml(
+      "_до_ [**имя** `код`](https://x.test/a_(b_(c))_*_~~) *после*",
+    ),
+    '<i>до</i> <a href="https://x.test/a_(b_(c))_*_~~"><b>имя</b> <code>код</code></a> <i>после</i>',
+  );
+});
+
+await test("link parsing keeps the first closing parenthesis when the URL is unbalanced", () => {
+  assert.equal(
+    mdToTelegramHtml("(see [docs](https://a.com))"),
+    '(see <a href="https://a.com">docs</a>)',
+  );
+  assert.equal(
+    mdToTelegramHtml("[q](https://e.com/search?q=(foo)"),
+    '<a href="https://e.com/search?q=(foo">q</a>',
+  );
+  assert.equal(
+    mdToTelegramHtml("[x](https://x.test/(open)"),
+    '<a href="https://x.test/(open">x</a>',
+  );
+  assert.equal(
+    mdToTelegramHtml("[a](https://a.com/(x) tail) more"),
+    '<a href="https://a.com/(x">a</a> tail) more',
+  );
+});
+
+await test("link parsing retains its label and URL work bounds", () => {
+  const url = `https://${"a".repeat(2048)}`;
+  assert.equal(mdToTelegramHtml(`[x](${url})`), `<a href="${url}">x</a>`);
+  for (const markdown of [
+    `[x](${url}a)`,
+    `[${"x".repeat(201)}](https://x.test)`,
+    `[x](https://${"(".repeat(100_000)})`,
+    "[".repeat(100_000),
+  ]) {
+    assert.equal(mdToTelegramHtml(markdown), markdown);
+  }
+});
+
 await test("prose that looks like a code placeholder survives intact", () => {
   // Regression: the inline-code placeholder used to be "two spaces, index, two
   // spaces", so ordinary prose with the same shape reached the chat mangled —

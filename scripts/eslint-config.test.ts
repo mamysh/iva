@@ -9,8 +9,9 @@ import { ESLint } from "eslint";
 
 const EXPECTED_IGNORES = [
   ".output/",
+  ".eve-out/",
+  "eve/",
   "node_modules/",
-  "patches/",
   "assets/",
   "vault-template/",
   ".eve/",

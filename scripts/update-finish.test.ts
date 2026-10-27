@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   alertOwnerAboutCustom,
   alertOwnerAboutPlugins,
+  alertOwnerAboutUserbot,
+  alertOwnerWhenServed,
   retireCheckout,
   captureOptionalWriterState,
   restartPluginUnits,
@@ -34,6 +36,8 @@ import {
   LEGACY_BRAIN_UNITS,
   LEGACY_MEMORY_UNITS,
 } from "./lib/legacy-memory-units.ts";
+import { noticeTranslator, userbotOffAlert } from "./lib/notice-policy.ts";
+import fc from "fast-check";
 import { layoutFor } from "./lib/version-store.ts";
 import { rewriteRunStatusesForUpdate } from "./lib/wf-store.ts";
 
@@ -101,6 +105,7 @@ test("update quarantines session state and rewrites chat status in place", (t) =
       updatedAt: 0,
       statusMessageId: 42,
       sessionId: "old-session",
+      generation: 1,
     },
   );
   assert.equal(
@@ -289,6 +294,37 @@ function fakeRuntime({
   };
 }
 
+test("quiesce skips absent required units while stopping present writers", () => {
+  for (const absent of [
+    ["iva.service"],
+    ["iva.service", "iva-telegram-poll.service"],
+  ]) {
+    const fake = fakeRuntime({
+      active: ["iva-telegram-poll.service"],
+      enabled: [],
+      unavailable: absent,
+    });
+    const stopped: string[] = [];
+    Object.assign(fake.runtime.systemd, {
+      stop(units: readonly string[]) {
+        for (const unit of units) {
+          if (absent.includes(unit))
+            throw new Error(`stop ${unit} failed (exit 5)`);
+          stopped.push(unit);
+          fake.activeUnits.delete(unit);
+        }
+      },
+    });
+    stopWriterUnits(fake.runtime);
+    assert.deepEqual(
+      stopped,
+      absent.includes("iva-telegram-poll.service")
+        ? []
+        : ["iva-telegram-poll.service"],
+    );
+  }
+});
+
 test("quiesce stops every old writer and leaves update-check alone", () => {
   const fake = fakeRuntime({
     active: [
@@ -452,6 +488,7 @@ test("a userbot stop fault restores its captured active and enabled state", () =
   restoreWriterOwnership(fake.runtime, before, {
     unitMigrationStarted: true,
     legacyMemoryOwnerProven: false,
+    userbotReady: true,
   });
 
   assert.equal(fake.activeUnits.has(USERBOT), true);
@@ -482,6 +519,7 @@ test("a disabled userbot stays disabled and stopped after unit migration", () =>
   restoreWriterOwnership(fake.runtime, before, {
     unitMigrationStarted: true,
     legacyMemoryOwnerProven: false,
+    userbotReady: true,
   });
 
   assert.equal(fake.activeUnits.has(USERBOT), false);
@@ -513,6 +551,7 @@ test("a previously missing userbot is never started during restoration", () => {
   restoreWriterOwnership(fake.runtime, before, {
     unitMigrationStarted: true,
     legacyMemoryOwnerProven: false,
+    userbotReady: true,
   });
 
   assert.equal(
@@ -770,6 +809,7 @@ test("a unit-write fault restores the captured legacy Brain owner", () => {
   restoreWriterOwnership(fake.runtime, before, {
     unitMigrationStarted: false,
     legacyMemoryOwnerProven: false,
+    userbotReady: true,
   });
 
   assert.equal(fake.activeUnits.has(legacyTimer), true);
@@ -968,6 +1008,293 @@ test("a stock-build Alert that could not be sent says so and is not remembered",
     /could not tell you in Telegram about the stock build/u,
   );
   assert.equal(existsSync(join(layout.data, "alert-state.json")), false);
+});
+
+// ── Alert о выключенном юзерботе (#273, ADR-0007) ─────────────────────────────────────────
+// Кто обновлялся кнопкой в боте, вывода `iva update` не видит: без этого Alert юзербот у него
+// просто молча перестаёт работать.
+
+const IMPORT_FAILED =
+  "userbot: зависимости не импортируются — ModuleNotFoundError: telegram_mcp";
+
+test("the owner hears that the update switched the userbot off, once a week per reason", async (t) => {
+  const layout = installationWithChat(
+    t,
+    "TELEGRAM_BOT_TOKEN=token\nTELEGRAM_DIGEST_CHAT_ID=42\nAGENT_LANGUAGE=ru\n",
+  );
+  const sent: string[] = [];
+  const said: string[] = [];
+  const send = (text: string): Promise<boolean> => {
+    sent.push(text);
+    return Promise.resolve(true);
+  };
+
+  await alertOwnerAboutUserbot(
+    layout,
+    IMPORT_FAILED,
+    (m) => said.push(m),
+    send,
+  );
+  await alertOwnerAboutUserbot(
+    layout,
+    IMPORT_FAILED,
+    (m) => said.push(m),
+    send,
+  );
+
+  assert.equal(sent.length, 1, sent.join("\n---\n"));
+  // The language is the installation's (settings, then AGENT_LANGUAGE), and this machine has
+  // its own: the text is checked against the one it resolves to. The exact RU and EN lines
+  // are pinned in scripts/lib/notice-policy.test.ts.
+  const tr = await noticeTranslator(layout.values);
+  assert.equal(sent[0], userbotOffAlert(tr));
+  assert.match(sent[0], /\/menu → 📡 Userbot → «(Включить|Turn on)»\.$/u);
+  // Причину и `iva userbot setup` несёт вывод апдейта (reinstallUserbot): в чат она не идёт,
+  // а удачная отправка строк в вывод не добавляет.
+  assert.deepEqual(said, []);
+
+  // Другая причина — другая проблема, и говорить надо сразу.
+  await alertOwnerAboutUserbot(
+    layout,
+    "userbot: restart failed (exit 1)",
+    () => {},
+    send,
+  );
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1], sent[0]);
+});
+
+test("a userbot Alert that could not be sent says so in the output and is not remembered", async (t) => {
+  const layout = installationWithChat(t);
+  const said: string[] = [];
+
+  await alertOwnerAboutUserbot(
+    layout,
+    IMPORT_FAILED,
+    (m) => said.push(m),
+    () => Promise.resolve(false),
+  );
+
+  assert.deepEqual(said, ["could not tell you in Telegram about the userbot"]);
+  assert.equal(existsSync(join(layout.data, "alert-state.json")), false);
+});
+
+test("the userbot Alert goes out even when its throttle cannot be written", async (t) => {
+  t.mock.method(console, "error", () => undefined);
+  const layout = installationWithChat(t);
+  // Место файла дросселя занято каталогом: запись не пройдёт, отправка — пройдёт.
+  mkdirSync(join(layout.data, "alert-state.json"));
+  const sent: string[] = [];
+  const said: string[] = [];
+  const send = (text: string): Promise<boolean> => {
+    sent.push(text);
+    return Promise.resolve(true);
+  };
+
+  await alertOwnerAboutUserbot(
+    layout,
+    IMPORT_FAILED,
+    (m) => said.push(m),
+    send,
+  );
+  await alertOwnerAboutUserbot(
+    layout,
+    IMPORT_FAILED,
+    (m) => said.push(m),
+    send,
+  );
+
+  // Fail-open: незаписанный дроссель значит «сказать ещё раз», а не «молчать».
+  assert.equal(sent.length, 2);
+  assert.deepEqual(said, []);
+});
+
+// Причина — вывод чужой программы: коды вроде proxy_unreachable, английские фразы, пути, ключи.
+// Её несёт вывод `iva update`; в чат уходит один и тот же текст простыми словами.
+test("no reason the userbot went off reaches Telegram, whatever it carries (seed 20261010)", async (t) => {
+  const planted = [
+    "proxy_unreachable",
+    "probe_timeout",
+    `ValueError: api_key=${"q".repeat(24)}`,
+    "/home/user/iva/data/userbot/.venv/bin/python",
+    "зависимости не импортируются — ModuleNotFoundError: telegram_mcp",
+  ];
+  for (const language of ["ru", "en"]) {
+    const layout = installationWithChat(
+      t,
+      `TELEGRAM_BOT_TOKEN=token\nTELEGRAM_DIGEST_CHAT_ID=42\nAGENT_LANGUAGE=${language}\n`,
+    );
+    const plain = userbotOffAlert(await noticeTranslator(layout.values));
+    await fc.assert(
+      fc.asyncProperty(
+        fc.string({ maxLength: 40 }),
+        fc.constantFrom(...planted),
+        fc.string({ maxLength: 40 }),
+        async (before, inside, after) => {
+          // Каждая причина говорит сразу: дроссель прошлого прогона этот не глушит.
+          rmSync(join(layout.data, "alert-state.json"), { force: true });
+          const sent: string[] = [];
+          await alertOwnerAboutUserbot(
+            layout,
+            `userbot: ${before}${inside}${after}`,
+            () => {},
+            (text) => {
+              sent.push(text);
+              return Promise.resolve(true);
+            },
+          );
+          assert.deepEqual(sent, [plain]);
+          assert.doesNotMatch(
+            plain,
+            /proxy_unreachable|probe_timeout|q{24}|\/home\/|ModuleNotFoundError|userbot: /u,
+          );
+        },
+      ),
+      { seed: 20261010, numRuns: 100 },
+    );
+  }
+});
+
+test("the userbot Alert reaches the Bot API as one plain sendMessage to the owner's chat", async (t) => {
+  t.mock.method(console, "error", () => undefined);
+  const layout = installationWithChat(
+    t,
+    "TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_ALLOWED_USER_IDS=777, 888\nAGENT_LANGUAGE=en\n",
+  );
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  let answer: () => Promise<Response> = () =>
+    Promise.resolve(new Response("{}", { status: 200 }));
+  t.mock.method(globalThis, "fetch", (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    return answer();
+  });
+  const said: string[] = [];
+
+  await alertOwnerAboutUserbot(layout, IMPORT_FAILED, (m) => said.push(m));
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api.telegram.org/bot123:abc/sendMessage");
+  assert.equal(calls[0].init.method, "POST");
+  assert.equal(typeof calls[0].init.body, "string");
+  const body = JSON.parse(calls[0].init.body as string) as Record<
+    string,
+    unknown
+  >;
+  // Без TELEGRAM_DIGEST_CHAT_ID — личный чат владельца, первый id Allowlist; без разметки.
+  assert.deepEqual(Object.keys(body).sort(), ["chat_id", "text"]);
+  assert.equal(body.chat_id, "777");
+  assert.match(String(body.text), /Userbot/u);
+  assert.deepEqual(said, []);
+  // The update waits for its Alert: a Telegram that never answers must not hold the outcome
+  // for the five minutes of fetch's own default.
+  assert.ok(calls[0].init.signal instanceof AbortSignal);
+  assert.equal(calls[0].init.signal.aborted, false);
+
+  // Telegram отказал (4xx) или сети нет: одна строка в выводе, дроссель не отмечен.
+  for (const refuse of [
+    () => Promise.resolve(new Response("{}", { status: 400 })),
+    () => Promise.reject(new TypeError("fetch failed")),
+  ]) {
+    rmSync(join(layout.data, "alert-state.json"), { force: true });
+    answer = refuse;
+    const lines: string[] = [];
+    await alertOwnerAboutUserbot(layout, "userbot: other", (m) =>
+      lines.push(m),
+    );
+    assert.deepEqual(lines, [
+      "could not tell you in Telegram about the userbot",
+    ]);
+    assert.equal(existsSync(join(layout.data, "alert-state.json")), false);
+  }
+});
+
+test("without a token or a chat the userbot Alert is silent and nothing is throttled", async (t) => {
+  const fetched = t.mock.method(globalThis, "fetch", () =>
+    Promise.resolve(new Response("{}", { status: 200 })),
+  );
+  for (const env of [
+    "AGENT_LANGUAGE=en\n",
+    "TELEGRAM_BOT_TOKEN=token\nAGENT_LANGUAGE=en\n",
+    "TELEGRAM_DIGEST_CHAT_ID=42\nAGENT_LANGUAGE=en\n",
+  ]) {
+    const layout = installationWithChat(t, env);
+    const said: string[] = [];
+    await alertOwnerAboutUserbot(layout, IMPORT_FAILED, (m) => said.push(m));
+    assert.deepEqual(said, [], env);
+    assert.equal(existsSync(join(layout.data, "alert-state.json")), false);
+  }
+  assert.equal(fetched.mock.callCount(), 0);
+});
+
+// Откат после флипа (сервис не ответил, шаг упал) поднимает юзербот на прежней версии:
+// сообщение «выключен» было бы ложью и на неделю заглушило бы правдивое.
+test("the userbot Alert waits for a served version and says nothing on a rollback", async (t) => {
+  const layout = installationWithChat(t);
+  const sent: string[] = [];
+  const alert = (reason: string) =>
+    alertOwnerAboutUserbot(
+      layout,
+      reason,
+      () => {},
+      (text) => {
+        sent.push(text);
+        return Promise.resolve(true);
+      },
+    );
+  const served = {
+    status: "updated",
+    version: "0.4.15-123456789abc",
+    previous: "0.4.14-123456789abc",
+    custom: "none",
+    migrations: [],
+    removed: [],
+  } as const satisfies Parameters<typeof alertOwnerWhenServed>[0];
+  for (const outcome of [
+    { status: "unhealthy", version: "0.4.15-123456789abc", log: "no answer" },
+    { status: "failed", message: "restart threw" },
+    { status: "current", version: "0.4.15-123456789abc" },
+    { status: "busy" },
+    { status: "too-old", own: "0.4.14", minUpdater: "0.4.15" },
+  ] as const satisfies ReadonlyArray<
+    Parameters<typeof alertOwnerWhenServed>[0]
+  >)
+    await alertOwnerWhenServed(outcome, IMPORT_FAILED, alert, () => {});
+  // Обновление прошло, а юзербот поднялся: говорить не о чем.
+  await alertOwnerWhenServed(served, undefined, alert, () => {});
+  assert.deepEqual(sent, []);
+  assert.equal(existsSync(join(layout.data, "alert-state.json")), false);
+
+  await alertOwnerWhenServed(served, IMPORT_FAILED, alert, () => {});
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /Userbot/u);
+});
+
+test("a userbot Alert that throws is one output line and the update goes on", async (t) => {
+  t.mock.method(console, "error", () => undefined);
+  const layout = installationWithChat(t);
+  const said: string[] = [];
+
+  await alertOwnerWhenServed(
+    {
+      status: "updated",
+      version: "0.4.15-123456789abc",
+      previous: null,
+      custom: "none",
+      migrations: [],
+      removed: [],
+    },
+    IMPORT_FAILED,
+    (reason) =>
+      alertOwnerAboutUserbot(
+        layout,
+        reason,
+        (m) => said.push(m),
+        () => Promise.reject(new Error("socket hang up")),
+      ),
+    (m) => said.push(m),
+  );
+
+  assert.deepEqual(said, ["could not tell you in Telegram about the userbot"]);
 });
 
 test("the flip restarts the plugin units that were running, and only those", async (t) => {

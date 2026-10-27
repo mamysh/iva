@@ -22,7 +22,6 @@ import {
   CUSTOM_ALERT_KEY,
   customStockAlert,
   deliverMemoryReport,
-  memoryReportTail,
   memoryReportsEnabled,
   nightReport,
   noticeLang,
@@ -32,6 +31,9 @@ import {
   rollupRanBefore,
   settleReportsOffNotice,
   updateAlertState,
+  USERBOT_ALERT_KEY,
+  userbotOffAlert,
+  userbotOffReason,
   type ReportsOffNotice,
   type Translate,
 } from "./notice-policy.ts";
@@ -82,22 +84,6 @@ test("memory reports stay off for anything that is not an explicit true", () => 
   );
 });
 
-// ── Report: язык и форма ночного отчёта ──────────────────────────────────────────────────
-test("the report tail names the language and forbids self-delivery", () => {
-  const en = memoryReportTail(EN);
-  const ru = memoryReportTail(RU);
-  assert.match(en, /written in English/);
-  assert.match(ru, /written in Russian/);
-  for (const tail of [en, ru]) {
-    assert.match(tail, /first person/);
-    assert.match(tail, /3-5 short lines/);
-    assert.match(tail, /Do not send it anywhere yourself/);
-    assert.match(tail, /no rich messages, no digest chat/);
-  }
-  // Инструкция «без внутренних терминов» — единственное место, где они названы.
-  assert.equal(en.split("ADD").length - 1, 1);
-});
-
 // ── Notice: язык берётся у резолвера, без дерева — у env ──────────────────────────────────
 test("the stock-build Alert says what broke, that the files are safe and what to do", () => {
   const line = "error TS1005: ';' expected.";
@@ -131,6 +117,43 @@ test("the stock-build Alert says what broke, that the files are safe and what to
       /билд|кастомизаци|digest|retry|warning|override|лимит/iu,
     );
   assert.equal(CUSTOM_ALERT_KEY, "custom-build");
+});
+
+// Обновление выключило юзербот (#273): кто обновлялся кнопкой в боте, вывода апдейта не видит.
+// Причина остаётся в выводе `iva update`: её коды и чужие фразы владельцу в чат не идут.
+test("the userbot Alert says it is off, what that costs and where to turn it back on", () => {
+  assert.equal(
+    userbotOffAlert(RU),
+    "⚠️ Ива выключила юзербот: после обновления он не запустился. Пока он выключен, Ива не читает и не ищет ваши чаты от вашего аккаунта; остальное работает как раньше. Включить обратно: /menu → 📡 Userbot → «Включить».",
+  );
+  assert.equal(
+    userbotOffAlert(EN),
+    "⚠️ Iva switched the userbot off: it did not come up after the update. While it is off, Iva cannot read or search your chats as your account; everything else works as before. Turn it back on: /menu → 📡 Userbot → «Turn on».",
+  );
+  // Слова Avoid из CONTEXT.md не идут владельцу.
+  for (const tr of [EN, RU])
+    assert.doesNotMatch(
+      userbotOffAlert(tr),
+      /билд|кастомизаци|digest|retry|warning|override|лимит|ошибк|bridge|gateway|демон|воркер|sidecar|notification|пуш/iu,
+    );
+  assert.equal(USERBOT_ALERT_KEY, "userbot-off");
+});
+
+// Суть Alert для дросселя — причина одной строкой: та же причина в другой обёртке не говорит
+// дважды. Что никакая причина не доходит до чата — scripts/update-finish.test.ts.
+test("the userbot Alert's essence is any reason on one line (seed 20261010)", () => {
+  const reason =
+    "userbot: зависимости не импортируются — ModuleNotFoundError: telegram_mcp.";
+  assert.equal(userbotOffReason("userbot: a\n  b.\n"), "a b");
+  assert.equal(userbotOffReason(reason), userbotOffReason(`${reason}\n`));
+  fc.assert(
+    fc.property(fc.string({ maxLength: 80 }), (raw) => {
+      const why = userbotOffReason(raw);
+      assert.doesNotMatch(why, /\s{2}|^\s|\s$|\n/u);
+      assert.doesNotMatch(why, /^userbot:|\.$/u);
+    }),
+    { seed: 20261010, numRuns: 200 },
+  );
 });
 
 test("notice language comes from the tree, and falls back to the env without it", async () => {
@@ -832,7 +855,6 @@ const policy = await import(process.env.__POLICY_URL);
 const tr = await policy.noticeTranslator();
 process.stdout.write(JSON.stringify({
   lang: await policy.noticeLang(),
-  tail: policy.memoryReportTail(tr),
   migration: policy.memoryReportsOffNotice(tr),
 }));
 `;
@@ -862,7 +884,6 @@ function probe(settingsLanguage: string | null, agentLanguage: string) {
   rmSync(dir, { recursive: true, force: true });
   return JSON.parse(output) as {
     lang: string;
-    tail: string;
     migration: string;
   };
 }
@@ -870,12 +891,10 @@ function probe(settingsLanguage: string | null, agentLanguage: string) {
 test("the switch in /menu decides the language of every notice, not the env", () => {
   const english = probe("en", "ru");
   assert.equal(english.lang, "en");
-  assert.match(english.tail, /written in English/);
   assert.match(english.migration, /Morning memory reports are now off/);
 
   const russian = probe("ru", "en");
   assert.equal(russian.lang, "ru");
-  assert.match(russian.tail, /written in Russian/);
   assert.match(russian.migration, /Утренние отчёты памяти теперь выключены/);
 
   // Настроек нет — остаётся env, потом дефолт.
@@ -1014,14 +1033,22 @@ test("the weekly throttle works on an installation whose agent/ is gone", (t) =>
   const home = dataDir(t);
   const island = join(home, "island");
   const data = join(home, "data");
-  mkdirSync(island, { recursive: true });
+  mkdirSync(join(island, "scripts/lib"), { recursive: true });
+  mkdirSync(join(island, "packages/alert-state"), { recursive: true });
+  writeFileSync(
+    join(island, "packages/alert-state/index.ts"),
+    readFileSync(
+      new URL("../../packages/alert-state/index.ts", import.meta.url),
+      "utf8",
+    ),
+  );
   mkdirSync(data, { recursive: true });
   writeFileSync(
     join(island, "package.json"),
     JSON.stringify({ type: "module" }),
   );
   writeFileSync(
-    join(island, "notice-policy.ts"),
+    join(island, "scripts/lib/notice-policy.ts"),
     readFileSync(join(import.meta.dirname, "notice-policy.ts"), "utf8"),
   );
 
@@ -1032,7 +1059,9 @@ test("the weekly throttle works on an installation whose agent/ is gone", (t) =>
       encoding: "utf8",
       env: {
         ...process.env,
-        __POLICY_URL: pathToFileURL(join(island, "notice-policy.ts")).href,
+        __POLICY_URL: pathToFileURL(
+          join(island, "scripts/lib/notice-policy.ts"),
+        ).href,
         __DATA_DIR: data,
       },
       stdio: ["ignore", "pipe", "pipe"],

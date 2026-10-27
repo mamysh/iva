@@ -77,12 +77,14 @@ and file paths must be resolved and bounded to their permitted root. Keep creden
 The disposable build compiles custom tools together with the authored tree's tools without copying their
 source into the live checkout.
 
+For long background work use [helpers](helpers.md). Bundled `planner` and the automatic
+`agent`, `task_cancel`, `task_update` tools have been removed (ADR-0025).
+
 ## Subagents
 
 A subagent is `data/custom/agent/subagents/<name>/` with an `agent.ts` and its own `instructions.md`.
-The bundled `agent/subagents/planner` is the pattern: its `description` tells the main agent when to
-delegate ("break a large goal into steps"), and a zod `outputSchema` forces a structured, validated
-reply instead of prose:
+Custom declared nodes remain supported by eve. Their `description` tells the main agent when to
+use them, and a zod `outputSchema` provides a structured, validated reply:
 
 ```ts
 outputSchema: z.object({
@@ -93,7 +95,7 @@ outputSchema: z.object({
 }),
 ```
 
-A subagent runs on the main provider: the planner takes its model straight from `agent/provider.ts`, so `MODEL_PROVIDER` picks the model for every node of the graph at once. Subagents deliberately keep no provider or env of their own — one selection, one identity, one usage line.
+A subagent runs on the main provider: a declared node can take its model from `agent/provider.ts`, so `MODEL_PROVIDER` picks the model for every node of the graph at once. Subagents deliberately keep no provider or env of their own — one selection, one identity, one usage line.
 
 ## Your rules
 
@@ -157,7 +159,7 @@ What Iva knows about _you_ is memory, not code - that's `CORE.md` in the vault (
 ## Local development
 
 ```bash
-npm ci        # postinstall applies patches/eve+0.51.1.patch
+npm ci        # installs the pinned eve archive
 npm run dev   # eve dev TUI, server on http://127.0.0.1:2000
 npm run build:core  # maintainer build of the current source tree
 npm exec -- eve dev --no-ui --logs all   # headless
@@ -174,10 +176,10 @@ console.log((await res.result()).message);
 
 One gotcha — Iva runs eve **0.51.1**:
 
-- 🩹 **patch-package** — `patches/eve+0.51.1.patch` makes deterministic model-call errors (invalid prompt, unknown tool) fail fast instead of parking a poisoned session. It also preserves the structured HTTP status from `web_fetch`, keeps the dynamic "Available skills" announcement in the system prompt instead of a user message, and falls back to `/workspace/skills` when the sandbox reports `HOME=/` (upstream vercel/eve#2839, PR #2841; contract test `scripts/eve-skill-announcement.test.ts`). A second hunk makes the `AGENT_BUSY` message name the next step: end the turn, since the task result arrives after it, or stop the task with `task_cancel` (upstream issue: pending; hunk test `scripts/eve-agent-busy.test.ts`; drop it on the Eve bump whose busy message names a next step in any wording). If you bump Eve, regenerate the patch or drop each edit only after its targeted contract test passes against upstream.
+- 🛠 **eve sources** — our changes live in `eve/` and are held by boundary tests. See [building and publishing eve](eve.md).
 
-The patch also lets a manual session compaction (`compact()`) resolve a model that only a `step.started` resolver provides: upstream reads the model without dispatching that event and fails with "Dynamic model selection is required", so Iva's compaction between turns could never run (contract test `scripts/eve-manual-compaction.test.ts`; remove the hunk when eve dispatches the step resolver for `compactOnly` itself).
+Our eve copy also lets a manual session compaction (`compact()`) resolve a model that only a `step.started` resolver provides: upstream reads the model without dispatching that event and fails with "Dynamic model selection is required", so Iva's compaction between turns could never run (contract test `scripts/eve-manual-compaction.test.ts`; remove the edit when upstream eve dispatches the step resolver for `compactOnly` itself).
 
-The same patch makes Eve the only owner of repeated model requests: the SDK count is zero, and Eve makes at most three requests per model call with waits of 5s and then 15s. A provider's Retry-After raises a wait but never lowers it below its floor; a Retry-After over 60s is not served: the turn closes at once with `providerWaitMs` in its details. A finish that follows an error part is not a finished answer. A call that breaks anywhere before `finish` is requested again: the person gets nothing while the stream runs (Iva's channel sends only the final message), a failed attempt leaves nothing in history, and tool calls are held until `finish` (or the normal end of the stream) and dropped on a break or an error part, because the AI SDK starts a tool the moment its call arrives. The only guard: a provider-executed tool part, or calls released at `finish`, mean something left eve's hands, and the call is not requested again; a stream that broke after `finish` is not either. The failure carries `attempts` and `answerStarted` (the last attempt broke in the middle of an answer) in its details, and the Telegram channel turns that into a question with one «Try again» button. Backoff is cancelled with the turn, and exhausted chat turns remain ready for the next user message. The boundary tests are `scripts/eve-model-retry.test.ts`; upstream tracking is [vercel/eve#3984](https://github.com/vercel/eve/issues/3984) and [#2320](https://github.com/vercel/eve/issues/2320). Remove these changes when those contracts pass against unpatched upstream, preserving unrelated patch changes. This focused successor was inspired by [@qwin2k's PR #251](https://github.com/smixs/iva-agent/pull/251).
+Our eve copy makes eve the only owner of repeated model requests: the SDK count is zero, and Eve makes at most three requests per model call with waits of 5s and then 15s. A provider's Retry-After raises a wait but never lowers it below its floor; a Retry-After over 60s is not served: the turn closes at once with `providerWaitMs` in its details. A finish that follows an error part is not a finished answer. A call that breaks anywhere before `finish` is requested again: the person gets nothing while the stream runs (Iva's channel sends only the final message), a failed attempt leaves nothing in history, and tool calls are held until `finish` (or the normal end of the stream) and dropped on a break or an error part, because the AI SDK starts a tool the moment its call arrives. The only guard: a provider-executed tool part, or calls released at `finish`, mean something left eve's hands, and the call is not requested again; a stream that broke after `finish` is not either. The failure carries `attempts` and `answerStarted` (the last attempt broke in the middle of an answer) in its details, and the Telegram channel turns that into a question with one «Try again» button. Backoff is cancelled with the turn, and exhausted chat turns remain ready for the next user message. The boundary tests are `scripts/eve-model-retry.test.ts`; upstream tracking is [vercel/eve#3984](https://github.com/vercel/eve/issues/3984) and [#2320](https://github.com/vercel/eve/issues/2320). Remove these changes when those contracts pass against unmodified upstream, preserving unrelated changes in our eve copy. This focused successor was inspired by [@qwin2k's PR #251](https://github.com/smixs/iva-agent/pull/251).
 
 The Eve 0.11.4 schedule crash (`eve dev` dying when a schedule handler imported another authored module) is fixed since 0.27.8. Iva's in-process Eve schedules are `memory-night.ts`, `proactive.ts`, `reminders.ts` and `jobs-watchdog.ts` under `agent/schedules/`. On a VPS they run inside `iva.service` ([deploy.md](./deploy.md)).

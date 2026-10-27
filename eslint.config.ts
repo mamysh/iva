@@ -7,8 +7,9 @@ import tseslint from "typescript-eslint";
 export default defineConfig([
   globalIgnores([
     ".output/",
+    ".eve-out/",
+    "eve/",
     "node_modules/",
-    "patches/",
     "assets/",
     "vault-template/",
     ".eve/",

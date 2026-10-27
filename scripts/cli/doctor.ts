@@ -1,7 +1,11 @@
+import { noticeLang } from "../lib/notice-policy.ts";
+import { logHint } from "../lib/systemd-control.ts";
+import { unitPath } from "../lib/launchd.ts";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statfsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { homedir } from "node:os";
 // CLI обязан грузиться без authored tree и без "#lib"-маппинга
 // (scripts/cli/entrypoints.test.ts), поэтому run-status и telegram-queue
 // подгружаются динамически в самой проверке, а здесь — только типы.
@@ -16,7 +20,10 @@ import {
   serviceUnitName,
 } from "../lib/plugin-units.ts";
 import { LEGACY_BRAIN_UNITS } from "../lib/legacy-memory-units.ts";
-import { classifyAgentListeners } from "../lib/listener-security.ts";
+import {
+  classifyAgentListeners,
+  classifyLsofListeners,
+} from "../lib/listener-security.ts";
 import {
   CATALOG,
   catalogProvider,
@@ -67,7 +74,7 @@ type RollupEntry = {
 
 type RollupStatus = Record<string, RollupEntry | null | undefined>;
 
-export interface ScheduleFactsReport {
+interface ScheduleFactsReport {
   readonly lastRuns: readonly string[];
   readonly openFailures: readonly OpenFailure[];
   /** Строки таблицы: пакет diagnose печатает по ним хвосты незакрытых провалов. */
@@ -334,6 +341,18 @@ export function createDoctorCommand(
     if (bearerChanged) ctx.fix();
 
     checkNode(ctx);
+    const localGws = join(homedir(), ".local/bin/gws");
+    const gws = ctx.cap(
+      existsSync(localGws) ? localGws : "gws",
+      ["--version"],
+      {
+        timeout: 5000,
+      },
+    );
+    if (gws.code !== 0 && `${gws.out}${gws.err}`.includes("GLIBC_"))
+      ctx.warn(
+        'Google CLI requires a newer glibc; repair from the Iva version directory: bash install.sh --update-gws "$HOME/.local"',
+      );
     if (await checkEnvFile(ctx)) checkEnvOptions(ctx);
     checkBuild(ctx);
     ctx.install = checkVersionState(ctx);
@@ -560,8 +579,35 @@ async function checkEnvFile(ctx: DoctorContext): Promise<boolean> {
   // Вендора без ключа в .env доктор проверяет там же, где живёт его вход: в чужом CLI
   // на этой же машине. Молчать об этом значило бы объявить .env здоровым перед
   // отказом агента на старте.
-  if (provider.auth === "cli") await checkClaudeCli(ctx);
+  if (!(await checkModelAuth(ctx, rawProvider)) && provider.auth === "cli")
+    await checkClaudeCli(ctx);
   return true;
+}
+
+/** Authored modules are loaded only during the check: doctor also repairs missing trees. */
+async function checkModelAuth(
+  ctx: DoctorContext,
+  provider: string,
+): Promise<boolean> {
+  try {
+    const { pendingModelAuth } = await import("#lib/model-auth-state.ts");
+    const { modelAuthText } = await import("#lib/model-auth.ts");
+    const expired = pendingModelAuth(ctx.dataDirectory).find(
+      (status) => status.provider === provider,
+    );
+    if (!expired) return false;
+    ctx.fail(
+      modelAuthText(provider, await noticeLang(ctx.env), {
+        ...expired,
+        timeZone: ctx.env.ASSISTANT_TIMEZONE,
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (!authoredTreeMissing(error))
+      ctx.warn(`Model login status unreadable: ${String(error)}`);
+    return false;
+  }
 }
 
 /** Статус Claude Code CLI: имя плана при входе и подсказка вместо него при отказе. */
@@ -776,13 +822,24 @@ function checkUnits(ctx: DoctorContext): void {
   const present =
     existsSync(ctx.unitDir) &&
     readdirSync(ctx.unitDir).some((file) =>
-      /^iva.*\.(service|timer)$/.test(file),
+      (ctx.systemd.manager === "launchd"
+        ? /^app\.iva\..+\.plist$/u
+        : /^iva.*\.(service|timer)$/u
+      ).test(file),
     );
   if (!present) {
-    ctx.warn("systemd units not installed — installing…");
-    ctx.repair("install and start the systemd units", () => installUnits(ctx));
+    ctx.warn(
+      `${ctx.systemd.manager === "launchd" ? "задания Ивы" : "systemd units"} not installed — installing…`,
+    );
+    ctx.repair(
+      `install and start the ${ctx.systemd.manager === "launchd" ? "задания Ивы" : "systemd units"}`,
+      () => installUnits(ctx),
+    );
   } else {
-    ctx.repair("refresh the systemd units", () => refreshUnits(ctx));
+    ctx.repair(
+      `refresh the ${ctx.systemd.manager === "launchd" ? "задания Ивы" : "systemd units"}`,
+      () => refreshUnits(ctx),
+    );
   }
 }
 
@@ -800,7 +857,9 @@ function installUnits(ctx: DoctorContext): void {
 function refreshUnits(ctx: DoctorContext): void {
   try {
     ctx.writeUnits(); // refresh: Environment=PORT syncs with the current IVA_PORT (eliminates drift)
-    ctx.ok("systemd units installed (refreshed)");
+    ctx.ok(
+      `${ctx.systemd.manager === "launchd" ? "задания Ивы" : "systemd units"} installed (refreshed)`,
+    );
   } catch (error) {
     ctx.fail((error as { message: string }).message);
   }
@@ -850,6 +909,13 @@ async function checkListener(ctx: DoctorContext): Promise<void> {
   // Detect the actual socket and restart once so doctor repairs that upgrade state too.
   const port = Number((ctx.readEnv().IVA_PORT || ctx.defaultPort).trim());
   const inspectListener = () => {
+    if (ctx.systemd.manager === "launchd") {
+      const result = ctx.cap("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN"]);
+      return result.code === 0 ||
+        (result.code === 1 && !result.out && !result.err)
+        ? classifyLsofListeners(result.out, port)
+        : "unknown";
+    }
     const result = ctx.cap("ss", ["-H", "-ltn", "sport", "=", `:${port}`]);
     return result.code === 0
       ? classifyAgentListeners(result.out, port)
@@ -868,7 +934,11 @@ async function checkListener(ctx: DoctorContext): Promise<void> {
   } else if (listener === "absent") {
     ctx.warn(`no listener found on port ${port}`);
   } else {
-    ctx.warn("could not inspect listener addresses (ss unavailable)");
+    ctx.warn(
+      ctx.systemd.manager === "launchd"
+        ? "could not inspect listener addresses (lsof unavailable)"
+        : "could not inspect listener addresses (ss unavailable)",
+    );
   }
 }
 
@@ -938,12 +1008,14 @@ function checkNightlyServices(ctx: DoctorContext): void {
   const nightlyServices = [
     ctx.brainService,
     ...LEGACY_BRAIN_UNITS.filter((unit) => unit.endsWith(".service")),
-  ].filter((unit) => existsSync(join(ctx.unitDir, unit)));
+  ].filter((unit) =>
+    existsSync(unitPath(unit, ctx.unitDir, ctx.systemd.manager)),
+  );
   for (const service of nightlyServices) {
     const state = ctx.systemd.query("is-failed", service);
     if (state.code === 0 && state.out === "failed") {
       ctx.fail(
-        `${service} failed — check: journalctl --user -u ${service} -n 100 --no-pager`,
+        `${service} failed — check: ${doctorLogHint(ctx, service, { lines: 100, pager: true })}`,
       );
     } else {
       ctx.ok(`${service} has no failed state`);
@@ -977,7 +1049,7 @@ function checkRollupStatus(ctx: DoctorContext): void {
       const thresholdHours = staleAfterHours[period];
       if (ageHours > thresholdHours) {
         ctx.warn(
-          `memory-${period} schedule hasn't succeeded in ${Math.round(ageHours)}h (> ${thresholdHours}h) — check: journalctl --user -u iva.service | grep schedule-runner`,
+          `memory-${period} schedule hasn't succeeded in ${Math.round(ageHours)}h (> ${thresholdHours}h) — check: ${doctorLogHint(ctx, "iva.service", { grep: "schedule-runner" })}`,
         );
       } else {
         ctx.ok(
@@ -986,7 +1058,7 @@ function checkRollupStatus(ctx: DoctorContext): void {
       }
     } else {
       ctx.warn(
-        `memory-${period} schedule has never succeeded — check: journalctl --user -u iva.service | grep schedule-runner`,
+        `memory-${period} schedule has never succeeded — check: ${doctorLogHint(ctx, "iva.service", { grep: "schedule-runner" })}`,
       );
     }
     // A recent success doesn't mean the MOST RECENT attempt was clean — e.g. it
@@ -996,7 +1068,7 @@ function checkRollupStatus(ctx: DoctorContext): void {
     // запуск, говорит раздел расписаний выше по таблице фактов (data/jobs.json).
     if (typeof entry.lastExitCode === "number" && entry.lastExitCode !== 0) {
       ctx.warn(
-        `memory-${period} schedule's last run exited ${entry.lastExitCode} — check: journalctl --user -u iva.service | grep schedule-runner`,
+        `memory-${period} schedule's last run exited ${entry.lastExitCode} — check: ${doctorLogHint(ctx, "iva.service", { grep: "schedule-runner" })}`,
       );
     }
   }
@@ -1041,7 +1113,7 @@ function checkReminderPulse(
   const pulse = tick.readTickPulse(ctx.dataDirectory);
   if (pulse === null) {
     ctx.warn(
-      "reminders: the dispatcher has not ticked yet — stored reminders will not fire (journalctl --user -u iva.service | grep reminders)",
+      `reminders: the dispatcher has not ticked yet — stored reminders will not fire (${doctorLogHint(ctx, "iva.service", { grep: "reminders" })})`,
     );
   } else if (ctx.now() - pulse > tick.REMINDER_TICK_STALE_MS) {
     ctx.warn(
@@ -1164,7 +1236,7 @@ async function loadBridgeState(ctx: DoctorContext): Promise<BridgeState> {
           continue;
         }
         ctx.warn(
-          `bridge backlog: ${file} unreadable — check: journalctl --user -u iva-telegram-poll`,
+          `bridge backlog: ${file} unreadable — check: ${doctorLogHint(ctx, "iva-telegram-poll", {})}`,
         );
         unreadable = true;
       }
@@ -1245,7 +1317,7 @@ async function checkBridge(ctx: DoctorContext): Promise<void> {
         : []),
     ].join(", ");
     ctx.warn(
-      `bridge backlog: ${details} — check: journalctl --user -u iva-telegram-poll; use /stop or iva restart`,
+      `bridge backlog: ${details} — check: ${doctorLogHint(ctx, "iva-telegram-poll", {})}; use /stop or iva restart`,
     );
   } else if (!unreadable) {
     ctx.ok("bridge backlog: clear");
@@ -1477,32 +1549,7 @@ async function checkPluginUnits(
     for (const [unit, about] of [...expected].sort(([a], [b]) =>
       a < b ? -1 : 1,
     )) {
-      if (!existsSync(join(ctx.unitDir, unit))) {
-        ctx.warn(
-          `plugin ${about.plugin}: ${unit} is missing — run: iva plugin sync`,
-        );
-        continue;
-      }
-      if (!ctx.systemd.isActive(unit)) {
-        ctx.fail(
-          `plugin ${about.plugin}: ${unit} is not running — check: journalctl --user -u ${unit} -n 100 --no-pager`,
-        );
-        continue;
-      }
-      // Живой прокси обязан ещё и отвечать: юнит active говорит только о процессе.
-      if (about.port !== undefined) {
-        if (await proxyHealthy(about.port)) {
-          ctx.ok(
-            `plugin ${about.plugin}: ${unit} answers on 127.0.0.1:${about.port}`,
-          );
-        } else {
-          ctx.warn(
-            `plugin ${about.plugin}: ${unit} runs but does not answer on 127.0.0.1:${about.port} — check: journalctl --user -u ${unit} -n 100 --no-pager`,
-          );
-        }
-        continue;
-      }
-      ctx.ok(`plugin ${about.plugin}: ${unit} running`);
+      await checkPluginUnit(ctx, unit, about);
     }
     for (const unit of onDisk) {
       if (expected.has(unit)) continue;
@@ -1515,6 +1562,39 @@ async function checkPluginUnits(
       `${expected.size} plugin unit(s) are not checked: systemd is not available here`,
     );
   }
+}
+
+async function checkPluginUnit(
+  ctx: DoctorContext,
+  unit: string,
+  about: { plugin: string; port?: number },
+): Promise<void> {
+  if (!existsSync(unitPath(unit, ctx.unitDir, ctx.systemd.manager))) {
+    ctx.warn(
+      `plugin ${about.plugin}: ${unit} is missing — run: iva plugin sync`,
+    );
+    return;
+  }
+  if (!ctx.systemd.isActive(unit)) {
+    ctx.fail(
+      `plugin ${about.plugin}: ${unit} is not running — check: ${doctorLogHint(ctx, unit, { lines: 100, pager: true })}`,
+    );
+    return;
+  }
+  // Живой прокси обязан ещё и отвечать: юнит active говорит только о процессе.
+  if (about.port !== undefined) {
+    if (await proxyHealthy(about.port)) {
+      ctx.ok(
+        `plugin ${about.plugin}: ${unit} answers on 127.0.0.1:${about.port}`,
+      );
+    } else {
+      ctx.warn(
+        `plugin ${about.plugin}: ${unit} runs but does not answer on 127.0.0.1:${about.port} — check: ${doctorLogHint(ctx, unit, { lines: 100, pager: true })}`,
+      );
+    }
+    return;
+  }
+  ctx.ok(`plugin ${about.plugin}: ${unit} running`);
 }
 
 function reportPluginFolders(
@@ -1580,4 +1660,12 @@ async function finishDoctor(ctx: DoctorContext): Promise<void> {
     `${ctx.colors.b}Summary:${ctx.colors.x} ${ctx.colors.g}${counts.ok} ok${ctx.colors.x} · ${ctx.colors.y}${counts.warn} warn${ctx.colors.x} · ${ctx.colors.c}${counts.fix} fixed${ctx.colors.x} · ${ctx.colors.r}${counts.bad} fail${ctx.colors.x}`,
   );
   ctx.exit(counts.bad > 0 ? 1 : 0);
+}
+
+function doctorLogHint(
+  ctx: DoctorContext,
+  unit: string,
+  options: Parameters<typeof logHint>[1] = {},
+): string {
+  return logHint(unit, options, ctx.systemd.manager ?? "systemd");
 }

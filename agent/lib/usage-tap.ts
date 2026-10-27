@@ -10,18 +10,21 @@
 // компактации входит в итог хода, но не выдаёт себя за размер контекста основной сессии:
 // вход компактации — это весь пересказываемый транскрипт, а не окно следующего шага.
 //
-// Зрение идёт в канале до хода, а компактация planner — вне шага, поэтому у их строк хода
+// Зрение идёт в канале до хода, а компактация объявленного узла — вне шага, поэтому у их строк хода
 // нет: sessionId "" и turnId "#vision"/"#compaction". Читатели считают такой расход в итоге
 // окна, но ходом его не считают и последним ходом не показывают.
 //
 // Учёт не участвует в основном пути: сбой записи строки уходит в журнал, а компактация,
 // описание картинки и пробник идут дальше, как будто учёта нет.
 import type { LanguageModelMiddleware, LanguageModelUsage } from "ai";
+import { createHash } from "node:crypto";
 import { resolveModelProvider } from "./model-provider.ts";
 import {
   appendUsage,
   readUsageTokens,
   usageRecord,
+  setUsageRequest,
+  takeUsageRequest,
   type UsageTokens,
 } from "./usage.ts";
 
@@ -42,6 +45,7 @@ const { name: PROVIDER, model: TEXT_MODEL } = resolveModelProvider();
 // с текстом eve пинует usage-tap.test.ts, гоняя настоящую компактацию eve.
 const COMPACTION_SYSTEM_PREFIX =
   "You are performing a CONTEXT CHECKPOINT COMPACTION.";
+let fingerprintWarned = false;
 
 /**
  * Чей это вызов: сессия и ход, в котором eve построил модель шага. Родителя тут нет: eve
@@ -119,6 +123,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function cacheMarked(block: unknown): boolean {
+  return (
+    isRecord(block) &&
+    isRecord(block.providerOptions) &&
+    Object.values(block.providerOptions).some(
+      (option) =>
+        isRecord(option) &&
+        ("cacheControl" in option || "cachePoint" in option),
+    )
+  );
+}
+
 type TapRow = {
   readonly source: "compaction" | "vision";
   readonly model: string;
@@ -187,17 +203,48 @@ export async function recordVisionStreamUsage(
 /**
  * Звено цепочки makeTextModel: снимает расход компактации eve. Шаги хода идут через
  * doStream и их пишет хук; компактация — единственный generateText eve с этой моделью.
- * Без метки (модель собрана вне шага, как у planner) строка пишется без сессии и хода.
+ * Без метки (модель собрана вне шага, как у объявленного узла) строка пишется без сессии и хода.
  */
 export function compactionUsageMiddleware(
   label?: UsageLabel,
+  model = TEXT_MODEL,
 ): LanguageModelMiddleware {
   return {
+    transformParams({ params }) {
+      try {
+        if (label) takeUsageRequest(label);
+        if (label && !isCompactionPrompt(params.prompt)) {
+          const stable = params.prompt.filter(
+            (message, i) =>
+              message.role !== "user" || i !== params.prompt.length - 1,
+          );
+          const blocks = stable.flatMap((message) => [
+            message,
+            ...(Array.isArray(message.content) ? message.content : []),
+          ]);
+          // prettier-ignore
+          const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 8);
+          const tools = params.tools ?? [];
+          setUsageRequest(label, {
+            system: hash(
+              params.prompt.filter((message) => message.role === "system"),
+            ),
+            cache: hash([...blocks, ...tools].filter(cacheMarked)),
+            tools: hash(tools),
+            toolCount: tools.length,
+          });
+        }
+      } catch {
+        if (!fingerprintWarned) console.error("[usage] fingerprint skipped");
+        fingerprintWarned = true;
+      }
+      return Promise.resolve(params);
+    },
     async wrapGenerate({ doGenerate, params }) {
       const result = await doGenerate();
       if (isCompactionPrompt(params.prompt))
         recordTapUsage(
-          { source: "compaction", model: TEXT_MODEL, label },
+          { source: "compaction", model, label },
           providerUsageTokens(result.usage),
         );
       return result;

@@ -43,6 +43,7 @@ type HarnessResult = {
   queueDirSyncAttempts: number;
   queueDirSyncSuccesses: number;
   statusBeforeRetry: { status: string; ingressId?: unknown };
+  queueBeforeIdle: TelegramQueueDocument | null;
   deletedMessages: Array<{ chat_id: string; message_id: number }>;
   failureNotices: Array<{ chat_id: string; text: string }>;
   finalStatus: { status: string; ingressId?: unknown };
@@ -100,7 +101,9 @@ function runHarness(
             }),
       },
       encoding: "utf8",
-      timeout: 10_000,
+      // Предел убивает зависший процесс, а не меряет скорость: под полным npm test (4 потока)
+      // обычный прогон сценария доходил до 10 с, и его снимало сигналом без вывода.
+      timeout: 30_000,
     },
   );
   assert.equal(
@@ -223,6 +226,7 @@ test("direct routing runtime durably queues a busy private update", async () => 
     acknowledgeImpl: async (candidate, count) => {
       calls.push(["acknowledge", candidate, count]);
     },
+    traceQueuedImpl: () => {},
     deliverImpl: async () => {
       calls.push(["deliver"]);
       return true;
@@ -316,21 +320,28 @@ test("directory sync failure requires a durable duplicate retry before offset ad
   assert.deepEqual(result.inbox, { version: 1, queues: {} });
 });
 
-test("queued follow-ups auto-drain in FIFO order when the current turn becomes idle", (t: TestContext) => {
+test("queued follow-ups reach Iva as one delivery in FIFO order when the current turn becomes idle", (t: TestContext) => {
   const dataDir = makeDataDir(t, "auto-drain");
   const result = runHarness("auto-drain", dataDir);
 
   assert.deepEqual(
-    result.deliveries.map((update) => [update.update_id, update.message?.text]),
+    result.queueBeforeIdle?.queues["1:"]?.map((item) => item.updateId),
+    [101, 102, 103],
+    "the queue holds three items until the chat is free: the drain merges, not the input collector",
+  );
+  assert.equal(result.deliveries.length, 1);
+  const [delivery] = result.deliveries;
+  assert.equal(delivery?.update_id, 103, "the batch speaks with its last id");
+  assert.equal(delivery?.message?.message_id, 101);
+  assert.deepEqual(
+    delivery?.message?.iva_parts?.map((part) => [part.message_id, part.text]),
     [
       [101, "first"],
       [102, "second"],
+      [103, "third"],
     ],
   );
-  assert.deepEqual(result.deliveryRoutes, [
-    "/eve/v1/telegram/accepted",
-    "/eve/v1/telegram/accepted",
-  ]);
+  assert.deepEqual(result.deliveryRoutes, ["/eve/v1/telegram/accepted"]);
   assert.deepEqual(
     result.queue,
     { version: 1, queues: {} },
@@ -341,6 +352,7 @@ test("queued follow-ups auto-drain in FIFO order when the current turn becomes i
     [
       "Queued (1). I'll start it automatically when the current task finishes.",
       "Queued (2). I'll start it automatically when the current task finishes.",
+      "Queued (3). I'll start it automatically when the current task finishes.",
     ],
   );
 });
@@ -456,15 +468,13 @@ test("a restarted bridge recovers and drains the persisted FIFO without a third 
   );
 
   const afterRestart = runHarness("restart-drain", dataDir);
+  // Остаток inbox встаёт за сохранённой очередью, и оба уходят одной доставкой.
   assert.deepEqual(
     afterRestart.deliveries.map((update) => [
       update.update_id,
-      update.message?.text,
+      update.message?.iva_parts?.map((part) => part.text),
     ]),
-    [
-      [101, "first"],
-      [102, "second"],
-    ],
+    [[102, ["first", "second"]]],
   );
   assert.deepEqual(afterRestart.queue, { version: 1, queues: {} });
   assert.deepEqual(afterRestart.inbox, { version: 1, queues: {} });
@@ -575,7 +585,7 @@ test("a direct acceptance 503 resets immediately, notifies once, then retries", 
   ]);
   assert.equal(result.statusBeforeRetry.status, "idle");
   assert.equal(result.statusBeforeRetry.ingressId, undefined);
-  assert.deepEqual(result.deletedMessages, [{ chat_id: "1", message_id: 77 }]);
+  assert.deepEqual(result.deletedMessages, []);
   assert.deepEqual(
     result.failureNotices.map(({ chat_id, text }) => [chat_id, text]),
     [["1", "Couldn't process the message - repeat it or use /new"]],
@@ -595,7 +605,7 @@ test("a reply to a closed session is delivered once, then leaves the durable inb
     "терминальный класс не повторяется ни в этом проходе, ни в следующем",
   );
   // Ранний «Работаю…» убран, чат снова свободен, пользователю сказано, что вышло.
-  assert.deepEqual(result.deletedMessages, [{ chat_id: "1", message_id: 79 }]);
+  assert.deepEqual(result.deletedMessages, []);
   assert.equal(result.finalStatus.status, "idle");
   assert.deepEqual(
     result.failureNotices.map(({ chat_id, text }) => [chat_id, text]),
@@ -620,7 +630,7 @@ test("a direct acceptance timeout rejects once and returns to Telegram polling",
     ["/eve/v1/telegram/accepted"],
     "a timed-out POST must never be repeated because it may still start later",
   );
-  assert.deepEqual(result.deletedMessages, [{ chat_id: "1", message_id: 78 }]);
+  assert.deepEqual(result.deletedMessages, []);
   assert.deepEqual(
     result.failureNotices.map(({ chat_id, text }) => [chat_id, text]),
     [["1", "Couldn't process the message - repeat it or use /new"]],

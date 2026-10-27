@@ -1,3 +1,4 @@
+import { isHelperTurn } from "../lib/eve-auth.ts";
 import { defineDynamic, defineInstructions } from "eve/instructions";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +17,7 @@ const DATA_DIR = resolveDataDir(process.cwd());
 // settings.language ("ru"|"en") → env AGENT_LANGUAGE → "ru". Продублировано инлайн, а
 // НЕ импортом agent/lib/i18n.ts: инструкции самодостаточны (гоча eve 0.11.4 —
 // authored-модули проекта тут не резолвятся). Путь относителен cwd (iva.service стартует
-// с WorkingDirectory=/home/shima/iva), как VAULT в 20-core.ts. Ошибки/битый JSON молча
+// с WorkingDirectory=/home/user/iva), как VAULT в 20-core.ts. Ошибки/битый JSON молча
 // → env-фолбэк.
 function resolveLang(): string {
   try {
@@ -55,7 +56,9 @@ function nowMarkdown(): string {
 export default defineDynamic({
   events: {
     // turn.started — пересчитывается на каждом турне, чтобы время и локаль не «застывали».
-    "turn.started": () =>
-      defineInstructions({ content: nowMarkdown(), role: "user" }),
+    "turn.started": (_event, ctx) =>
+      isHelperTurn(ctx)
+        ? null
+        : defineInstructions({ content: nowMarkdown(), role: "user" }),
   },
 });

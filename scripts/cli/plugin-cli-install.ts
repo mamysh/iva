@@ -177,7 +177,7 @@ export function createPluginInstallCommands(
       for (const line of report.diagnostics) bad(line);
       throw new Error(`${label} is not a usable Agent Plugins folder`);
     }
-    // Гвард, не граница (как self-restart-guard): модель с `bash` ставит плагин с кодом
+    // Проверка согласия владельца, а не граница безопасности: модель с `bash` ставит плагин с кодом
     // или MCP только через предложение и тап владельца; терминал владельца — как раньше.
     if (proposalOnly && carriesCodeOrMcp(root))
       throw new Error(
@@ -246,6 +246,7 @@ export function createPluginInstallCommands(
         proposalOnly,
       );
       const name = manifest.name;
+      await context.checkDescriptions(report);
       if (previous && previous.name !== name)
         throw new Error(
           `${formatPluginSource(source)} now calls itself ${JSON.stringify(name)}, not ${JSON.stringify(previous.name)} — remove the old one first`,

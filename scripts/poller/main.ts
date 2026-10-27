@@ -1,3 +1,8 @@
+import { reconcileDeferred } from "../lib/deferred-command.ts";
+import { listChatStatuses } from "#lib/run-status.ts";
+import { launchIvaCommand } from "./update-flow.ts";
+import { real } from "../lib/version-layout.ts";
+import { createHelperOutcomeScan } from "./helper-outcomes.ts";
 import { fileURLToPath } from "node:url";
 
 import { COLLECT_QUIET_MS } from "../lib/telegram-collect.ts";
@@ -6,6 +11,8 @@ import {
   invalidTelegramUpdatesDiagnostic,
   migrateQueueFile,
   parseTelegramUpdates,
+  type TelegramQueueUpdate,
+  type TelegramUpdateBatchItem,
 } from "../lib/telegram-queue.ts";
 import { alertOnce, alertResolved } from "../lib/notice-policy.ts";
 import { notificationChat } from "../lib/notification-chat.ts";
@@ -19,7 +26,7 @@ import {
   log,
   sleep,
 } from "./config.ts";
-import { tg } from "./transport.ts";
+import { tg, reply } from "./transport.ts";
 import { noteDroppedBridgeTasks, scheduleBridgeTask } from "./background.ts";
 import { fastForwardOffset, saveOffset } from "./offset.ts";
 import {
@@ -214,6 +221,48 @@ export async function processTelegramUpdate(
   return { offset: nextOffset, ingressBlocked: false };
 }
 
+// Пачка getUpdates по порядку. Апдейт, не прошедший проверку, подтверждается сдвигом offset
+// и одной строкой журнала: повтор не сделает его понятным, а задержанный offset держит весь
+// вход (16.10.2026, c1: стоп черновика крутил пачку три минуты). Без update_id сдвигать
+// нечего — offset сдвинут следующие апдейты пачки.
+export async function processTelegramBatch(
+  items: readonly TelegramUpdateBatchItem[],
+  offset: number,
+  delivered: number | null,
+  {
+    processImpl = processTelegramUpdate,
+    saveOffsetImpl = saveOffset,
+    logImpl = log,
+  }: {
+    processImpl?: (
+      update: TelegramQueueUpdate,
+      offset: number,
+      delivered: number | null,
+    ) => Promise<{ offset: number; ingressBlocked: boolean }>;
+    saveOffsetImpl?: (
+      offset: number,
+      delivered: number | null,
+    ) => Promise<void>;
+    logImpl?: (...args: unknown[]) => void;
+  } = {},
+): Promise<{ offset: number; ingressBlocked: boolean }> {
+  let current = offset;
+  for (const item of items) {
+    if ("update" in item) {
+      const processed = await processImpl(item.update, current, delivered);
+      current = processed.offset;
+      if (processed.ingressBlocked)
+        return { offset: current, ingressBlocked: true };
+      continue;
+    }
+    logImpl("getUpdates: skipped invalid update", JSON.stringify(item.skipped));
+    if (item.updateId === null || item.updateId < current) continue;
+    current = item.updateId + 1;
+    await saveOffsetImpl(current, delivered);
+  }
+  return { offset: current, ingressBlocked: false };
+}
+
 async function reconcileResetIntentsSafely(): Promise<number> {
   try {
     return await reconcileScopedResetIntents();
@@ -269,6 +318,11 @@ const configuredCollectQuietMs =
   Number.isFinite(rawCollectQuietMs) && rawCollectQuietMs >= 0
     ? rawCollectQuietMs
     : COLLECT_QUIET_MS;
+
+const turnsRunning = () =>
+  listChatStatuses().some(({ status }) => status.status === "running");
+const pollTimeout = (queued: number, collected: number) =>
+  queued > 0 || collected > 0 || turnsRunning() ? 1 : 30;
 
 export async function main({
   acquireProcessLockImpl = acquireTelegramProcessLock,
@@ -331,12 +385,18 @@ export async function main({
     log("starting offset:", offset);
   }
 
+  const scanHelperOutcomes = createHelperOutcomeScan();
   let consecutiveConflicts = 0;
   for (;;) {
     assertTelegramProcessLease(processLease);
-    // One head per idle chat/topic per pass. While any queue remains, use a short
+    // One batch per idle chat/topic per pass. While any queue remains, use a short
     // Telegram long-poll so terminal/stale run-status changes trigger drain quickly.
     scheduleResetIntentReconciliation();
+    try {
+      await scanHelperOutcomes();
+    } catch (error) {
+      log("helper outcome:", errorMessage(error));
+    }
     try {
       await retireSettledSessions();
     } catch (error) {
@@ -347,11 +407,23 @@ export async function main({
     } catch (error) {
       log("stale run reaper failed:", errorMessage(error));
     }
+    scheduleBridgeTask("deferred-command", async () => {
+      await reconcileDeferred(DATA_DIR, {
+        busy: turnsRunning,
+        launch: (argv) => launchIvaCommand("iva-deferred", argv),
+        report: async (text) => {
+          const chat = notificationChat();
+          if (!chat || !(await reply(chat, text)))
+            throw new Error("Deferred command report failed");
+        },
+        log,
+      });
+    });
     const pendingInboxCount = await promoteReadyInbox({
       collectorOptions: { quietMs: configuredCollectQuietMs },
     });
     const pendingQueueCount = await drainReadyQueueHeads();
-    const pollSeconds = pendingQueueCount > 0 || pendingInboxCount > 0 ? 1 : 30;
+    const pollSeconds = pollTimeout(pendingQueueCount, pendingInboxCount);
     let data: TelegramResponse;
     try {
       data = (await tg(
@@ -359,7 +431,11 @@ export async function main({
         {
           offset,
           timeout: pollSeconds,
-          allowed_updates: ["message", "callback_query"],
+          allowed_updates: [
+            "message",
+            "callback_query",
+            "stopped_message_generation",
+          ],
         },
         { timeoutMs: pollSeconds > 1 ? 40_000 : 10_000 },
       )) as TelegramResponse;
@@ -410,8 +486,8 @@ export async function main({
       consecutiveConflicts = 0;
       alertResolved(DATA_DIR, "getupdates-conflict");
     }
-    const updates = parseTelegramUpdates(data.result);
-    if (updates === null) {
+    const items = parseTelegramUpdates(data.result);
+    if (items === null) {
       log(
         "getUpdates: invalid result",
         JSON.stringify(invalidTelegramUpdatesDiagnostic(data.result)),
@@ -419,15 +495,9 @@ export async function main({
       await sleep(3000);
       continue;
     }
-    let ingressBlocked = false;
-    for (const update of updates) {
-      const processed = await processTelegramUpdate(update, offset, delivered);
-      offset = processed.offset;
-      if (!processed.ingressBlocked) continue;
-      ingressBlocked = true;
-      break;
-    }
-    if (ingressBlocked) await sleep(3000);
+    const batch = await processTelegramBatch(items, offset, delivered);
+    offset = batch.offset;
+    if (batch.ingressBlocked) await sleep(3000);
   }
 }
 
@@ -435,7 +505,8 @@ export function runEntrypoint(
   moduleUrl: string,
   executedPath: string | undefined = process.argv[1],
 ): void {
-  if (fileURLToPath(moduleUrl) !== executedPath) return;
+  if (!executedPath || real(fileURLToPath(moduleUrl)) !== real(executedPath))
+    return;
   // У остановки моста нет своего пути завершения: задачи в полёте умирают вместе с процессом.
   // Скажем об этом в журнал и пропустим сигнал дальше — обработчик снят, и повторный SIGTERM
   // убивает процесс как раньше, иначе systemd ждал бы нас до SIGKILL.
