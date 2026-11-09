@@ -44,6 +44,8 @@ const HOUR = 60 * MIN;
 /** 2026-10-05 12:00 UTC — день, не тихий час. */
 const NOON = Date.UTC(2026, 9, 5, 12, 0);
 const DAY = "2026-10-05";
+const noBirthdays: NonNullable<TickDeps["birthdays"]> = () =>
+  Promise.resolve({ status: "not-connected", items: [] });
 
 test("empty-response turn.failed stays quiet in Watch and logs the cause", async () => {
   const { reminderFromEvents } =
@@ -347,6 +349,15 @@ test("an unread chat older than staleMinutes wakes the model once and is deliver
   assert.match(h.prompts[0] ?? "", /Follow the watch skill/u);
   assert.match(h.prompts[0] ?? "", /Return QUIET/u);
   assert.match(h.prompts[0] ?? "", /Do not send anything yourself/u);
+  // Запись в Telegram запрещена, чтение разрешено: «no Telegram tools» модель читала как запрет на чтение.
+  assert.match(
+    h.prompts[0] ?? "",
+    /no Telegram tool that writes \(send, reply, forward, edit, delete, react, mark read\)/u,
+  );
+  assert.match(
+    h.prompts[0] ?? "",
+    /Reading Telegram, mail and calendar with read-only tools is allowed/u,
+  );
   // Кнопки пункта о человеке — дословно: «Я в курсе» мост узнаёт по этим же словам.
   assert.match(
     h.prompts[0] ?? "",
@@ -941,6 +952,7 @@ test("IVA_JOB_STOP_AT reaches every turn of the run as one signal; garbage, the 
       {
         sources: [tg],
         timeZone: "UTC",
+        birthdays: noBirthdays,
         config: () => ({ ...PROACTIVE_DEFAULTS, briefTimes: ["12:00"] }),
         statePath,
         runTurn: (_prompt, _kind, signal) => {
@@ -996,6 +1008,7 @@ test(
       {
         sources: [],
         timeZone: "UTC",
+        birthdays: noBirthdays,
         config: () => ({ ...PROACTIVE_DEFAULTS, briefTimes: ["12:00"] }),
         statePath: join(mkdtempSync(join(ROOT, "hang-")), "proactive.json"),
         runTurn: (_prompt, _kind, signal) => hangsUntil(signal),
@@ -1050,6 +1063,7 @@ test(
         {
           sources: [],
           timeZone: "UTC",
+          birthdays: noBirthdays,
           config: () => ({ ...PROACTIVE_DEFAULTS, briefTimes: ["12:00"] }),
           statePath: join(mkdtempSync(join(ROOT, "late-")), "proactive.json"),
           runTurn: (prompt, _kind, signal) =>
