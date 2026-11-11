@@ -198,7 +198,23 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 ## What's New
 
 <details>
-<summary><b>v0.5.9 · 03.11.2026 — expand the latest releases</b></summary>
+<summary><b>v0.5.12 · 10.11.2026 — expand the latest releases</b></summary>
+
+### 10.11.2026
+
+#### v0.5.12
+
+- 🧩 **Widget code stays hidden in live drafts**: Iva no longer shows raw widget code in the reply draft while it is being typed.
+
+#### v0.5.11
+
+- 📊 **Lighter, more exact widgets**: Iva starts from Telegram's native unstyled card: a heading, a list, a table and buttons look like ordinary messages and weigh under a kilobyte. New patterns: a helper's steps with marks, rings, sparklines and receipts; a card fills the bubble to the edge, and a log grows upward.
+- 🔧 **Widgets go through the main Bot API address**: Bot API 10.4 is out, and Iva no longer uses the beta address.
+
+#### v0.5.10
+
+- 🧠 **Fable 5.2 on the Claude model screen**: the first button in `/model` → Claude and in setup is now Fable 5.2, and it is the default Claude model. It needs Claude Code CLI 2.1.290 or newer; Fable 5.1 stays available through `CLAUDE_MODEL=claude-fable-5-1` in `.env`.
+- 📊 **Widgets in replies**: Iva draws a live card right in the message instead of lines of text wherever there is something to show: a calendar by day, week and month, the weather, a countdown while you wait, task and reminder lists, a chart with tabs, progress, a checklist. Turn them off in /menu → 💬 Rich replies.
 
 ### 03.11.2026
 
@@ -217,15 +233,6 @@ Iva carries eve 0.51.1 sources from vercel/eve in `eve/`, with our changes under
 #### v0.5.8
 
 - 🔧 **Telegram shows the model context window**: `/new` and status use the same window as Iva. Claude model selection saves its window, and helpers respect their own model window.
-
-### 25.10.2026
-
-#### v0.5.7
-
-- 🔧 **Quotes survive rich-message rejection**: HTML delivery preserves quoted text and button labels containing markup characters.
-- 🔧 **Iva offers useful next steps on her own**: she can bring a useful proposal without a request.
-- 🧠 **Conflicting events stay dated**: contradictory events about a person remain separate dated facts.
-- 🔧 **Long helper commands wait for results**: helpers set the command timeout to cover the expected duration.
 
 </details>
 
